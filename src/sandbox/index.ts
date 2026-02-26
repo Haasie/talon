@@ -7,4 +7,11 @@
  * Secrets are delivered via stdin JSON at spawn time, never written to disk.
  */
 
-export {};
+export { SandboxState } from './sandbox-types.js';
+export type { SandboxConfig, ContainerInfo, MountConfig } from './sandbox-types.js';
+
+export { ContainerFactory, resolveMountSource, buildBinds, defaultMounts, TMP_SIZE } from './container-factory.js';
+
+export { SandboxManager } from './sandbox-manager.js';
+
+export { ContainerHealthMonitor } from './container-health.js';
