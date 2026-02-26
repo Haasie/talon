@@ -1,0 +1,238 @@
+# talond.example.yaml
+# -----------------------------------------------------------------------
+# Talon daemon configuration — copy to talond.yaml and edit as needed.
+# All paths are relative to the working directory unless absolute.
+# -----------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Daemon settings
+# ---------------------------------------------------------------------------
+daemon:
+  # Path for the PID file (used by talonctl to detect a running daemon)
+  pid_file: /run/talond/talond.pid
+
+  # Path to the SQLite database file
+  database: data/talon.sqlite
+
+  # Log level: trace | debug | info | warn | error | fatal
+  log_level: info
+
+  # Log format: json (production) | pretty (development)
+  log_format: json
+
+  # IPC poll interval in milliseconds (host <-> sandbox communication)
+  ipc_poll_interval_ms: 500
+
+  # Maximum number of concurrently warm sandbox containers
+  max_concurrent_containers: 10
+
+  # How long (minutes) an idle container is kept alive before eviction
+  container_idle_timeout_minutes: 30
+
+# ---------------------------------------------------------------------------
+# Anthropic / Claude settings
+# ---------------------------------------------------------------------------
+claude:
+  # Auth mode: api_key | oauth
+  # - api_key: provide ANTHROPIC_API_KEY environment variable
+  # - oauth:   Claude Pro/Max subscription OAuth flow via talonctl auth login
+  auth_mode: api_key
+
+  # Default model for all personas (can be overridden per persona)
+  default_model: claude-opus-4-6
+
+  # Default max tokens per run
+  default_max_tokens: 4096
+
+# ---------------------------------------------------------------------------
+# Sandbox / container settings
+# ---------------------------------------------------------------------------
+sandbox:
+  # Container runtime: docker | podman | apple-container
+  runtime: docker
+
+  # Default sandbox image used unless a persona overrides it
+  default_image: talon-sandbox:latest
+
+  # Rootless Docker socket path (leave empty for default /var/run/docker.sock)
+  # docker_socket: /run/user/1000/docker.sock
+
+  # Whether to pull the image if not present locally
+  auto_pull: false
+
+  # Default resource limits applied to every container
+  defaults:
+    cpu_shares: 512          # relative CPU weight (1024 = 1 full core)
+    memory_limit_mb: 512
+    pids_limit: 128
+    read_only_rootfs: true
+    cap_drop_all: true       # drop ALL Linux capabilities (--cap-drop=ALL)
+    no_new_privileges: true
+
+# ---------------------------------------------------------------------------
+# Queue settings
+# ---------------------------------------------------------------------------
+queue:
+  # Maximum retry attempts before a message is moved to the dead-letter queue
+  max_attempts: 5
+
+  # Initial retry delay in milliseconds (doubles with each attempt + jitter)
+  initial_backoff_ms: 1000
+
+  # Cap on retry delay in milliseconds
+  max_backoff_ms: 60000
+
+  # Dead-letter queue table name in SQLite
+  dlq_table: queue_dead_letters
+
+# ---------------------------------------------------------------------------
+# Personas
+# ---------------------------------------------------------------------------
+# Each persona defines an AI agent bound to one or more channels.
+# Personas are identified by their name (must be unique and kebab-case).
+personas:
+  - name: assistant
+    # Human-readable description shown in talonctl output
+    description: General-purpose assistant
+
+    # Override the Claude model for this persona
+    # model: claude-sonnet-4-6
+
+    # Path to a system prompt file, or an inline string
+    system_prompt: |
+      You are a helpful, concise assistant. Reply in Markdown.
+      Keep responses focused and actionable.
+
+    # Channel bindings — list of channel names this persona handles
+    channels:
+      - telegram-main
+
+    # Skills to attach to this persona
+    skills: []
+
+    # Capability policy — what the persona is allowed to do
+    # All capabilities default to DENY unless listed here.
+    capabilities:
+      web_fetch: allow          # fetch public URLs
+      fs_read: deny             # no host filesystem access
+      fs_write: deny
+      shell: deny               # no arbitrary shell commands
+      send_channel: allow       # can send messages to channels (approval not required)
+
+    # Memory configuration for this persona
+    memory:
+      # Per-thread conversation window (number of messages kept in context)
+      context_window_messages: 20
+      # Whether long-term memory extraction is enabled
+      long_term: false
+
+    # Network policy for the sandbox container
+    network:
+      enabled: false            # sandbox has no network by default
+      # allowed_domains:        # allowlist — only effective when enabled: true
+      #   - api.example.com
+
+# ---------------------------------------------------------------------------
+# Channels
+# ---------------------------------------------------------------------------
+channels:
+  # ------ Telegram --------------------------------------------------------
+  - name: telegram-main
+    type: telegram
+    # Bot token — prefer referencing an env var rather than hardcoding
+    token: ${TELEGRAM_BOT_TOKEN}
+    # Allowed Telegram user IDs (numeric). Empty list = no restriction (not recommended)
+    allowed_user_ids:
+      - 123456789
+    # Polling mode (default) — set webhook: true and configure a public URL for webhook mode
+    polling: true
+    # webhook:
+    #   url: https://example.com/talon/webhook/telegram
+    #   secret_token: ${TELEGRAM_WEBHOOK_SECRET}
+
+  # ------ Slack -----------------------------------------------------------
+  # - name: slack-main
+  #   type: slack
+  #   bot_token: ${SLACK_BOT_TOKEN}
+  #   app_token: ${SLACK_APP_TOKEN}   # required for Socket Mode
+  #   socket_mode: true
+
+  # ------ Discord ---------------------------------------------------------
+  # - name: discord-main
+  #   type: discord
+  #   token: ${DISCORD_BOT_TOKEN}
+  #   allowed_guild_ids:
+  #     - "1234567890"
+
+  # ------ Email -----------------------------------------------------------
+  # - name: email-main
+  #   type: email
+  #   imap:
+  #     host: mail.example.com
+  #     port: 993
+  #     user: agent@example.com
+  #     password: ${EMAIL_PASSWORD}
+  #     poll_interval_seconds: 60
+  #   smtp:
+  #     host: mail.example.com
+  #     port: 587
+  #     user: agent@example.com
+  #     password: ${EMAIL_PASSWORD}
+  #   allowed_senders:
+  #     - you@example.com
+
+# ---------------------------------------------------------------------------
+# Scheduler
+# ---------------------------------------------------------------------------
+scheduler:
+  # Timezone for cron expressions (IANA timezone string)
+  timezone: UTC
+
+  # What to do when the daemon restarts and a scheduled run was missed:
+  # skip | catchup | alert
+  missed_run_policy: skip
+
+  # Scheduled tasks
+  tasks: []
+  # Example:
+  # tasks:
+  #   - name: daily-summary
+  #     cron: "0 8 * * *"          # every day at 08:00
+  #     persona: assistant
+  #     prompt: "Generate a daily briefing and send it to the channel."
+  #     channels:
+  #       - telegram-main
+
+# ---------------------------------------------------------------------------
+# MCP (Model Context Protocol)
+# ---------------------------------------------------------------------------
+mcp:
+  # Built-in MCP server exposed by talond (for external MCP clients)
+  server:
+    enabled: false
+    # host: 127.0.0.1
+    # port: 5173
+
+  # External MCP servers that personas can consume as tool sources
+  clients: []
+  # Example:
+  # clients:
+  #   - name: filesystem-mcp
+  #     url: http://localhost:5174
+  #     personas:
+  #       - assistant
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+observability:
+  # Append-only audit log — records every side-effecting operation with provenance
+  audit_log:
+    enabled: true
+    path: data/audit.log
+
+  # Prometheus-compatible metrics endpoint (future — not implemented in v1)
+  metrics:
+    enabled: false
+    # host: 127.0.0.1
+    # port: 9090
