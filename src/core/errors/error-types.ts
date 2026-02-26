@@ -1,0 +1,90 @@
+/**
+ * Domain error hierarchy for the Talon daemon.
+ *
+ * All expected errors extend TalonError and carry a machine-readable `code`
+ * so callers can pattern-match without parsing message strings.
+ * Unexpected / unrecoverable failures are still plain thrown exceptions.
+ */
+
+// ---------------------------------------------------------------------------
+// Base class
+// ---------------------------------------------------------------------------
+
+/**
+ * Abstract base for all Talon domain errors.
+ * Subclasses must declare a readonly `code` string.
+ */
+export abstract class TalonError extends Error {
+  abstract readonly code: string;
+  readonly cause?: Error;
+
+  constructor(message: string, cause?: Error) {
+    super(message);
+    this.name = this.constructor.name;
+    this.cause = cause;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Domain-specific error classes
+// ---------------------------------------------------------------------------
+
+/** Configuration loading or validation error. */
+export class ConfigError extends TalonError {
+  readonly code = 'CONFIG_ERROR' as const;
+}
+
+/** SQLite / database operation error. */
+export class DbError extends TalonError {
+  readonly code = 'DB_ERROR' as const;
+}
+
+/** File-based IPC read/write error. */
+export class IpcError extends TalonError {
+  readonly code = 'IPC_ERROR' as const;
+}
+
+/** Container sandbox lifecycle error. */
+export class SandboxError extends TalonError {
+  readonly code = 'SANDBOX_ERROR' as const;
+}
+
+/** Tool invocation or policy error. */
+export class ToolError extends TalonError {
+  readonly code = 'TOOL_ERROR' as const;
+}
+
+/** Channel send/connect error. */
+export class ChannelError extends TalonError {
+  readonly code = 'CHANNEL_ERROR' as const;
+}
+
+/** Durable queue enqueue/dequeue error. */
+export class QueueError extends TalonError {
+  readonly code = 'QUEUE_ERROR' as const;
+}
+
+/** Cron / schedule expression error. */
+export class ScheduleError extends TalonError {
+  readonly code = 'SCHEDULE_ERROR' as const;
+}
+
+/** Database migration error. */
+export class MigrationError extends TalonError {
+  readonly code = 'MIGRATION_ERROR' as const;
+}
+
+/** Capability or approval policy violation. */
+export class PolicyError extends TalonError {
+  readonly code = 'POLICY_ERROR' as const;
+}
+
+/** Per-thread memory read/write error. */
+export class MemoryError extends TalonError {
+  readonly code = 'MEMORY_ERROR' as const;
+}
+
+/** Persona lookup or validation error. */
+export class PersonaError extends TalonError {
+  readonly code = 'PERSONA_ERROR' as const;
+}

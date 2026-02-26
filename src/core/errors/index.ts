@@ -6,4 +6,21 @@
  * on failure reasons without catching exceptions.
  */
 
-export {};
+export {
+  TalonError,
+  ConfigError,
+  DbError,
+  IpcError,
+  SandboxError,
+  ToolError,
+  ChannelError,
+  QueueError,
+  ScheduleError,
+  MigrationError,
+  PolicyError,
+  MemoryError,
+  PersonaError,
+} from './error-types.js';
+
+export { ErrorCodes } from './error-codes.js';
+export type { ErrorCode } from './error-codes.js';
