@@ -15,3 +15,14 @@ export { ContainerFactory, resolveMountSource, buildBinds, defaultMounts, TMP_SI
 export { SandboxManager } from './sandbox-manager.js';
 
 export { ContainerHealthMonitor } from './container-health.js';
+
+export {
+  SdkProcessSpawner,
+  parseOutput,
+  stripMetadataAndInternalTags,
+  OUTPUT_START_SENTINEL,
+  OUTPUT_END_SENTINEL,
+} from './sdk-process-spawner.js';
+export type { SdkSpawnConfig, SdkProcessResult } from './sdk-process-spawner.js';
+
+export { SessionTracker } from './session-tracker.js';
