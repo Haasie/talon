@@ -6,4 +6,9 @@
  * abstract so alternative backends (vector DB, etc.) can be swapped in.
  */
 
-export {};
+export { MemoryLayer } from './memory-types.js';
+export type { MemoryItem, ThreadContext } from './memory-types.js';
+
+export { ThreadWorkspace } from './thread-workspace.js';
+export { MemoryManager } from './memory-manager.js';
+export { ContextBuilder } from './context-builder.js';
