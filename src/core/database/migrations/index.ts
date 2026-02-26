@@ -2,7 +2,7 @@
  * Database migrations.
  *
  * Versioned SQL migration files are applied in order by the migration runner.
- * Each migration is idempotent and tracked in the schema_migrations table.
+ * Schema version is tracked via SQLite's PRAGMA user_version.
  */
 
-export {};
+export { runMigrations } from './runner.js';
