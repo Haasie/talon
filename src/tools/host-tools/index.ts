@@ -6,4 +6,8 @@
  * policy and emits an audit log entry for every invocation.
  */
 
-export {};
+export type { ChannelSendTool, ChannelSendArgs } from './channel-send.js';
+export type { ScheduleManageTool, ScheduleManageArgs } from './schedule-manage.js';
+export type { MemoryAccessTool, MemoryAccessArgs } from './memory-access.js';
+export type { HttpProxyTool, HttpProxyArgs } from './http-proxy.js';
+export type { DbQueryTool, DbQueryArgs } from './db-query.js';
