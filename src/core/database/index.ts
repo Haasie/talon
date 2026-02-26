@@ -1,8 +1,10 @@
 /**
- * Database initialisation and connection management.
+ * Database layer public API.
  *
  * Opens the SQLite database via better-sqlite3, applies pending migrations,
- * and exports a shared Database instance for repository use.
+ * and exports all repositories and connection utilities.
  */
 
-export {};
+export { createDatabase } from './connection.js';
+export { runMigrations } from './migrations/index.js';
+export * from './repositories/index.js';

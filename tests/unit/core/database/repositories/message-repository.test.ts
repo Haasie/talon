@@ -1,0 +1,133 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { MessageRepository } from '../../../../../src/core/database/repositories/message-repository.js';
+import { ThreadRepository } from '../../../../../src/core/database/repositories/thread-repository.js';
+import { ChannelRepository } from '../../../../../src/core/database/repositories/channel-repository.js';
+import { createTestDb, uuid } from './helpers.js';
+
+describe('MessageRepository', () => {
+  let db: Database.Database;
+  let repo: MessageRepository;
+  let threadId: string;
+
+  beforeEach(() => {
+    db = createTestDb();
+    repo = new MessageRepository(db);
+
+    const channels = new ChannelRepository(db);
+    const channelId = uuid();
+    channels.insert({
+      id: channelId,
+      type: 'telegram',
+      name: `ch-${uuid()}`,
+      config: '{}',
+      credentials_ref: null,
+      enabled: 1,
+    });
+
+    const threads = new ThreadRepository(db);
+    threadId = uuid();
+    threads.insert({
+      id: threadId,
+      channel_id: channelId,
+      external_id: `ext-${uuid()}`,
+      metadata: '{}',
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function makeMsg(overrides: Partial<Parameters<MessageRepository['insert']>[0]> = {}) {
+    return {
+      id: uuid(),
+      thread_id: threadId,
+      direction: 'inbound' as const,
+      content: '{"text":"hello"}',
+      idempotency_key: `idem-${uuid()}`,
+      provider_id: null,
+      run_id: null,
+      ...overrides,
+    };
+  }
+
+  describe('insert', () => {
+    it('inserts and returns the message', () => {
+      const input = makeMsg();
+      const result = repo.insert(input);
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap().id).toBe(input.id);
+    });
+
+    it('is idempotent: re-inserting same idempotency_key returns existing row', () => {
+      const key = `idem-${uuid()}`;
+      const first = repo.insert(makeMsg({ idempotency_key: key }));
+      const second = repo.insert(makeMsg({ idempotency_key: key }));
+      expect(second.isOk()).toBe(true);
+      expect(second._unsafeUnwrap().id).toBe(first._unsafeUnwrap().id);
+    });
+
+    it('returns err for non-existent thread_id (FK)', () => {
+      expect(repo.insert(makeMsg({ thread_id: uuid() })).isErr()).toBe(true);
+    });
+  });
+
+  describe('findById', () => {
+    it('finds by primary key', () => {
+      const input = makeMsg();
+      repo.insert(input);
+      expect(repo.findById(input.id)._unsafeUnwrap()?.id).toBe(input.id);
+    });
+
+    it('returns null for unknown id', () => {
+      expect(repo.findById(uuid())._unsafeUnwrap()).toBeNull();
+    });
+  });
+
+  describe('findByThread', () => {
+    it('returns messages in chronological order', () => {
+      // Insert three messages and verify ordering.
+      const m1 = makeMsg({ idempotency_key: `k1-${uuid()}` });
+      const m2 = makeMsg({ idempotency_key: `k2-${uuid()}` });
+      const m3 = makeMsg({ idempotency_key: `k3-${uuid()}` });
+      repo.insert(m1);
+      repo.insert(m2);
+      repo.insert(m3);
+
+      const rows = repo.findByThread(threadId, 10, 0)._unsafeUnwrap();
+      expect(rows).toHaveLength(3);
+      // created_at values should be non-decreasing.
+      for (let i = 1; i < rows.length; i++) {
+        expect(rows[i].created_at).toBeGreaterThanOrEqual(rows[i - 1].created_at);
+      }
+    });
+
+    it('respects limit and offset', () => {
+      for (let i = 0; i < 5; i++) {
+        repo.insert(makeMsg({ idempotency_key: `k${i}-${uuid()}` }));
+      }
+      const page1 = repo.findByThread(threadId, 2, 0)._unsafeUnwrap();
+      const page2 = repo.findByThread(threadId, 2, 2)._unsafeUnwrap();
+      expect(page1).toHaveLength(2);
+      expect(page2).toHaveLength(2);
+      expect(page1[0].id).not.toBe(page2[0].id);
+    });
+
+    it('returns empty array for unknown thread', () => {
+      expect(repo.findByThread(uuid(), 10, 0)._unsafeUnwrap()).toHaveLength(0);
+    });
+  });
+
+  describe('existsByIdempotencyKey', () => {
+    it('returns true when key exists', () => {
+      const key = `idem-${uuid()}`;
+      repo.insert(makeMsg({ idempotency_key: key }));
+      expect(repo.existsByIdempotencyKey(key)).toBe(true);
+    });
+
+    it('returns false when key does not exist', () => {
+      expect(repo.existsByIdempotencyKey('nonexistent')).toBe(false);
+    });
+  });
+});
