@@ -5,7 +5,7 @@
 
 ## Identity
 
-- **Project**: newclaw
+- **Project**: talon
 - **Purpose**: Resilient, secure, extensible autonomous agent daemon — multi-channel AI agents with persona-per-channel, container sandboxing, per-thread memory, scheduled tasks, and agent swarms
 - **Target Users**: Single-user / small-team self-hosted deployment (multi-tenant is a future consideration, not v1)
 - **Scale**: Medium-large system
@@ -25,7 +25,7 @@
 
 ### Product Requirements (PRD)
 
-- Setup should be conversational (Claude Code slash commands wrapping `agentctl`)
+- Setup should be conversational (Claude Code slash commands wrapping `talonctl`)
 - Configuration via a single readable YAML file with sane defaults
 - Plugin interfaces must be small, versioned, and "data in/data out"
 - Markdown is the canonical output format; channels convert to native rendering
@@ -49,7 +49,7 @@
 - **Agent SDK**: `@anthropic-ai/claude-agent-sdk` — provides built-in tools, subagents, MCP support, hooks, sessions
 - **Database**: SQLite (via `better-sqlite3`) with abstract persistence interface for future Postgres swap
 - **Sandboxing**: Docker (rootless preferred), with support for Apple Container and microVMs
-- **IPC**: File-based atomic writes with polling (host <-> sandbox, agentctl <-> agentd)
+- **IPC**: File-based atomic writes with polling (host <-> sandbox, talonctl <-> talond)
 - **Deployment**: systemd service (native daemon), containerized daemon, or timer-driven wake-only mode
 - **Auth modes**: Claude Pro/Max subscription (OAuth) or Anthropic API keys
 
@@ -103,7 +103,7 @@
 
 ### Architecture Principles
 
-- **Pattern**: Plugin core — small core (`agentd`) + plugins for channels, skills, tools, storage backends
+- **Pattern**: Plugin core — small core (`talond`) + plugins for channels, skills, tools, storage backends
 - **Error handling**: Result types (`neverthrow`) for expected errors; exceptions only for truly exceptional/unrecoverable failures
 - **Logging**: `pino` — structured JSON logs with `run_id`, `thread_id`, `persona`, `tool`, `request_id`
 - **Observability**: Structured logs, metrics (queue depth, run duration, sandbox starts, tool call counts, error rates), append-only audit log
@@ -113,7 +113,7 @@
 
 - **No ORM** — use raw SQL or a lightweight query builder (e.g., `kysely` or hand-written prepared statements)
 - Keep the persistence interface abstract (repository pattern) so SQLite can be swapped for Postgres
-- Migrations are versioned and applied via `agentctl migrate`
+- Migrations are versioned and applied via `talonctl migrate`
 
 ### Process
 

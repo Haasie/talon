@@ -1,6 +1,6 @@
 version: '1.0'
 project:
-  name: newclaw
+  name: talon
 agents:
   max_parallel: 6
   default_model: sonnet

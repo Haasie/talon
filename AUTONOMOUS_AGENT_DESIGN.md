@@ -34,7 +34,7 @@ The design assumes a single-user / small-team self-hosted deployment first (like
 
 ## High-level Architecture
 
-One long-running **host daemon** (“agentd”) handles I/O, scheduling, persistence, sandbox orchestration, and policy enforcement. Agent logic runs inside **persistent warm containers** per thread and communicates with the host through a narrow, validated IPC. Containers stay running to eliminate cold-start latency on inbound messages.
+One long-running **host daemon** (“talond”) handles I/O, scheduling, persistence, sandbox orchestration, and policy enforcement. Agent logic runs inside **persistent warm containers** per thread and communicates with the host through a narrow, validated IPC. Containers stay running to eliminate cold-start latency on inbound messages.
 
 ### Agent SDK
 
@@ -59,11 +59,11 @@ The SDK also supports Amazon Bedrock, Google Vertex AI, and Microsoft Azure as a
 
 ### Concurrency model
 
-agentd is a **TypeScript single-threaded event loop** (Node.js). All I/O is async/non-blocking. The event loop handles channel connectors, queue management, scheduler ticks, and IPC multiplexing. CPU-bound work (if any) should be offloaded to worker threads or the sandboxes themselves.
+talond is a **TypeScript single-threaded event loop** (Node.js). All I/O is async/non-blocking. The event loop handles channel connectors, queue management, scheduler ticks, and IPC multiplexing. CPU-bound work (if any) should be offloaded to worker threads or the sandboxes themselves.
 
 ```
            +------------------------------+
-Inbound    |          agentd              |
+Inbound    |          talond              |
 Events --->|  - channel connectors        |
            |  - router (thread->persona)  |
            |  - durable queue + dedupe    |
@@ -224,7 +224,7 @@ Container output is wrapped in sentinel markers for reliable parsing (NanoClaw p
 
 Tools are declared via manifests and validated by the host. Tools can be:
 
-- **Host tools**: implemented in agentd (DB, scheduling, channel send, secrets-aware HTTP).
+- **Host tools**: implemented in talond (DB, scheduling, channel send, secrets-aware HTTP).
 - **Sandbox tools**: executed *inside* the sandbox (e.g., safe shell with no mounts except workspace).
 - **MCP tools**: exposed via MCP servers, but still brokered by host policy.
 
@@ -268,14 +268,14 @@ skills/<skill_name>/
   migrations/*.sql
 ```
 
-Skills are enabled per persona. agentd persists the resolved persona configuration (so upgrades are predictable).
+Skills are enabled per persona. talond persists the resolved persona configuration (so upgrades are predictable).
 
 ## MCP Integration
 
 MCP is supported, but treated as an untrusted tool boundary.
 
 - MCP servers run either on the host (preferred) or in separate sandboxes.
-- agentd acts as a **tool proxy**: the sandbox requests an MCP call; agentd checks policy (tool allowlist, argument schema, rate limits), then forwards.
+- talond acts as a **tool proxy**: the sandbox requests an MCP call; talond checks policy (tool allowlist, argument schema, rate limits), then forwards.
 - Each persona has an MCP allowlist; each MCP server has its own credential scope.
 
 ## Memory System
@@ -326,8 +326,8 @@ Scheduled tasks are first-class queue items.
 
 ### systemd integration
 
-- Provide `agentd.service` (long-running).
-- Optional `agentd.timer` if you prefer “wake on schedule” mode, but simplest is a daemon with an internal scheduler.
+- Provide `talond.service` (long-running).
+- Optional `talond.timer` if you prefer “wake on schedule” mode, but simplest is a daemon with an internal scheduler.
 - Health checks: watchdog ping + metrics endpoint.
 
 ## Channels
@@ -380,12 +380,12 @@ Routing is explicit:
 
 Prefer a single readable config file with includes, plus a generated “resolved” config snapshot.
 
-Example `agentd.yaml`:
+Example `talond.yaml`:
 
 ```yaml
 storage:
   type: sqlite
-  path: data/agentd.sqlite
+  path: data/talond.sqlite
 
 sandbox:
   runtime: docker
@@ -419,27 +419,27 @@ personas:
         mode: rw
 ```
 
-## agentctl: CLI and daemon boundary
+## talonctl: CLI and daemon boundary
 
-`agentctl` is the CLI tool for operating agentd. It communicates with the running daemon via **file-based IPC** (same pattern as container IPC) — writing JSON command files to a well-known directory that agentd polls.
+`talonctl` is the CLI tool for operating talond. It communicates with the running daemon via **file-based IPC** (same pattern as container IPC) — writing JSON command files to a well-known directory that talond polls.
 
-### agentctl commands
+### talonctl commands
 
-- `agentctl status` — health check, active containers, queue depth
-- `agentctl setup` — interactive first-time setup (detect runtime, create DB, generate config)
-- `agentctl doctor` — re-run checks, show actionable fixes
-- `agentctl add-channel <type>` — add connector config, validate credentials
-- `agentctl add-persona <name>` — scaffold persona prompt + default policy
-- `agentctl add-skill <skill>` — install/enable a skill
-- `agentctl migrate` — apply DB migrations safely
-- `agentctl backup` — snapshot SQLite + data directory
-- `agentctl reload` — signal agentd to hot-reload config, personas, skills, and channel connectors without restart
+- `talonctl status` — health check, active containers, queue depth
+- `talonctl setup` — interactive first-time setup (detect runtime, create DB, generate config)
+- `talonctl doctor` — re-run checks, show actionable fixes
+- `talonctl add-channel <type>` — add connector config, validate credentials
+- `talonctl add-persona <name>` — scaffold persona prompt + default policy
+- `talonctl add-skill <skill>` — install/enable a skill
+- `talonctl migrate` — apply DB migrations safely
+- `talonctl backup` — snapshot SQLite + data directory
+- `talonctl reload` — signal talond to hot-reload config, personas, skills, and channel connectors without restart
 
 ### Why file-based IPC for CLI too
 
-Same rationale as container IPC: inspectable, debuggable, no version coupling, enables future reimplementation of agentctl in other languages. Processing flow:
-- Success: agentd processes file, deletes from input directory
-- Failure: agentd moves file to `errors/` subdirectory for inspection
+Same rationale as container IPC: inspectable, debuggable, no version coupling, enables future reimplementation of talonctl in other languages. Processing flow:
+- Success: talond processes file, deletes from input directory
+- Failure: talond moves file to `errors/` subdirectory for inspection
 
 ## AI-Native Setup (Claude Code / Slash Commands)
 
@@ -447,12 +447,12 @@ NanoClaw’s killer feature is “setup as a conversation”: the system uses Cl
 
 ### Bootstrap model
 
-- Ship a tiny **bootstrap project** that uses Claude Code slash commands to get `agentd` into a known-good state.
+- Ship a tiny **bootstrap project** that uses Claude Code slash commands to get `talond` into a known-good state.
 - Bootstrap runs locally on the host (not inside the agent sandbox) and can:
   - detect OS + runtime (Docker vs Apple Container), check versions, and fix common misconfigurations
   - validate required binaries and permissions
   - acquire channel credentials interactively (QR flows, OAuth device flows)
-  - write `agentd.yaml` and the “resolved config” snapshot (e.g. `data/resolved-config.json`)
+  - write `talond.yaml` and the “resolved config” snapshot (e.g. `data/resolved-config.json`)
   - generate systemd unit files and enable/start the service
 
 ### Recommended UX
@@ -467,7 +467,7 @@ NanoClaw’s killer feature is “setup as a conversation”: the system uses Cl
 
 ### Implementation notes (so it stays maintainable)
 
-- Slash commands are *thin wrappers* around `agentctl` subcommands (e.g. `agentctl setup --json`), so the setup logic is testable without an LLM.
+- Slash commands are *thin wrappers* around `talonctl` subcommands (e.g. `talonctl setup --json`), so the setup logic is testable without an LLM.
 - The LLM is used for:
   - natural-language guidance, troubleshooting, and choosing safe defaults
   - stitching steps together and interpreting “doctor” outputs
@@ -480,30 +480,30 @@ Support three first-class deployment modes, all producing the same runtime behav
 ### 1) Native daemon (recommended)
 
 - Install Node runtime + dependencies once.
-- Run `agentd` as a systemd service (Linux) or launchd (macOS).
+- Run `talond` as a systemd service (Linux) or launchd (macOS).
 - Sandboxes run via Docker/Apple Container; the daemon talks to the local container runtime.
 
 ### 2) Containerized daemon
 
-- Run `agentd` itself in a container, with:
+- Run `talond` itself in a container, with:
   - explicit bind mount of `data/`
   - access to the container runtime via a safe mechanism (prefer rootless + dedicated socket; avoid mounting the host Docker socket when possible)
 - Use this if you want a fully reproducible host environment.
 
 ### 3) “Wake-only” mode (timer-driven)
 
-- For low-volume installs, run `agentd` on a schedule (systemd timer) to process pending queue items.
+- For low-volume installs, run `talond` on a schedule (systemd timer) to process pending queue items.
 - Requires careful handling of in-flight runs and long polls; simplest when channels support webhook ingestion into a mailbox/DB.
 
 ### Health and lifecycle
 
-- `agentd` exposes a local health endpoint (or `agentctl status`) for liveness/readiness.
+- `talond` exposes a local health endpoint (or `talonctl status`) for liveness/readiness.
 - systemd watchdog integration: the daemon pings watchdog; if stuck, systemd restarts it.
-- On restart, `agentd` replays the durable queue and cleans up stale sandboxes.
+- On restart, `talond` replays the durable queue and cleans up stale sandboxes.
 
 ## Extensibility Boundaries (what goes where)
 
-- Core (`agentd`): queue, scheduler, persistence, sandbox manager, policy engine, audit, minimal builtin tools.
+- Core (`talond`): queue, scheduler, persistence, sandbox manager, policy engine, audit, minimal builtin tools.
 - Plugins:
   - Channels (WhatsApp/Telegram/Slack/email)
   - Skills (bundles)
@@ -528,10 +528,10 @@ Track LLM token usage **only when using Anthropic API keys** (not relevant for s
 
 ## Operational Notes
 
-- **Backups**: SQLite file + `data/` directory; provide `agentctl backup` to snapshot safely.
+- **Backups**: SQLite file + `data/` directory; provide `talonctl backup` to snapshot safely.
 - **Upgrades**: migrations are versioned; skills can pin versions.
 - **Container image**: prebuilt minimal image (`node:22-slim` based) with Agent SDK runtime and skill loader; avoid “install at runtime” for reliability.
-- **Hot reload**: `agentctl reload` signals agentd to re-read config, personas, skills, and channel connectors without restarting. Active containers are not affected; changes apply to new runs. For container image changes, a rolling restart of warm containers is needed.
+- **Hot reload**: `talonctl reload` signals talond to re-read config, personas, skills, and channel connectors without restarting. Active containers are not affected; changes apply to new runs. For container image changes, a rolling restart of warm containers is needed.
 - **Testing strategy**: contract tests for plugin interfaces; policy tests; sandbox spawn tests; replay tests for idempotency. **Agent behavior is not formally tested** — no evaluation pipeline. Behavioral correctness is validated through manual/vibe testing. A formal eval pipeline is a future consideration but out of scope for v1.
 
 ## Warm Container Lifecycle
@@ -544,7 +544,7 @@ Containers are **persistent by default** to minimize message response latency.
 2. **Warm idle**: After completing a run, the container stays alive, polling `ipc/input/` for new messages. SDK session is preserved for context continuity.
 3. **Follow-up**: New messages delivered via IPC file write. Container resumes SDK session (using `resume: sessionId`), maintaining full conversation context.
 4. **Timeout**: Configurable idle timeout (default: 30 minutes). Hard timeout reaps idle containers; soft timeout resets when streaming output is detected.
-5. **Graceful shutdown**: On `agentd` shutdown or `agentctl reload`, containers receive a shutdown signal via IPC. 10-second grace period before forced kill.
+5. **Graceful shutdown**: On `talond` shutdown or `talonctl reload`, containers receive a shutdown signal via IPC. 10-second grace period before forced kill.
 
 ### State management
 

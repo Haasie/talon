@@ -1,4 +1,4 @@
-# Validation Report: agentd-v1
+# Validation Report: talon-v1
 
 > Validated against: `AUTONOMOUS_AGENT_DESIGN.md`
 > Date: 2026-02-26
@@ -10,7 +10,7 @@
 | Goals | 1.1, 1.2 | Covered |
 | Non-goals | Appendix, Out of Scope (constitution) | Covered |
 | Terminology | Throughout (consistent usage) | Covered |
-| High-level Architecture | 2.1 (agentd), 2.2 (containers) | Covered |
+| High-level Architecture | 2.1 (talond), 2.2 (containers) | Covered |
 | Agent SDK | 2.2, throughout | Covered |
 | Concurrency model | 2.1, 4.1 | Covered |
 | Core Data & State | 3.1, 3.2, 3.3 | Covered |
@@ -28,8 +28,8 @@
 | Output representation | 6.1 (AgentOutput interface) | Covered |
 | Router | 7.1 | Covered |
 | Configuration | 14.1, 14.2 | Covered |
-| agentctl | 2.3 | Covered |
-| AI-Native Setup | 2.3 (agentctl setup/doctor) | Covered |
+| talonctl | 2.3 | Covered |
+| AI-Native Setup | 2.3 (talonctl setup/doctor) | Covered |
 | Deployment Methods | 16.1, 16.2, 16.3 | Covered |
 | Observability & Audit | 15.1, 15.2, 15.3 | Covered |
 | Token usage tracking | Appendix B | Covered |

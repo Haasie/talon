@@ -1,4 +1,4 @@
-# agentd — Autonomous Agent Daemon v1
+# talond — Autonomous Agent Daemon v1
 
 ## Functional Specification
 
@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-agentd is a long-running TypeScript daemon that orchestrates autonomous AI agents across multiple communication channels. Each agent runs inside an isolated container sandbox and communicates with the host through file-based IPC. The host enforces all security policy, mediates side effects, and manages persistence.
+talond is a long-running TypeScript daemon that orchestrates autonomous AI agents across multiple communication channels. Each agent runs inside an isolated container sandbox and communicates with the host through file-based IPC. The host enforces all security policy, mediates side effects, and manages persistence.
 
 ### 1.1 Core Capabilities
 
@@ -22,7 +22,7 @@ agentd is a long-running TypeScript daemon that orchestrates autonomous AI agent
 - Scheduled tasks (cron, interval, one-shot, event-triggered)
 - Multi-agent collaboration via Agent SDK subagents
 - MCP tool integration (host-brokered)
-- CLI management via `agentctl`
+- CLI management via `talonctl`
 
 ### 1.2 Design Principles
 
@@ -35,7 +35,7 @@ agentd is a long-running TypeScript daemon that orchestrates autonomous AI agent
 
 ## 2. System Components
 
-### 2.1 agentd (Host Daemon)
+### 2.1 talond (Host Daemon)
 
 The central process. Single-threaded Node.js event loop, all I/O async/non-blocking.
 
@@ -53,10 +53,10 @@ The central process. Single-threaded Node.js event loop, all I/O async/non-block
 - Configuration loading and hot reload
 
 **Acceptance Criteria:**
-- AC-2.1.1: agentd starts, loads config from `agentd.yaml`, and enters ready state within 5 seconds
-- AC-2.1.2: agentd handles SIGTERM gracefully — drains queue, signals containers, waits grace period (10s), exits
-- AC-2.1.3: agentd recovers from crash — replays durable queue, cleans stale sandboxes on restart
-- AC-2.1.4: agentd hot-reloads config, personas, skills, and channel connectors on `agentctl reload` without restarting
+- AC-2.1.1: talond starts, loads config from `talond.yaml`, and enters ready state within 5 seconds
+- AC-2.1.2: talond handles SIGTERM gracefully — drains queue, signals containers, waits grace period (10s), exits
+- AC-2.1.3: talond recovers from crash — replays durable queue, cleans stale sandboxes on restart
+- AC-2.1.4: talond hot-reloads config, personas, skills, and channel connectors on `talonctl reload` without restarting
 
 ### 2.2 Warm Containers (Sandbox Runtime)
 
@@ -83,26 +83,26 @@ Persistent containers per thread running the Anthropic Claude Agent SDK.
 - AC-2.2.4: If container dies unexpectedly, next message spawns fresh container with context reconstructed from DB transcript + memory files
 - AC-2.2.5: Container has no host access except explicitly granted mounts
 
-### 2.3 agentctl (CLI)
+### 2.3 talonctl (CLI)
 
-CLI tool for operating agentd. Communicates with the daemon via file-based IPC.
+CLI tool for operating talond. Communicates with the daemon via file-based IPC.
 
 **Commands:**
 | Command | Description |
 |---------|-------------|
-| `agentctl status` | Health check, active containers, queue depth |
-| `agentctl setup` | Interactive first-time setup |
-| `agentctl doctor` | Re-run checks, show actionable fixes |
-| `agentctl add-channel <type>` | Add connector config, validate credentials |
-| `agentctl add-persona <name>` | Scaffold persona prompt + default policy |
-| `agentctl add-skill <skill>` | Install/enable a skill |
-| `agentctl migrate` | Apply DB migrations safely |
-| `agentctl backup` | Snapshot SQLite + data directory |
-| `agentctl reload` | Hot-reload config without restart |
+| `talonctl status` | Health check, active containers, queue depth |
+| `talonctl setup` | Interactive first-time setup |
+| `talonctl doctor` | Re-run checks, show actionable fixes |
+| `talonctl add-channel <type>` | Add connector config, validate credentials |
+| `talonctl add-persona <name>` | Scaffold persona prompt + default policy |
+| `talonctl add-skill <skill>` | Install/enable a skill |
+| `talonctl migrate` | Apply DB migrations safely |
+| `talonctl backup` | Snapshot SQLite + data directory |
+| `talonctl reload` | Hot-reload config without restart |
 
 **Acceptance Criteria:**
-- AC-2.3.1: `agentctl status` returns JSON-serializable health info within 2 seconds
-- AC-2.3.2: `agentctl` commands work when agentd is running; return clear errors when agentd is stopped
+- AC-2.3.1: `talonctl status` returns JSON-serializable health info within 2 seconds
+- AC-2.3.2: `talonctl` commands work when talond is running; return clear errors when talond is stopped
 - AC-2.3.3: File-based IPC: command files written to input dir; processed files deleted; failed files moved to errors dir
 
 ---
@@ -131,7 +131,7 @@ SQLite via `better-sqlite3`. Abstract persistence interface (repository pattern)
 | `tool_results` | Idempotent tool result cache | `run_id`, `request_id`, `result`, `created_at` |
 
 **Acceptance Criteria:**
-- AC-3.2.1: All tables created via versioned migrations (`agentctl migrate`)
+- AC-3.2.1: All tables created via versioned migrations (`talonctl migrate`)
 - AC-3.2.2: Foreign key constraints enforced (SQLite `PRAGMA foreign_keys = ON`)
 - AC-3.2.3: `idempotency_key` on messages is unique per channel — duplicate inserts are no-ops
 - AC-3.2.4: `tool_results` keyed by `(run_id, request_id)` — safe to retry tool calls
@@ -140,7 +140,7 @@ SQLite via `better-sqlite3`. Abstract persistence interface (repository pattern)
 
 ```
 data/
-  agentd.sqlite
+  talond.sqlite
   threads/
     <thread_id>/
       memory/          # human-editable (CLAUDE.md, TASKS.md, etc.)
@@ -193,7 +193,7 @@ data/
 **Acceptance Criteria:**
 - AC-4.2.1: Failed queue items retry with exponential backoff (base 1s, max 60s, jitter)
 - AC-4.2.2: After max attempts (default 3), item moves to dead-letter status with reason
-- AC-4.2.3: Dead-letter items are visible via `agentctl status`
+- AC-4.2.3: Dead-letter items are visible via `talonctl status`
 
 ---
 
@@ -363,7 +363,7 @@ Personas allow capabilities. Skills request capabilities. Host resolves the inte
 
 | Type | Execution Location | Examples |
 |------|-------------------|----------|
-| Host tools | In agentd process | DB queries, scheduling, channel send, secrets-aware HTTP |
+| Host tools | In talond process | DB queries, scheduling, channel send, secrets-aware HTTP |
 | Sandbox tools | Inside container | Safe shell (workspace-scoped), file read/write |
 | MCP tools | Via MCP servers (host-brokered) | Third-party integrations |
 
@@ -509,7 +509,7 @@ High-risk capabilities require one of:
 
 ### 14.1 Config File
 
-Single `agentd.yaml` with sane defaults. See design doc for full example.
+Single `talond.yaml` with sane defaults. See design doc for full example.
 
 **Key sections:**
 - `storage`: SQLite path (or Postgres URL)
@@ -527,7 +527,7 @@ Single `agentd.yaml` with sane defaults. See design doc for full example.
 **Acceptance Criteria:**
 - AC-14.2.1: Invalid config produces a clear, actionable error message at startup
 - AC-14.2.2: Missing required fields fail validation (not silently defaulted)
-- AC-14.2.3: `agentctl reload` re-validates config before applying changes
+- AC-14.2.3: `talonctl reload` re-validates config before applying changes
 
 ---
 
@@ -571,14 +571,14 @@ Append-only `audit_log` table. Records:
 | Mode | Description |
 |------|-------------|
 | Native daemon | systemd service; sandboxes via local Docker |
-| Containerized daemon | agentd in Docker; sandboxes via nested or sibling containers |
+| Containerized daemon | talond in Docker; sandboxes via nested or sibling containers |
 | Wake-only | systemd timer; process pending queue on wake |
 
 ### 16.2 systemd Integration
 
-- `agentd.service` unit file
+- `talond.service` unit file
 - Watchdog ping for liveness
-- Health check via `agentctl status`
+- Health check via `talonctl status`
 - Graceful shutdown on SIGTERM
 
 ### 16.3 Container Image
@@ -612,11 +612,11 @@ skills/<skill_name>/
 - Install: copy skill directory + run migrations
 - Enable: add to persona config
 - Resolve: `persona.capabilities ∩ skill.requiredCapabilities` = granted
-- Hot-reload: `agentctl reload` picks up skill changes for new runs
+- Hot-reload: `talonctl reload` picks up skill changes for new runs
 
 **Acceptance Criteria:**
 - AC-17.2.1: Skills with unmet required capabilities produce a clear warning (not silent failure)
-- AC-17.2.2: Skill migrations run in order during `agentctl migrate`
+- AC-17.2.2: Skill migrations run in order during `talonctl migrate`
 - AC-17.2.3: Enabling a skill for a persona takes effect on the next run (no container restart needed)
 
 ---
@@ -624,13 +624,13 @@ skills/<skill_name>/
 ## 18. MCP Integration
 
 - MCP servers run on the host (preferred) or in separate sandboxes
-- agentd acts as a tool proxy: sandbox requests MCP call -> agentd checks policy -> forwards
+- talond acts as a tool proxy: sandbox requests MCP call -> talond checks policy -> forwards
 - Each persona has an MCP allowlist
 - Each MCP server has its own credential scope
 
 **Acceptance Criteria:**
 - AC-18.1: MCP tool calls are policy-checked identically to host/sandbox tools
-- AC-18.2: MCP server failures do not crash agentd
+- AC-18.2: MCP server failures do not crash talond
 - AC-18.3: MCP servers can be added/removed via config reload
 
 ---
