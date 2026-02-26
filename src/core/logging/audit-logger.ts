@@ -1,0 +1,178 @@
+/**
+ * Dual-write audit logger.
+ *
+ * Every side-effecting operation in the daemon (tool execution, approval
+ * decisions, channel sends, schedule triggers, config reloads) is recorded
+ * here. The AuditLogger writes structured entries to pino and, when an
+ * AuditStore is provided, to a durable store (e.g. SQLite append-only table).
+ *
+ * The AuditStore interface is intentionally minimal so it can be backed by
+ * better-sqlite3 (TASK-005), an in-memory list (tests), or any other
+ * synchronous store without changing the logger's API.
+ */
+
+import type pino from 'pino';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single audit log entry.
+ *
+ * `action` is the only required field beyond `details`; all correlation
+ * identifiers are optional because some audit events occur before a full
+ * request context is established (e.g. config reload at startup).
+ */
+export interface AuditEntry {
+  /** Durable run identifier. */
+  runId?: string;
+  /** Per-thread conversation identifier. */
+  threadId?: string;
+  /** Persona that initiated the action. */
+  personaId?: string;
+  /**
+   * Machine-readable action label. Use dot-separated namespacing,
+   * e.g. `tool.execution`, `approval.granted`, `channel.send`.
+   */
+  action: string;
+  /** Tool name, when the event relates to a specific tool call. */
+  tool?: string;
+  /** Outbound API request ID for correlation with provider logs. */
+  requestId?: string;
+  /** Structured payload specific to the action type. */
+  details: Record<string, unknown>;
+}
+
+/**
+ * Persistence interface for audit entries.
+ *
+ * Implementations must be synchronous so that audit writes happen
+ * atomically with the pino log write and do not require error-recovery
+ * logic in the logger itself. The concrete implementation (SQLite) will
+ * be injected in TASK-005.
+ */
+export interface AuditStore {
+  /**
+   * Persist a single audit entry to the durable store.
+   *
+   * Implementations should be idempotent where possible (e.g. by using an
+   * auto-incrementing primary key rather than a caller-supplied ID).
+   */
+  append(entry: AuditEntry): void;
+}
+
+// ---------------------------------------------------------------------------
+// AuditLogger
+// ---------------------------------------------------------------------------
+
+/**
+ * Records audit events to pino and (optionally) a durable AuditStore.
+ *
+ * Construct one instance per daemon process and share it via dependency
+ * injection. The optional `store` parameter lets callers defer the DB
+ * connection until the data layer is available, while still preserving
+ * every event in the structured log.
+ *
+ * @example
+ * ```ts
+ * const audit = new AuditLogger(logger);
+ * audit.logToolExecution({ action: 'tool.execution', tool: 'web_search', details: { query: '...' } });
+ * ```
+ */
+export class AuditLogger {
+  /**
+   * @param logger - A pino logger (typically a child with `component: 'audit'`).
+   * @param store  - Optional durable store; when absent events are pino-only.
+   */
+  constructor(
+    private readonly logger: pino.Logger,
+    private readonly store?: AuditStore,
+  ) {}
+
+  // ---------------------------------------------------------------------------
+  // Public audit methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Record a tool invocation.
+   *
+   * Call this immediately before — or immediately after — executing a tool
+   * call inside a sandbox so the audit trail is ordered with the surrounding
+   * log lines.
+   */
+  logToolExecution(entry: AuditEntry): void {
+    this.write('tool.execution', entry);
+  }
+
+  /**
+   * Record an approval decision (granted or denied) for a pending action.
+   *
+   * Include the decision outcome in `entry.details`, e.g.
+   * `{ decision: 'granted', approver: 'auto-policy' }`.
+   */
+  logApprovalDecision(entry: AuditEntry): void {
+    this.write('approval.decision', entry);
+  }
+
+  /**
+   * Record a message dispatched to an outbound channel (e.g. Discord, Slack).
+   *
+   * Include the channel type and message preview in `entry.details`.
+   */
+  logChannelSend(entry: AuditEntry): void {
+    this.write('channel.send', entry);
+  }
+
+  /**
+   * Record a scheduled task being triggered by the cron runner.
+   *
+   * Include the schedule expression and next-run timestamp in `entry.details`.
+   */
+  logScheduleTrigger(entry: AuditEntry): void {
+    this.write('schedule.trigger', entry);
+  }
+
+  /**
+   * Record a configuration file reload.
+   *
+   * Include the config file path and a diff summary in `entry.details` where
+   * possible, omitting secrets.
+   */
+  logConfigReload(entry: AuditEntry): void {
+    this.write('config.reload', entry);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Write the audit entry to pino at `info` level and to the optional store.
+   *
+   * The `auditAction` parameter is the canonical event label used as the
+   * `msg` field so log aggregators can filter by event type with a plain
+   * text query. The full entry is spread into the log record so all
+   * correlation fields appear as top-level JSON keys.
+   *
+   * @param auditAction - The canonical log message / event label.
+   * @param entry       - The full audit entry to record.
+   */
+  private write(auditAction: string, entry: AuditEntry): void {
+    // Build a flat object for pino so correlation fields are top-level.
+    const logObject: Record<string, unknown> = {
+      audit: true,
+    };
+
+    if (entry.runId !== undefined) logObject.runId = entry.runId;
+    if (entry.threadId !== undefined) logObject.threadId = entry.threadId;
+    if (entry.personaId !== undefined) logObject.personaId = entry.personaId;
+    if (entry.tool !== undefined) logObject.tool = entry.tool;
+    if (entry.requestId !== undefined) logObject.requestId = entry.requestId;
+    logObject.details = entry.details;
+
+    this.logger.info(logObject, auditAction);
+
+    this.store?.append(entry);
+  }
+}

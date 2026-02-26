@@ -6,4 +6,8 @@
  * In development, pretty-prints via pino-pretty; in production emits JSON.
  */
 
-export {};
+export { createLogger, createChildLogger } from './logger.js';
+export type { LoggerConfig, LogBindings } from './logger.js';
+
+export { AuditLogger } from './audit-logger.js';
+export type { AuditEntry, AuditStore } from './audit-logger.js';
