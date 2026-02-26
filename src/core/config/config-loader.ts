@@ -1,0 +1,149 @@
+/**
+ * YAML configuration loader for talond.
+ *
+ * Reads a YAML file (or parses a YAML string), validates it against the
+ * TalondConfigSchema, and returns either a frozen, strongly-typed
+ * TalondConfig or a ConfigError with a human-readable message that
+ * identifies exactly which field failed validation.
+ */
+
+import { readFileSync } from 'node:fs';
+import yaml from 'js-yaml';
+import { ok, err, type Result } from 'neverthrow';
+import { TalondConfigSchema } from './config-schema.js';
+import type { TalondConfig } from './config-types.js';
+import { ConfigError } from '../errors/index.js';
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Formats a Zod issue path and message into a single actionable string.
+ * e.g. "sandbox.resourceLimits.memoryMb: Expected number, received string"
+ */
+function formatIssue(issue: { path: (string | number)[]; message: string }): string {
+  const path = issue.path.length > 0 ? issue.path.join('.') : '<root>';
+  return `${path}: ${issue.message}`;
+}
+
+/**
+ * Deeply freezes an object so the config cannot be mutated at runtime.
+ * Primitive values and null are returned as-is.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+
+  // Freeze array elements
+  if (Array.isArray(value)) {
+    (value as unknown[]).forEach((item) => deepFreeze(item));
+    return Object.freeze(value);
+  }
+
+  // Freeze object properties
+  Object.values(value as Record<string, unknown>).forEach((v) => deepFreeze(v));
+  return Object.freeze(value);
+}
+
+/**
+ * Parses and validates raw YAML content (as a string) into a TalondConfig.
+ * Returns a ConfigError when the YAML is malformed or fails schema validation.
+ */
+function parseAndValidate(yamlContent: string, source: string): Result<TalondConfig, ConfigError> {
+  let raw: unknown;
+
+  try {
+    raw = yaml.load(yamlContent);
+  } catch (e) {
+    const cause = e instanceof Error ? e : new Error(String(e));
+    return err(
+      new ConfigError(`Failed to parse YAML from ${source}: ${cause.message}`, cause),
+    );
+  }
+
+  // yaml.load returns undefined for an empty document; treat that as {}
+  if (raw === undefined || raw === null) {
+    raw = {};
+  }
+
+  const result = TalondConfigSchema.safeParse(raw);
+  if (!result.success) {
+    const issues = result.error.issues.map(formatIssue);
+    const summary = issues.slice(0, 5).join('; ');
+    const extra = issues.length > 5 ? ` (and ${issues.length - 5} more)` : '';
+    return err(
+      new ConfigError(
+        `Configuration validation failed for ${source}: ${summary}${extra}`,
+      ),
+    );
+  }
+
+  return ok(deepFreeze(result.data));
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Loads and validates a talond configuration from a YAML file.
+ *
+ * The returned TalondConfig is deeply frozen — any attempt to mutate it at
+ * runtime will throw in strict mode.
+ *
+ * @param filePath  Absolute or relative path to the YAML config file.
+ * @returns         Ok(TalondConfig) on success, Err(ConfigError) on failure.
+ */
+export function loadConfig(filePath: string): Result<TalondConfig, ConfigError> {
+  let content: string;
+
+  try {
+    content = readFileSync(filePath, 'utf-8');
+  } catch (e) {
+    const cause = e instanceof Error ? e : new Error(String(e));
+    return err(
+      new ConfigError(`Failed to read config file "${filePath}": ${cause.message}`, cause),
+    );
+  }
+
+  return parseAndValidate(content, `"${filePath}"`);
+}
+
+/**
+ * Validates a talond configuration from a YAML string.
+ *
+ * Useful for testing and for the `talonctl doctor` command which may
+ * want to validate a config without writing it to disk first.
+ *
+ * @param yamlContent  Raw YAML string to parse and validate.
+ * @returns            Ok(TalondConfig) on success, Err(ConfigError) on failure.
+ */
+export function loadConfigFromString(yamlContent: string): Result<TalondConfig, ConfigError> {
+  return parseAndValidate(yamlContent, '<string>');
+}
+
+/**
+ * Validates a plain object (already parsed from YAML or JSON) against the
+ * TalondConfigSchema.
+ *
+ * Intended for use by `talonctl doctor` when it needs to validate a config
+ * object that was obtained through other means.
+ *
+ * @param raw  The raw (unvalidated) configuration object.
+ * @returns    Ok(TalondConfig) on success, Err(ConfigError) on failure.
+ */
+export function validateConfig(raw: unknown): Result<TalondConfig, ConfigError> {
+  const result = TalondConfigSchema.safeParse(raw);
+  if (!result.success) {
+    const issues = result.error.issues.map(formatIssue);
+    const summary = issues.slice(0, 5).join('; ');
+    const extra = issues.length > 5 ? ` (and ${issues.length - 5} more)` : '';
+    return err(
+      new ConfigError(`Configuration validation failed: ${summary}${extra}`),
+    );
+  }
+
+  return ok(deepFreeze(result.data));
+}

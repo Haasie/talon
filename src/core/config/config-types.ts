@@ -1,0 +1,62 @@
+/**
+ * TypeScript types inferred from the Zod config schemas.
+ *
+ * Import from here when you need typed configuration objects at runtime.
+ * The schemas themselves live in `config-schema.ts`; this module exists
+ * solely to give callers a clean import path for types.
+ */
+
+import type { z } from 'zod';
+import type {
+  TalondConfigSchema,
+  StorageConfigSchema,
+  SandboxConfigSchema,
+  CapabilitiesSchema,
+  MountConfigSchema,
+  PersonaConfigSchema,
+  ChannelConfigSchema,
+  ScheduleConfigSchema,
+  IpcConfigSchema,
+  QueueConfigSchema,
+  SchedulerConfigSchema,
+  AuthConfigSchema,
+} from './config-schema.js';
+
+/** The full daemon configuration, validated and frozen at startup. */
+export type TalondConfig = z.infer<typeof TalondConfigSchema>;
+
+/** Storage backend configuration. */
+export type StorageConfig = z.infer<typeof StorageConfigSchema>;
+
+/** Container sandbox configuration. */
+export type SandboxConfig = z.infer<typeof SandboxConfigSchema>;
+
+/** Resource limits within the sandbox. */
+export type SandboxResourceLimits = SandboxConfig['resourceLimits'];
+
+/** Per-persona capability grants and approval requirements. */
+export type CapabilitiesConfig = z.infer<typeof CapabilitiesSchema>;
+
+/** A single host-to-container mount definition. */
+export type MountConfig = z.infer<typeof MountConfigSchema>;
+
+/** Persona definition as declared in the config file. */
+export type PersonaConfig = z.infer<typeof PersonaConfigSchema>;
+
+/** Channel integration definition. */
+export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
+
+/** Scheduled task definition. */
+export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>;
+
+/** IPC polling settings. */
+export type IpcConfig = z.infer<typeof IpcConfigSchema>;
+
+/** Durable queue settings. */
+export type QueueConfig = z.infer<typeof QueueConfigSchema>;
+
+/** Scheduler tick settings. */
+export type SchedulerConfig = z.infer<typeof SchedulerConfigSchema>;
+
+/** Authentication mode and credentials. */
+export type AuthConfig = z.infer<typeof AuthConfigSchema>;

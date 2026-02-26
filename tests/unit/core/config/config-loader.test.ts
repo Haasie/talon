@@ -1,0 +1,332 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { loadConfig, loadConfigFromString, validateConfig } from '../../../../src/core/config/config-loader.js';
+import { ConfigError } from '../../../../src/core/errors/index.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+let tmpFile: string;
+
+beforeEach(() => {
+  // Create a unique temporary file path for each test
+  tmpFile = join(tmpdir(), `talon-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}.yaml`);
+});
+
+afterEach(() => {
+  // Clean up the temp file if it was created
+  try {
+    unlinkSync(tmpFile);
+  } catch {
+    // File may not have been created in every test
+  }
+});
+
+function writeTempConfig(content: string): string {
+  writeFileSync(tmpFile, content, 'utf-8');
+  return tmpFile;
+}
+
+// ---------------------------------------------------------------------------
+// loadConfigFromString
+// ---------------------------------------------------------------------------
+
+describe('loadConfigFromString', () => {
+  it('returns Ok with all defaults for an empty YAML document', () => {
+    const result = loadConfigFromString('');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.logLevel).toBe('info');
+      expect(result.value.storage.type).toBe('sqlite');
+    }
+  });
+
+  it('returns Ok with all defaults for an explicit empty mapping', () => {
+    const result = loadConfigFromString('{}');
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('parses a minimal valid YAML config', () => {
+    const yaml = `
+logLevel: debug
+dataDir: /tmp/talon
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.logLevel).toBe('debug');
+      expect(result.value.dataDir).toBe('/tmp/talon');
+    }
+  });
+
+  it('parses channels array from YAML', () => {
+    const yaml = `
+channels:
+  - type: telegram
+    name: main
+    tokenRef: TELEGRAM_BOT_TOKEN
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.channels).toHaveLength(1);
+      expect(result.value.channels[0].type).toBe('telegram');
+      expect(result.value.channels[0].tokenRef).toBe('TELEGRAM_BOT_TOKEN');
+    }
+  });
+
+  it('parses personas array from YAML', () => {
+    const yaml = `
+personas:
+  - name: helper
+    model: claude-opus-4-6
+    skills:
+      - web-search
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.personas).toHaveLength(1);
+      expect(result.value.personas[0].name).toBe('helper');
+      expect(result.value.personas[0].model).toBe('claude-opus-4-6');
+      expect(result.value.personas[0].skills).toContain('web-search');
+    }
+  });
+
+  it('returns Err(ConfigError) for invalid YAML syntax', () => {
+    const result = loadConfigFromString('key: [unclosed');
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+      expect(result.error.message).toMatch(/Failed to parse YAML/);
+    }
+  });
+
+  it('returns Err(ConfigError) with field path for schema violations', () => {
+    const result = loadConfigFromString('logLevel: not-a-valid-level');
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+      expect(result.error.message).toMatch(/validation failed/i);
+      expect(result.error.message).toMatch(/logLevel/);
+    }
+  });
+
+  it('returns Err(ConfigError) for invalid sandbox.maxConcurrent', () => {
+    const result = loadConfigFromString('sandbox:\n  maxConcurrent: 0');
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+      expect(result.error.message).toMatch(/sandbox\.maxConcurrent/);
+    }
+  });
+
+  it('returns Err(ConfigError) for a missing required channel field', () => {
+    const yaml = `
+channels:
+  - name: no-type-channel
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+    }
+  });
+
+  it('strips extra (unknown) fields from the config', () => {
+    const result = loadConfigFromString('unknownTopLevelKey: 42');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect((result.value as Record<string, unknown>)['unknownTopLevelKey']).toBeUndefined();
+    }
+  });
+
+  it('returns Err(ConfigError) for a persona with an empty name', () => {
+    const yaml = `
+personas:
+  - name: ""
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isErr()).toBe(true);
+  });
+
+  it('handles a null YAML document (treated as empty config)', () => {
+    const result = loadConfigFromString('null');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.personas).toEqual([]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadConfig (file-based)
+// ---------------------------------------------------------------------------
+
+describe('loadConfig', () => {
+  it('returns Ok for a valid YAML file', () => {
+    const path = writeTempConfig('logLevel: warn\n');
+    const result = loadConfig(path);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.logLevel).toBe('warn');
+    }
+  });
+
+  it('returns Ok for an empty YAML file', () => {
+    const path = writeTempConfig('');
+    const result = loadConfig(path);
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('returns Err(ConfigError) when the file does not exist', () => {
+    const result = loadConfig('/nonexistent/path/to/config.yaml');
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+      expect(result.error.message).toMatch(/Failed to read config file/);
+      expect(result.error.message).toMatch(/\/nonexistent\/path\/to\/config\.yaml/);
+    }
+  });
+
+  it('returns Err(ConfigError) for invalid YAML in a file', () => {
+    const path = writeTempConfig('key: [unclosed bracket');
+    const result = loadConfig(path);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+      expect(result.error.message).toMatch(/Failed to parse YAML/);
+    }
+  });
+
+  it('returns Err(ConfigError) for schema violations in a file', () => {
+    const path = writeTempConfig('logLevel: not-a-valid-level\n');
+    const result = loadConfig(path);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+      expect(result.error.message).toMatch(/logLevel/);
+    }
+  });
+
+  it('includes the file path in the read error message', () => {
+    const result = loadConfig('/does/not/exist.yaml');
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain('/does/not/exist.yaml');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Frozen output
+// ---------------------------------------------------------------------------
+
+describe('frozen config output', () => {
+  it('loadConfigFromString returns a frozen config', () => {
+    const result = loadConfigFromString('{}');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(Object.isFrozen(result.value)).toBe(true);
+    }
+  });
+
+  it('loadConfigFromString returns frozen nested objects', () => {
+    const result = loadConfigFromString('{}');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(Object.isFrozen(result.value.storage)).toBe(true);
+      expect(Object.isFrozen(result.value.sandbox)).toBe(true);
+      expect(Object.isFrozen(result.value.ipc)).toBe(true);
+      expect(Object.isFrozen(result.value.queue)).toBe(true);
+      expect(Object.isFrozen(result.value.scheduler)).toBe(true);
+    }
+  });
+
+  it('loadConfigFromString returns frozen arrays', () => {
+    const result = loadConfigFromString('channels:\n  - type: telegram\n    name: main\n');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(Object.isFrozen(result.value.channels)).toBe(true);
+      expect(Object.isFrozen(result.value.channels[0])).toBe(true);
+    }
+  });
+
+  it('loadConfig (file) returns a frozen config', () => {
+    const path = writeTempConfig('{}');
+    const result = loadConfig(path);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(Object.isFrozen(result.value)).toBe(true);
+    }
+  });
+
+  it('mutating a frozen config throws in strict mode', () => {
+    const result = loadConfigFromString('{}');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // In strict mode (which vitest uses), assigning to a frozen object throws
+      expect(() => {
+        (result.value as Record<string, unknown>)['logLevel'] = 'debug';
+      }).toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateConfig
+// ---------------------------------------------------------------------------
+
+describe('validateConfig', () => {
+  it('returns Ok for a valid plain object', () => {
+    const result = validateConfig({ logLevel: 'error' });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.logLevel).toBe('error');
+    }
+  });
+
+  it('returns Ok with defaults for an empty object', () => {
+    const result = validateConfig({});
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.logLevel).toBe('info');
+    }
+  });
+
+  it('returns Err(ConfigError) for invalid data', () => {
+    const result = validateConfig({ logLevel: 'not-a-level' });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+      expect(result.error.message).toMatch(/logLevel/);
+    }
+  });
+
+  it('returns Err(ConfigError) for a non-object input', () => {
+    const result = validateConfig('not an object');
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toBeInstanceOf(ConfigError);
+    }
+  });
+
+  it('returns a frozen config', () => {
+    const result = validateConfig({});
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(Object.isFrozen(result.value)).toBe(true);
+    }
+  });
+
+  it('includes field path in validation error message', () => {
+    const result = validateConfig({ ipc: { pollIntervalMs: 50 } });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toMatch(/ipc\.pollIntervalMs/);
+    }
+  });
+});
