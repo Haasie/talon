@@ -6,4 +6,4 @@
  * Markdown is the canonical output format; channels convert on the way out.
  */
 
-export {};
+export { stripMarkdown, escapeForChannel } from './markdown-converter.js';
