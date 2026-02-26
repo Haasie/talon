@@ -50,6 +50,7 @@ export class QueueRepository extends BaseRepository {
   private readonly findPendingStmt: Database.Statement;
   private readonly findDeadLetterStmt: Database.Statement;
   private readonly countByStatusStmt: Database.Statement;
+  private readonly hasInflightItemStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     super(db);
@@ -109,6 +110,13 @@ export class QueueRepository extends BaseRepository {
 
     this.countByStatusStmt = db.prepare(`
       SELECT status, COUNT(*) as count FROM queue_items GROUP BY status
+    `);
+
+    this.hasInflightItemStmt = db.prepare(`
+      SELECT 1 FROM queue_items
+      WHERE thread_id = ?
+        AND status IN ('claimed', 'processing')
+      LIMIT 1
     `);
   }
 
@@ -198,6 +206,16 @@ export class QueueRepository extends BaseRepository {
     }
   }
 
+  /** Returns a single queue item by its primary key, or null if not found. */
+  findById(id: string): Result<QueueItemRow | null, DbError> {
+    try {
+      const row = this.findByIdStmt.get(id) as QueueItemRow | undefined;
+      return ok(row ?? null);
+    } catch (cause) {
+      return err(new DbError(`Failed to find queue item by id: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
   /** Returns all items that are eligible to be processed (pending or failed with elapsed retry). */
   findPending(now?: number): Result<QueueItemRow[], DbError> {
     try {
@@ -229,6 +247,21 @@ export class QueueRepository extends BaseRepository {
       return ok(result);
     } catch (cause) {
       return err(new DbError(`Failed to count queue items by status: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /**
+   * Returns true if the given thread has any item in claimed or processing state.
+   *
+   * Used by the queue processor to enforce the "no interleaved runs" invariant:
+   * a new item must not be claimed for a thread that already has one in flight.
+   */
+  hasInflightItem(threadId: string): Result<boolean, DbError> {
+    try {
+      const row = this.hasInflightItemStmt.get(threadId);
+      return ok(row !== undefined);
+    } catch (cause) {
+      return err(new DbError(`Failed to check inflight item for thread: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
   }
 }
