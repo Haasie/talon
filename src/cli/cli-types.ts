@@ -74,6 +74,18 @@ export interface DaemonStatusData {
   channelCount: number;
   /** Number of items in dead-letter state. */
   deadLetterCount: number;
+  /**
+   * Aggregate token usage over the last 24 hours (all personas).
+   * Omitted when the daemon has no usage data available.
+   */
+  tokenUsage24h?: {
+    /** Total input tokens consumed in the last 24 hours. */
+    inputTokens: number;
+    /** Total output tokens consumed in the last 24 hours. */
+    outputTokens: number;
+    /** Estimated cost in USD for the last 24 hours. */
+    costUsd: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
