@@ -6,4 +6,6 @@
  * and handled (skip, catch-up, or alert) after a daemon restart.
  */
 
-export {};
+export { Scheduler } from './scheduler.js';
+export { getNextCronTime, isValidCronExpression } from './cron-evaluator.js';
+export type { ScheduleConfig, ScheduleType, ScheduleRow } from './schedule-types.js';
