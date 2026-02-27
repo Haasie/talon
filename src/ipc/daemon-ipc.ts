@@ -66,3 +66,13 @@ export const DaemonResponseSchema = z.object({
   data: z.record(z.unknown()).optional(),
   error: z.string().optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Server and client re-exports
+// ---------------------------------------------------------------------------
+
+export { DaemonIpcServer } from './daemon-ipc-server.js';
+export type { DaemonIpcServerOptions } from './daemon-ipc-server.js';
+
+export { DaemonIpcClient } from './daemon-ipc-client.js';
+export type { DaemonIpcClientOptions } from './daemon-ipc-client.js';

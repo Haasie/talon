@@ -55,9 +55,13 @@ export { BidirectionalIpcChannel } from './ipc-channel.js';
 export {
   DaemonCommandSchema,
   DaemonResponseSchema,
+  DaemonIpcServer,
+  DaemonIpcClient,
 } from './daemon-ipc.js';
 export type {
   DaemonCommandType,
   DaemonCommand,
   DaemonResponse,
+  DaemonIpcServerOptions,
+  DaemonIpcClientOptions,
 } from './daemon-ipc.js';
