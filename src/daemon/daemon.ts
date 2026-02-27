@@ -44,9 +44,11 @@ import { Scheduler } from '../scheduler/scheduler.js';
 import { DaemonError } from '../core/errors/error-types.js';
 
 import { recoverFromCrash, writePidFile, removePidFile } from './lifecycle.js';
+import { WatchdogNotifier } from './watchdog.js';
 import type { DaemonState, DaemonHealth } from './daemon-types.js';
 import { DaemonIpcServer } from '../ipc/daemon-ipc-server.js';
 import type { DaemonCommand, DaemonResponse } from '../ipc/daemon-ipc.js';
+import type { TalondConfig } from '../core/config/config-types.js';
 
 // TODO: Wire up SandboxManager when sandbox integration task is complete.
 // TODO: Wire up PersonaLoader when persona management task is complete.
@@ -77,7 +79,14 @@ export class TalondDaemon {
   private queueManager: QueueManager | null = null;
   private scheduler: Scheduler | null = null;
   private ipcServer: DaemonIpcServer | null = null;
+  private watchdog: WatchdogNotifier | null = null;
   private dataDir: string = 'data';
+
+  /** Path used to load the config at start-time; re-used by reload(). */
+  private configPath: string | null = null;
+
+  /** Active config snapshot; updated on successful reload(). */
+  private currentConfig: TalondConfig | null = null;
 
   constructor(private readonly logger: pino.Logger) {}
 
@@ -124,6 +133,7 @@ export class TalondDaemon {
     }
 
     this._state = 'starting';
+    this.configPath = configPath;
     this.logger.info({ configPath }, 'daemon: starting');
 
     // ------------------------------------------------------------------
@@ -141,6 +151,7 @@ export class TalondDaemon {
     }
     const config = configResult.value;
     this.dataDir = config.dataDir;
+    this.currentConfig = config;
     this.logger.info({ logLevel: config.logLevel }, 'daemon: config loaded');
 
     // ------------------------------------------------------------------
@@ -280,6 +291,19 @@ export class TalondDaemon {
     this.startedAt = Date.now();
     this.logger.info('daemon: running');
 
+    // ------------------------------------------------------------------
+    // 14. Start watchdog notifier
+    //     Interval is set to 10 seconds by default; WatchdogSec in the
+    //     systemd unit file should be at least 2× this value (30 s).
+    // ------------------------------------------------------------------
+    this.watchdog = new WatchdogNotifier({
+      intervalMs: 10_000,
+      logger: this.logger,
+      dataDir: this.dataDir,
+    });
+    this.watchdog.start();
+    this.watchdog.notifyReady();
+
     return ok(undefined);
   }
 
@@ -308,6 +332,13 @@ export class TalondDaemon {
 
     this._state = 'stopping';
     this.logger.info('daemon: stopping');
+
+    // 0. Notify watchdog that graceful shutdown is beginning
+    if (this.watchdog !== null) {
+      this.watchdog.notifyStopping();
+      this.watchdog.stop();
+      this.watchdog = null;
+    }
 
     // 1. Stop channel connectors
     if (this.channelRegistry !== null) {
@@ -356,6 +387,8 @@ export class TalondDaemon {
 
     this._state = 'stopped';
     this.startedAt = null;
+    this.configPath = null;
+    this.currentConfig = null;
     this.logger.info('daemon: stopped');
   }
 
@@ -397,14 +430,25 @@ export class TalondDaemon {
   // ---------------------------------------------------------------------------
 
   /**
-   * Placeholder for hot-reload support.
+   * Hot-reloads the daemon configuration without restarting subsystems.
    *
-   * Re-reads and logs the config but does not restart subsystems.
-   * Full hot-reload (re-registering connectors, updating schedules) is a
-   * future task.
+   * What is applied immediately:
+   * - Log level changes (updates the pino logger level in-place)
+   *
+   * What is logged but NOT applied (requires restart):
+   * - Queue / scheduler config changes
+   * - Container image changes (logged as a warning)
+   *
+   * What is logged for future connector re-registration:
+   * - Channel additions / removals
+   * - Persona additions / changes / removals
+   *
+   * Active containers in flight are NOT affected; changes apply to new runs
+   * only.
    *
    * @param configPath - Path to reload the config from.
    *                     Defaults to the path used at startup if omitted.
+   * @returns Ok(void) on success, Err(DaemonError) if config re-read fails.
    */
   async reload(configPath?: string): Promise<Result<void, DaemonError>> {
     if (this._state !== 'running') {
@@ -415,13 +459,17 @@ export class TalondDaemon {
       );
     }
 
-    if (!configPath) {
-      // TODO: persist the original configPath on start() and use it here.
-      this.logger.info('daemon: reload requested but no configPath provided — skipping');
+    // Resolve the effective config path: argument > saved startup path.
+    const effectivePath = configPath ?? this.configPath;
+    if (effectivePath === null) {
+      // This should not happen in normal usage (configPath is always set on start),
+      // but guard defensively.
+      this.logger.info('daemon: reload requested but no configPath is known — skipping');
       return ok(undefined);
     }
 
-    const configResult = loadConfig(configPath);
+    // Re-read and validate the config file.
+    const configResult = loadConfig(effectivePath);
     if (configResult.isErr()) {
       return err(
         new DaemonError(
@@ -431,8 +479,120 @@ export class TalondDaemon {
       );
     }
 
-    // TODO: apply hot-reload changes (update log level, re-register channels, etc.)
-    this.logger.info('daemon: config reloaded (hot-reload not yet implemented)');
+    const newConfig = configResult.value;
+    const oldConfig = this.currentConfig;
+
+    this.logger.info({ configPath: effectivePath }, 'daemon: applying hot-reload');
+
+    // ------------------------------------------------------------------
+    // Log level — apply immediately to the live logger instance
+    // ------------------------------------------------------------------
+    if (oldConfig === null || newConfig.logLevel !== oldConfig.logLevel) {
+      this.logger.info(
+        { from: oldConfig?.logLevel ?? 'unknown', to: newConfig.logLevel },
+        'daemon: log level changed — applying immediately',
+      );
+      this.logger.level = newConfig.logLevel;
+    }
+
+    // ------------------------------------------------------------------
+    // Channel changes — log for future re-registration
+    // ------------------------------------------------------------------
+    if (oldConfig !== null) {
+      const oldChannelNames = new Set(oldConfig.channels.map((c) => c.name));
+      const newChannelNames = new Set(newConfig.channels.map((c) => c.name));
+
+      const added = newConfig.channels
+        .filter((c) => !oldChannelNames.has(c.name))
+        .map((c) => c.name);
+
+      const removed = oldConfig.channels
+        .filter((c) => !newChannelNames.has(c.name))
+        .map((c) => c.name);
+
+      if (added.length > 0) {
+        this.logger.info(
+          { added },
+          'daemon: reload — new channels detected (re-registration requires restart)',
+        );
+      }
+      if (removed.length > 0) {
+        this.logger.info(
+          { removed },
+          'daemon: reload — channels removed (de-registration requires restart)',
+        );
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Persona changes — log for future persona loader integration
+    // ------------------------------------------------------------------
+    if (oldConfig !== null) {
+      const oldPersonaNames = new Set(oldConfig.personas.map((p) => p.name));
+      const newPersonaNames = new Set(newConfig.personas.map((p) => p.name));
+
+      const addedPersonas = newConfig.personas
+        .filter((p) => !oldPersonaNames.has(p.name))
+        .map((p) => p.name);
+
+      const removedPersonas = oldConfig.personas
+        .filter((p) => !newPersonaNames.has(p.name))
+        .map((p) => p.name);
+
+      const changedPersonas = newConfig.personas
+        .filter((p) => {
+          if (!oldPersonaNames.has(p.name)) return false;
+          const old = oldConfig.personas.find((op) => op.name === p.name);
+          return JSON.stringify(old) !== JSON.stringify(p);
+        })
+        .map((p) => p.name);
+
+      if (addedPersonas.length > 0) {
+        this.logger.info({ added: addedPersonas }, 'daemon: reload — personas added');
+      }
+      if (removedPersonas.length > 0) {
+        this.logger.info({ removed: removedPersonas }, 'daemon: reload — personas removed');
+      }
+      if (changedPersonas.length > 0) {
+        this.logger.info({ changed: changedPersonas }, 'daemon: reload — personas changed');
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Queue / scheduler config changes — require restart
+    // ------------------------------------------------------------------
+    if (oldConfig !== null) {
+      const queueChanged =
+        JSON.stringify(oldConfig.queue) !== JSON.stringify(newConfig.queue);
+      if (queueChanged) {
+        this.logger.warn(
+          'daemon: reload — queue config changed; restart required to apply',
+        );
+      }
+
+      const schedulerChanged =
+        JSON.stringify(oldConfig.scheduler) !== JSON.stringify(newConfig.scheduler);
+      if (schedulerChanged) {
+        this.logger.warn(
+          'daemon: reload — scheduler config changed; restart required to apply',
+        );
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Container image changes — warn operator
+    // ------------------------------------------------------------------
+    if (oldConfig !== null && oldConfig.sandbox.image !== newConfig.sandbox.image) {
+      this.logger.warn(
+        { from: oldConfig.sandbox.image, to: newConfig.sandbox.image },
+        'daemon: reload — container image changed — manual rolling restart required',
+      );
+    }
+
+    // Update the cached config snapshot so the next reload has an accurate baseline.
+    this.currentConfig = newConfig;
+
+    this.logger.info('daemon: hot-reload complete');
     return ok(undefined);
   }
 
