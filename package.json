@@ -6,6 +6,9 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "talonctl": "bin/talonctl.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/index.ts",
