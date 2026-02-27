@@ -1,0 +1,277 @@
+/**
+ * WhatsApp channel connector.
+ *
+ * Implements the ChannelConnector interface using the WhatsApp Cloud API.
+ * Translates between the canonical InboundEvent / AgentOutput types and
+ * WhatsApp Cloud API payloads.
+ *
+ * This connector is send-only with externally-fed webhook ingestion:
+ * - No webhook server is started; the daemon's HTTP endpoint should proxy
+ *   incoming webhook requests to `feedWebhook()`.
+ * - Outbound messages are sent via the WhatsApp Cloud API graph endpoint.
+ */
+
+import type pino from 'pino';
+import type { ChannelConnector, InboundEvent, AgentOutput } from '../../channel-types.js';
+import type { Result } from '../../../core/types/result.js';
+import { ok, err } from '../../../core/types/result.js';
+import { ChannelError } from '../../../core/errors/error-types.js';
+import type {
+  WhatsAppConfig,
+  WhatsAppWebhookPayload,
+  WhatsAppSendResult,
+} from './whatsapp-types.js';
+import { markdownToWhatsApp } from './whatsapp-format.js';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const DEFAULT_API_VERSION = 'v18.0';
+const GRAPH_API_BASE = 'https://graph.facebook.com';
+
+// ---------------------------------------------------------------------------
+// WhatsAppConnector
+// ---------------------------------------------------------------------------
+
+/**
+ * Channel connector for WhatsApp via the Cloud API.
+ *
+ * Usage:
+ * 1. Construct with a WhatsAppConfig and a channel name.
+ * 2. Call `onMessage()` to register an inbound event handler.
+ * 3. Call `start()` to mark the connector as active.
+ * 4. Route incoming webhook payloads via `feedWebhook()`.
+ * 5. Call `stop()` to mark the connector as inactive.
+ */
+export class WhatsAppConnector implements ChannelConnector {
+  readonly type = 'whatsapp';
+  readonly name: string;
+
+  private handler?: (event: InboundEvent) => Promise<void>;
+  private running = false;
+
+  constructor(
+    private readonly config: WhatsAppConfig,
+    private readonly channelName: string,
+    private readonly logger: pino.Logger,
+  ) {
+    this.name = channelName;
+  }
+
+  // ---------------------------------------------------------------------------
+  // ChannelConnector lifecycle
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Mark the connector as started. Idempotent — no-op if already running.
+   *
+   * No webhook server is started here. Webhook delivery is expected to be
+   * handled externally (e.g. an nginx proxy forwarding to the daemon's HTTP
+   * endpoint, which then calls `feedWebhook()`).
+   */
+  async start(): Promise<void> {
+    if (this.running) {
+      this.logger.debug({ channelName: this.name }, 'whatsapp connector already running');
+      return;
+    }
+    this.running = true;
+    this.logger.info({ channelName: this.name }, 'whatsapp connector started');
+  }
+
+  /**
+   * Mark the connector as stopped. Idempotent — no-op if already stopped.
+   */
+  async stop(): Promise<void> {
+    if (!this.running) {
+      return;
+    }
+    this.running = false;
+    this.logger.info({ channelName: this.name }, 'whatsapp connector stopped');
+  }
+
+  /**
+   * Register the inbound message handler.
+   * A second call replaces the previous handler.
+   */
+  onMessage(handler: (event: InboundEvent) => Promise<void>): void {
+    this.handler = handler;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Outbound
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send an AgentOutput to a WhatsApp conversation.
+   *
+   * @param externalThreadId - WhatsApp phone number (the recipient's `wa_id`).
+   * @param output            - Agent output to deliver.
+   */
+  async send(externalThreadId: string, output: AgentOutput): Promise<Result<void, ChannelError>> {
+    const text = this.format(output.body);
+    const apiVersion = this.config.apiVersion ?? DEFAULT_API_VERSION;
+    const url = `${GRAPH_API_BASE}/${apiVersion}/${this.config.phoneNumberId}/messages`;
+
+    const requestBody = JSON.stringify({
+      messaging_product: 'whatsapp',
+      to: externalThreadId,
+      type: 'text',
+      text: { body: text },
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.config.accessToken}`,
+        },
+        body: requestBody,
+      });
+    } catch (fetchErr) {
+      const cause = fetchErr instanceof Error ? fetchErr : undefined;
+      return err(
+        new ChannelError(
+          `WhatsApp send network error: ${String(fetchErr)}`,
+          cause,
+        ),
+      );
+    }
+
+    let data: WhatsAppSendResult;
+    try {
+      data = (await response.json()) as WhatsAppSendResult;
+    } catch (_parseErr) {
+      return err(
+        new ChannelError(
+          `WhatsApp send: could not parse response (HTTP ${response.status})`,
+        ),
+      );
+    }
+
+    if (data.error) {
+      const { code, message } = data.error;
+      return err(
+        new ChannelError(
+          `WhatsApp send failed (${code}): ${message}`,
+        ),
+      );
+    }
+
+    if (!response.ok) {
+      return err(
+        new ChannelError(
+          `WhatsApp send failed with HTTP ${response.status}`,
+        ),
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  /**
+   * Convert a Markdown string to WhatsApp's native format.
+   */
+  format(markdown: string): string {
+    return markdownToWhatsApp(markdown);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inbound webhook ingestion
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Accept a raw WhatsApp Cloud API webhook payload, normalise each text
+   * message into an InboundEvent, and invoke the registered handler.
+   *
+   * This method is the integration point for the daemon's HTTP endpoint.
+   * Non-text message types (image, document, audio, etc.) are logged and
+   * skipped — they are not surfaced to the handler in v1.
+   *
+   * @param payload - Raw webhook payload from the WhatsApp Cloud API.
+   */
+  async feedWebhook(payload: WhatsAppWebhookPayload): Promise<void> {
+    if (payload.object !== 'whatsapp_business_account') {
+      this.logger.debug(
+        { channelName: this.name, object: payload.object },
+        'whatsapp webhook: ignoring non-whatsapp_business_account payload',
+      );
+      return;
+    }
+
+    for (const entry of payload.entry) {
+      for (const change of entry.changes) {
+        if (change.field !== 'messages') {
+          continue;
+        }
+
+        const value = change.value;
+        const messages = value.messages ?? [];
+
+        for (const message of messages) {
+          await this.handleMessage(message, value.contacts ?? []);
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal message handling
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Normalise a single WhatsApp message into an InboundEvent and invoke the
+   * registered handler. Non-text messages are logged and skipped.
+   */
+  private async handleMessage(
+    message: import('./whatsapp-types.js').WhatsAppMessage,
+    contacts: import('./whatsapp-types.js').WhatsAppContact[],
+  ): Promise<void> {
+    if (message.type !== 'text' || !message.text?.body) {
+      this.logger.info(
+        { channelName: this.name, messageId: message.id, type: message.type },
+        'whatsapp message type not supported, skipping',
+      );
+      return;
+    }
+
+    // Resolve sender display name from contacts list if available.
+    const contact = contacts.find((c) => c.wa_id === message.from);
+    const senderId = message.from;
+
+    // WhatsApp thread identity is the sender's phone number (wa_id).
+    // For group messaging this would be different, but Cloud API v1 targets
+    // individual conversations.
+    const externalThreadId = message.from;
+
+    const event: InboundEvent = {
+      channelType: this.type,
+      channelName: this.name,
+      externalThreadId,
+      senderId,
+      idempotencyKey: message.id,
+      content: message.text.body,
+      timestamp: Number(message.timestamp) * 1000, // WhatsApp sends seconds; we want ms
+      raw: { message, contact: contact ?? null },
+    };
+
+    if (!this.handler) {
+      this.logger.warn(
+        { channelName: this.name },
+        'whatsapp connector received message but no handler is registered',
+      );
+      return;
+    }
+
+    try {
+      await this.handler(event);
+    } catch (handlerErr) {
+      this.logger.error(
+        { channelName: this.name, err: handlerErr },
+        'whatsapp connector handler threw an error',
+      );
+    }
+  }
+}
