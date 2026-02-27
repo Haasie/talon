@@ -31,6 +31,9 @@ export interface ScheduleRow {
 /** Fields accepted when inserting a new schedule. */
 export type InsertScheduleInput = Omit<ScheduleRow, 'created_at' | 'updated_at'>;
 
+/** Fields that may be updated on an existing schedule by the schedule.manage tool. */
+export type UpdateScheduleInput = Partial<Pick<ScheduleRow, 'expression' | 'payload'>>;
+
 /** Repository for reading and writing schedule records. */
 export class ScheduleRepository extends BaseRepository {
   private readonly insertStmt: Database.Statement;
@@ -119,6 +122,36 @@ export class ScheduleRepository extends BaseRepository {
       return ok(rows);
     } catch (cause) {
       return err(new DbError(`Failed to find schedules by persona: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /**
+   * Updates mutable fields on an existing schedule.
+   *
+   * Only updates the fields present in `fields`. The schedule must belong to
+   * `personaId` to prevent cross-persona mutations.
+   *
+   * @param id        - Schedule primary key.
+   * @param personaId - Persona that owns the schedule (ownership check).
+   * @param fields    - Fields to update (expression and/or payload).
+   */
+  update(id: string, personaId: string, fields: UpdateScheduleInput): Result<ScheduleRow | null, DbError> {
+    try {
+      const setClause = Object.keys(fields)
+        .map((k) => `${k} = @${k}`)
+        .join(', ');
+      if (!setClause) {
+        const row = this.findByIdStmt.get(id) as ScheduleRow | undefined;
+        return ok(row ?? null);
+      }
+      const stmt = this.db.prepare(
+        `UPDATE schedules SET ${setClause}, updated_at = @updated_at WHERE id = @id AND persona_id = @persona_id`,
+      );
+      stmt.run({ ...fields, updated_at: this.now(), id, persona_id: personaId });
+      const row = this.findByIdStmt.get(id) as ScheduleRow | undefined;
+      return ok(row ?? null);
+    } catch (cause) {
+      return err(new DbError(`Failed to update schedule: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
   }
 

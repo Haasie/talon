@@ -39,7 +39,7 @@ export type {
 } from './run-repository.js';
 export { RunRepository } from './run-repository.js';
 
-export type { ScheduleRow, ScheduleType, InsertScheduleInput } from './schedule-repository.js';
+export type { ScheduleRow, ScheduleType, InsertScheduleInput, UpdateScheduleInput } from './schedule-repository.js';
 export { ScheduleRepository } from './schedule-repository.js';
 
 export type {
