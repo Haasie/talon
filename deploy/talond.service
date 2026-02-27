@@ -1,0 +1,28 @@
+[Unit]
+Description=Talon Autonomous Agent Daemon
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/node /opt/talond/dist/daemon/main.js --config /etc/talond/talond.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+WatchdogSec=30
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/talond /run/talond
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=talond
+
+[Install]
+WantedBy=multi-user.target

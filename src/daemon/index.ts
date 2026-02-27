@@ -10,4 +10,6 @@ export { TalondDaemon } from './daemon.js';
 export { setupSignalHandlers } from './signal-handler.js';
 export { recoverFromCrash, writePidFile, removePidFile } from './lifecycle.js';
 export { HealthCheck } from './health-check.js';
+export { WatchdogNotifier } from './watchdog.js';
+export type { WatchdogOptions } from './watchdog.js';
 export type { DaemonState, DaemonHealth, DaemonDependencies } from './daemon-types.js';
