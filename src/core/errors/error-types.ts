@@ -103,3 +103,8 @@ export class DaemonError extends TalonError {
 export class PipelineError extends TalonError {
   readonly code = 'PIPELINE_ERROR' as const;
 }
+
+/** Skill loading, validation, or resolution error. */
+export class SkillError extends TalonError {
+  readonly code = 'SKILL_ERROR' as const;
+}

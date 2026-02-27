@@ -23,6 +23,7 @@ export {
   McpError,
   DaemonError,
   PipelineError,
+  SkillError,
 } from './error-types.js';
 
 export { ErrorCodes } from './error-codes.js';
