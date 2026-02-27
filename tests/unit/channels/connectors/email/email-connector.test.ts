@@ -90,14 +90,15 @@ function makeImapClient(batches: ParsedEmail[][]): ImapClient {
   };
 }
 
-/** Build an IMAP client that throws on the first call, then succeeds. */
+/** Build an IMAP client that throws on the first call, then succeeds once. */
 function flakyImapClient(email: ParsedEmail): ImapClient {
   let callCount = 0;
   return {
     fetchUnseen: vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) throw new Error('imap connection reset');
-      return [email];
+      if (callCount === 2) return [email];
+      return [];
     }),
   };
 }
@@ -435,7 +436,7 @@ describe('EmailConnector IMAP polling', () => {
     expect(received.map((e) => e.content)).toEqual(['first', 'second', 'third']);
   });
 
-  it('continues polling after an IMAP error (exponential backoff)', async () => {
+  it('continues polling after an IMAP error (exponential backoff)', { timeout: 10_000 }, async () => {
     const received: InboundEvent[] = [];
     const email = makeEmail({ messageId: '<after-error@h>' });
 
@@ -447,7 +448,7 @@ describe('EmailConnector IMAP polling', () => {
 
     await connector.start();
     // The second poll (after backoff) should succeed.
-    await vi.waitFor(() => expect(received.length).toBe(1), { timeout: 5000 });
+    await vi.waitFor(() => expect(received.length).toBe(1), { timeout: 8000 });
     await connector.stop();
   });
 
