@@ -98,3 +98,8 @@ export class McpError extends TalonError {
 export class DaemonError extends TalonError {
   readonly code = 'DAEMON_ERROR' as const;
 }
+
+/** Message ingestion pipeline error (normalization, dedup, or routing failure). */
+export class PipelineError extends TalonError {
+  readonly code = 'PIPELINE_ERROR' as const;
+}

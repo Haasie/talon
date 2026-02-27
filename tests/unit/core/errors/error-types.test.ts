@@ -13,6 +13,7 @@ import {
   PolicyError,
   MemoryError,
   PersonaError,
+  PipelineError,
 } from '../../../../src/core/errors/error-types.js';
 
 // ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ describeErrorClass('MigrationError', MigrationError, 'MIGRATION_ERROR');
 describeErrorClass('PolicyError', PolicyError, 'POLICY_ERROR');
 describeErrorClass('MemoryError', MemoryError, 'MEMORY_ERROR');
 describeErrorClass('PersonaError', PersonaError, 'PERSONA_ERROR');
+describeErrorClass('PipelineError', PipelineError, 'PIPELINE_ERROR');
 
 // ---------------------------------------------------------------------------
 // TalonError abstract contract
@@ -112,6 +114,7 @@ describe('TalonError (base class)', () => {
       new PolicyError('j'),
       new MemoryError('k'),
       new PersonaError('l'),
+      new PipelineError('m'),
     ] as TalonError[];
 
     const codes = errors.map((e) => e.code);

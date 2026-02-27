@@ -22,6 +22,7 @@ export {
   PersonaError,
   McpError,
   DaemonError,
+  PipelineError,
 } from './error-types.js';
 
 export { ErrorCodes } from './error-codes.js';
