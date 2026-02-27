@@ -1,0 +1,53 @@
+/**
+ * Types for the persona management system.
+ *
+ * A LoadedPersona combines the raw config with the resolved system prompt
+ * content and fully-merged capability policy. This is the runtime representation
+ * used throughout the daemon after startup persona loading.
+ */
+
+import type { PersonaConfig, CapabilitiesConfig } from '../core/config/config-types.js';
+
+// Re-export PersonaConfig for consumers that import from this module.
+export type { PersonaConfig, CapabilitiesConfig };
+
+// ---------------------------------------------------------------------------
+// Resolved capabilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Effective capability policy for a running persona.
+ *
+ * After merging persona-level grants with skill-level requirements, we have
+ * two disjoint sets: capabilities that are directly allowed, and those that
+ * require human approval before the action may proceed.
+ *
+ * Note: `requireApproval` takes precedence — if a label appears in both
+ * lists, it is treated as requiring approval.
+ */
+export interface ResolvedCapabilities {
+  /** Capability labels that are permitted without extra confirmation. */
+  allow: string[];
+  /** Capability labels that need an approval gate before use. */
+  requireApproval: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Loaded persona
+// ---------------------------------------------------------------------------
+
+/**
+ * A persona as it exists in memory after being loaded from config, with the
+ * system-prompt file content read and capabilities fully resolved.
+ */
+export interface LoadedPersona {
+  /** The original config-file declaration for this persona. */
+  config: PersonaConfig;
+  /**
+   * Content of the system prompt file, if `systemPromptFile` was specified
+   * and the file was read successfully. `undefined` otherwise.
+   */
+  systemPromptContent?: string;
+  /** Effective capability policy after merging persona + skill grants. */
+  resolvedCapabilities: ResolvedCapabilities;
+}

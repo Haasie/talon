@@ -6,4 +6,6 @@
  * parameters. One persona per channel is the default; sharing is opt-in.
  */
 
-export {};
+export type { LoadedPersona, ResolvedCapabilities, PersonaConfig, CapabilitiesConfig } from './persona-types.js';
+export { PersonaLoader } from './persona-loader.js';
+export { mergeCapabilities, validateCapabilityLabels } from './capability-merger.js';
