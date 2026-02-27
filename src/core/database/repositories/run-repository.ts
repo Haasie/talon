@@ -13,6 +13,16 @@ import { BaseRepository } from './base-repository.js';
 /** Valid run status values. */
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
+/** Row shape returned by token aggregation queries. */
+export interface TokenAggregateRow {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_write_tokens: number;
+  total_cost_usd: number;
+  run_count: number;
+}
+
 /** Row shape matching the `runs` table exactly. */
 export interface RunRow {
   id: string;
@@ -146,6 +156,98 @@ export class RunRepository extends BaseRepository {
       return this.findById(id);
     } catch (cause) {
       return err(new DbError(`Failed to update run status: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aggregation queries
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns aggregate token usage for all completed runs belonging to a persona.
+   *
+   * @param personaId - Persona primary key.
+   * @param since - Optional lower bound timestamp (Unix epoch ms, inclusive).
+   * @param until - Optional upper bound timestamp (Unix epoch ms, inclusive).
+   */
+  aggregateByPersona(personaId: string, since?: number, until?: number): Result<TokenAggregateRow, DbError> {
+    return this._aggregate({ personaId, since, until });
+  }
+
+  /**
+   * Returns aggregate token usage for all completed runs in a thread.
+   *
+   * @param threadId - Thread primary key.
+   * @param since - Optional lower bound timestamp (Unix epoch ms, inclusive).
+   * @param until - Optional upper bound timestamp (Unix epoch ms, inclusive).
+   */
+  aggregateByThread(threadId: string, since?: number, until?: number): Result<TokenAggregateRow, DbError> {
+    return this._aggregate({ threadId, since, until });
+  }
+
+  /**
+   * Returns aggregate token usage for all completed runs in a time period
+   * across all personas and threads.
+   *
+   * @param since - Lower bound timestamp (Unix epoch ms, inclusive).
+   * @param until - Optional upper bound timestamp (Unix epoch ms, inclusive). Defaults to now.
+   */
+  aggregateByPeriod(since: number, until?: number): Result<TokenAggregateRow, DbError> {
+    return this._aggregate({ since, until });
+  }
+
+  /**
+   * Internal helper that builds and executes an aggregation query with
+   * optional persona/thread/time filters.
+   */
+  private _aggregate(filters: {
+    personaId?: string;
+    threadId?: string;
+    since?: number;
+    until?: number;
+  }): Result<TokenAggregateRow, DbError> {
+    try {
+      const conditions: string[] = [`status = 'completed'`];
+      const params: (string | number)[] = [];
+
+      if (filters.personaId !== undefined) {
+        conditions.push('persona_id = ?');
+        params.push(filters.personaId);
+      }
+
+      if (filters.threadId !== undefined) {
+        conditions.push('thread_id = ?');
+        params.push(filters.threadId);
+      }
+
+      if (filters.since !== undefined) {
+        conditions.push('created_at >= ?');
+        params.push(filters.since);
+      }
+
+      if (filters.until !== undefined) {
+        conditions.push('created_at <= ?');
+        params.push(filters.until);
+      }
+
+      const where = conditions.join(' AND ');
+      const sql = `
+        SELECT
+          COALESCE(SUM(input_tokens),       0) AS total_input_tokens,
+          COALESCE(SUM(output_tokens),      0) AS total_output_tokens,
+          COALESCE(SUM(cache_read_tokens),  0) AS total_cache_read_tokens,
+          COALESCE(SUM(cache_write_tokens), 0) AS total_cache_write_tokens,
+          COALESCE(SUM(cost_usd),           0) AS total_cost_usd,
+          COUNT(*)                              AS run_count
+        FROM runs
+        WHERE ${where}
+      `;
+
+      const stmt = this.db.prepare(sql);
+      const row = stmt.get(...params) as TokenAggregateRow;
+      return ok(row);
+    } catch (cause) {
+      return err(new DbError(`Failed to aggregate token usage: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
   }
 

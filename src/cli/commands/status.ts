@@ -182,6 +182,12 @@ function displayStatus(data: Partial<DaemonStatusData>): void {
   console.log(`Dead-letter items: ${data.deadLetterCount ?? 'unknown'}`);
   console.log(`Personas:          ${data.personaCount ?? 'unknown'}`);
   console.log(`Channels:          ${data.channelCount ?? 'unknown'}`);
+
+  if (data.tokenUsage24h !== undefined) {
+    const { inputTokens, outputTokens, costUsd } = data.tokenUsage24h;
+    console.log(`Token usage (24h): ${inputTokens} in / ${outputTokens} out`);
+    console.log(`Estimated cost (24h): $${costUsd.toFixed(4)}`);
+  }
 }
 
 /** Formats a duration in ms into a human-readable string. */

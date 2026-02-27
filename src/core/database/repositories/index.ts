@@ -36,6 +36,7 @@ export type {
   RunStatus,
   InsertRunInput,
   UpdateTokensInput,
+  TokenAggregateRow,
 } from './run-repository.js';
 export { RunRepository } from './run-repository.js';
 
