@@ -108,3 +108,8 @@ export class PipelineError extends TalonError {
 export class CollaborationError extends TalonError {
   readonly code = 'COLLABORATION_ERROR' as const;
 }
+
+/** Skill loading, validation, or resolution error. */
+export class SkillError extends TalonError {
+  readonly code = 'SKILL_ERROR' as const;
+}

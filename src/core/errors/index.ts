@@ -24,6 +24,7 @@ export {
   DaemonError,
   PipelineError,
   CollaborationError,
+  SkillError,
 } from './error-types.js';
 
 export { ErrorCodes } from './error-codes.js';
