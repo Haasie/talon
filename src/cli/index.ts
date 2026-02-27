@@ -16,6 +16,10 @@ import { migrateCommand } from './commands/migrate.js';
 import { backupCommand } from './commands/backup.js';
 import { reloadCommand } from './commands/reload.js';
 import { doctorCommand } from './commands/doctor.js';
+import { setupCommand } from './commands/setup.js';
+import { addChannelCommand } from './commands/add-channel.js';
+import { addPersonaCommand } from './commands/add-persona.js';
+import { addSkillCommand } from './commands/add-skill.js';
 
 const program = new Command();
 
@@ -74,6 +78,58 @@ program
   .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
   .action(async (opts: { config: string }) => {
     await doctorCommand({ configPath: opts.config });
+  });
+
+program
+  .command('setup')
+  .description('First-time setup: detect environment, create directories, generate config')
+  .option('--config <path>', 'Path to write talond.yaml', 'talond.yaml')
+  .option('--data-dir <path>', 'Data directory path', 'data')
+  .action(async (opts: { config: string; dataDir: string }) => {
+    await setupCommand({
+      configPath: opts.config,
+      dataDir: opts.dataDir,
+    });
+  });
+
+program
+  .command('add-channel')
+  .description('Add a channel connector to talond.yaml')
+  .requiredOption('--name <name>', 'Unique channel name (e.g. my-telegram)')
+  .requiredOption('--type <type>', 'Connector type (e.g. telegram, slack, discord)')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; type: string; config: string }) => {
+    await addChannelCommand({
+      name: opts.name,
+      type: opts.type,
+      configPath: opts.config,
+    });
+  });
+
+program
+  .command('add-persona')
+  .description('Scaffold a persona directory and add it to talond.yaml')
+  .requiredOption('--name <name>', 'Persona name (e.g. assistant)')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; config: string }) => {
+    await addPersonaCommand({
+      name: opts.name,
+      configPath: opts.config,
+    });
+  });
+
+program
+  .command('add-skill')
+  .description('Scaffold a skill directory and add it to a persona in talond.yaml')
+  .requiredOption('--name <name>', 'Skill name (e.g. web-search)')
+  .requiredOption('--persona <persona>', 'Persona to attach the skill to')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; persona: string; config: string }) => {
+    await addSkillCommand({
+      name: opts.name,
+      personaName: opts.persona,
+      configPath: opts.config,
+    });
   });
 
 program.parse();
