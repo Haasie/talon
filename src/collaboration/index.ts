@@ -6,4 +6,14 @@
  * across the swarm. Built on the Claude agent SDK subagent primitives.
  */
 
-export {};
+export type {
+  RetryPolicy,
+  SupervisorConfig,
+  WorkerConfig,
+  ChildRunInfo,
+  CollaborationSession,
+  WorkerResult,
+} from './collaboration-types.js';
+
+export { Supervisor } from './supervisor.js';
+export { WorkerManager } from './worker-manager.js';

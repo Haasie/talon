@@ -103,3 +103,8 @@ export class DaemonError extends TalonError {
 export class PipelineError extends TalonError {
   readonly code = 'PIPELINE_ERROR' as const;
 }
+
+/** Multi-agent collaboration session or worker coordination error. */
+export class CollaborationError extends TalonError {
+  readonly code = 'COLLABORATION_ERROR' as const;
+}

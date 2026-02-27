@@ -14,6 +14,7 @@ import {
   MemoryError,
   PersonaError,
   PipelineError,
+  CollaborationError,
 } from '../../../../src/core/errors/error-types.js';
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,7 @@ describeErrorClass('PolicyError', PolicyError, 'POLICY_ERROR');
 describeErrorClass('MemoryError', MemoryError, 'MEMORY_ERROR');
 describeErrorClass('PersonaError', PersonaError, 'PERSONA_ERROR');
 describeErrorClass('PipelineError', PipelineError, 'PIPELINE_ERROR');
+describeErrorClass('CollaborationError', CollaborationError, 'COLLABORATION_ERROR');
 
 // ---------------------------------------------------------------------------
 // TalonError abstract contract
@@ -115,10 +117,11 @@ describe('TalonError (base class)', () => {
       new MemoryError('k'),
       new PersonaError('l'),
       new PipelineError('m'),
+      new CollaborationError('n'),
     ] as TalonError[];
 
     const codes = errors.map((e) => e.code);
     const unique = new Set(codes);
-    expect(unique.size).toBe(codes.length);
+    expect(unique.size).toBe(codes.length); // all codes are unique
   });
 });
