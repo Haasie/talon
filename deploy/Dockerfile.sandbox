@@ -1,0 +1,56 @@
+# =============================================================================
+# Dockerfile.sandbox — agent sandbox image
+# =============================================================================
+# Minimal image used to run an AI agent in an isolated container.
+# Security design:
+#   - Non-root user 'agent' (uid 1001)
+#   - No interactive shell access (nologin)
+#   - Compatible with read-only rootfs (--read-only Docker flag)
+#   - No dev dependencies
+#   - Network is disabled at runtime by talond (--network none)
+#   - All Linux capabilities are dropped at runtime (--cap-drop ALL)
+# =============================================================================
+
+FROM node:22-slim
+
+# Label the image for identification and auditing
+LABEL org.opencontainers.image.title="talon-sandbox" \
+      org.opencontainers.image.description="Talon agent sandbox execution environment" \
+      org.opencontainers.image.licenses="MIT"
+
+ENV NODE_ENV=production
+
+# Install tini for signal forwarding and zombie reaping.
+# Also install ca-certificates so HTTPS calls work when the sandbox
+# is intentionally granted network access for specific personas.
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends tini ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user with no home directory and no login shell.
+# UID 1001 is chosen to avoid conflict with the talond user (1000).
+RUN groupadd --gid 1001 agent && \
+    useradd --uid 1001 --gid agent --no-create-home --shell /usr/sbin/nologin agent
+
+# Install the Anthropic Claude agent SDK globally so sandbox scripts
+# can import it without bundling it into every mounted script.
+# Use --ignore-scripts to prevent any postinstall code from running.
+RUN npm install --global --ignore-scripts \
+    @anthropic-ai/sdk && \
+    npm cache clean --force
+
+# The workspace directory is where talond bind-mounts the agent script
+# and any task-specific artifacts at runtime.
+WORKDIR /workspace
+
+# Ensure the agent user owns the workspace so it can write task outputs.
+RUN chown agent:agent /workspace
+
+# Switch to the restricted agent user
+USER agent
+
+# ENTRYPOINT is 'node' — talond passes the mounted script path as the
+# first argument (e.g. docker run talon-sandbox /workspace/agent.js).
+# Using tini as PID 1 ensures SIGTERM is forwarded to node and that
+# any child processes are properly waited on.
+ENTRYPOINT ["/usr/bin/tini", "--", "node"]

@@ -1,0 +1,91 @@
+# =============================================================================
+# docker-compose.yaml — Talon daemon example Docker Compose setup
+# =============================================================================
+# Quick start:
+#   1. cp config/talond.example.yaml config/talond.yaml
+#   2. Edit config/talond.yaml with your API keys and channel settings
+#   3. cp deploy/.env.example .env  (and fill in secrets)
+#   4. docker compose up -d
+# =============================================================================
+
+services:
+  talond:
+    # Build from the local Dockerfile (or replace 'build' with 'image: talond:latest')
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+
+    container_name: talond
+
+    # Restart the container automatically unless it was explicitly stopped
+    restart: unless-stopped
+
+    # Load secrets and overrides from a .env file in the project root.
+    # Never commit .env to version control — add it to .gitignore.
+    env_file:
+      - ../.env
+
+    environment:
+      # Force production mode regardless of what the .env file says
+      NODE_ENV: production
+
+    volumes:
+      # Persistent data: SQLite database, PID file, IPC sockets
+      - talond-data:/data
+
+      # Configuration: bind-mount your edited talond.yaml here
+      - type: bind
+        source: ../config/talond.yaml
+        target: /config/talond.yaml
+        read_only: true
+
+      # -----------------------------------------------------------------------
+      # Docker socket (optional — only needed for sandbox container spawning)
+      # -----------------------------------------------------------------------
+      # Mounting the Docker socket gives talond the ability to create and manage
+      # sandbox containers on the host. This is a privileged operation — anyone
+      # with access to the socket can run containers as root.
+      #
+      # Security recommendations when enabling:
+      #   - Use Docker socket proxy (e.g. Tecnativa/docker-socket-proxy) to
+      #     restrict API access to only the endpoints talond needs.
+      #   - Use rootless Docker so the socket does not grant root on the host.
+      #   - Do NOT expose the socket to untrusted networks.
+      #
+      # Uncomment the line below to enable sandbox spawning:
+      # - /var/run/docker.sock:/var/run/docker.sock
+
+    # Map no ports by default. If you enable the MCP server or webhook mode,
+    # uncomment and adjust the relevant port mapping.
+    # ports:
+    #   - "127.0.0.1:5173:5173"  # MCP server (if enabled in talond.yaml)
+
+    # Health check mirrors the HEALTHCHECK in the Dockerfile but is also
+    # expressed here so Compose restarts unhealthy containers.
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+    # Drop all Linux capabilities — talond does not need any special privileges
+    cap_drop:
+      - ALL
+
+    # Prevent privilege escalation via setuid/setgid binaries
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits — adjust based on expected agent workload
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+# Named volume for persistent daemon data (survives container restarts)
+volumes:
+  talond-data:
+    driver: local
