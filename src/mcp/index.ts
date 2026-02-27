@@ -6,4 +6,14 @@
  * kept small and stable.
  */
 
-export {};
+export type {
+  McpServerConfig,
+  McpRateLimitConfig,
+  McpToolCall,
+  McpToolResult,
+  McpServerStatus,
+  McpServerEntry,
+} from './mcp-types.js';
+
+export { McpRegistry } from './mcp-registry.js';
+export { McpProxy } from './mcp-proxy.js';

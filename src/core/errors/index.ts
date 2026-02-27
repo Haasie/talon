@@ -20,6 +20,7 @@ export {
   PolicyError,
   MemoryError,
   PersonaError,
+  McpError,
 } from './error-types.js';
 
 export { ErrorCodes } from './error-codes.js';

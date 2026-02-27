@@ -88,3 +88,8 @@ export class MemoryError extends TalonError {
 export class PersonaError extends TalonError {
   readonly code = 'PERSONA_ERROR' as const;
 }
+
+/** MCP proxy, registry, or forwarding error. */
+export class McpError extends TalonError {
+  readonly code = 'MCP_ERROR' as const;
+}
