@@ -40,4 +40,13 @@ export type {
   HttpProxyArgs,
   DbQueryTool,
   DbQueryArgs,
+  ToolExecutionContext,
+} from './host-tools/index.js';
+
+export {
+  ChannelSendHandler,
+  ScheduleManageHandler,
+  MemoryAccessHandler,
+  HttpProxyHandler,
+  DbQueryHandler,
 } from './host-tools/index.js';
