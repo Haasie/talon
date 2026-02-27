@@ -93,3 +93,8 @@ export class PersonaError extends TalonError {
 export class McpError extends TalonError {
   readonly code = 'MCP_ERROR' as const;
 }
+
+/** Message ingestion pipeline error (normalization, dedup, or routing failure). */
+export class PipelineError extends TalonError {
+  readonly code = 'PIPELINE_ERROR' as const;
+}
