@@ -45,12 +45,13 @@ import { DaemonError } from '../core/errors/error-types.js';
 
 import { recoverFromCrash, writePidFile, removePidFile } from './lifecycle.js';
 import type { DaemonState, DaemonHealth } from './daemon-types.js';
+import { DaemonIpcServer } from '../ipc/daemon-ipc-server.js';
+import type { DaemonCommand, DaemonResponse } from '../ipc/daemon-ipc.js';
 
 // TODO: Wire up SandboxManager when sandbox integration task is complete.
 // TODO: Wire up PersonaLoader when persona management task is complete.
 // TODO: Wire up SkillLoader when skill loading task is complete.
 // TODO: Wire up McpProxy when MCP integration task is complete.
-// TODO: Wire up DaemonIpc when IPC task is complete.
 
 // ---------------------------------------------------------------------------
 // TalondDaemon
@@ -75,6 +76,7 @@ export class TalondDaemon {
   private channelRegistry: ChannelRegistry | null = null;
   private queueManager: QueueManager | null = null;
   private scheduler: Scheduler | null = null;
+  private ipcServer: DaemonIpcServer | null = null;
   private dataDir: string = 'data';
 
   constructor(private readonly logger: pino.Logger) {}
@@ -108,7 +110,8 @@ export class TalondDaemon {
    * 10. Start queue processing loop
    * 11. Start scheduler tick loop
    * 12. Write PID file
-   * 13. Mark state as 'running'
+   * 13. Start IPC server
+   * 14. Mark state as 'running'
    *
    * @param configPath - Absolute or relative path to the YAML config file.
    * @returns Ok(void) on success, Err(DaemonError) on unrecoverable failure.
@@ -257,7 +260,21 @@ export class TalondDaemon {
     }
 
     // ------------------------------------------------------------------
-    // 13. Mark running
+    // 13. Start IPC server
+    // ------------------------------------------------------------------
+    const ipcBase = join(this.dataDir, 'ipc/daemon');
+    this.ipcServer = new DaemonIpcServer({
+      inputDir: join(ipcBase, 'input'),
+      outputDir: join(ipcBase, 'output'),
+      errorsDir: join(ipcBase, 'errors'),
+      logger: this.logger,
+      commandHandler: (cmd: DaemonCommand) => this.handleIpcCommand(cmd),
+    });
+    this.ipcServer.start();
+    this.logger.info('daemon: IPC server started');
+
+    // ------------------------------------------------------------------
+    // 14. Mark running
     // ------------------------------------------------------------------
     this._state = 'running';
     this.startedAt = Date.now();
@@ -312,6 +329,12 @@ export class TalondDaemon {
     if (this.queueManager !== null) {
       this.queueManager.stopProcessing();
       this.queueManager = null;
+    }
+
+    // 3b. Stop IPC server
+    if (this.ipcServer !== null) {
+      this.ipcServer.stop();
+      this.ipcServer = null;
     }
 
     // 4. Close database
@@ -411,5 +434,89 @@ export class TalondDaemon {
     // TODO: apply hot-reload changes (update log level, re-register channels, etc.)
     this.logger.info('daemon: config reloaded (hot-reload not yet implemented)');
     return ok(undefined);
+  }
+
+  // ---------------------------------------------------------------------------
+  // IPC command handler
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Handles a {@link DaemonCommand} received over IPC and returns a
+   * {@link DaemonResponse}.
+   *
+   * Dispatches on the command type:
+   *   - `status`   → calls `health()` and maps health data into the response
+   *   - `reload`   → calls `reload()` with optional config path from payload
+   *   - `shutdown` → calls `stop()` and returns success
+   *   - unknown    → returns an error response
+   *
+   * @param command - The validated command received from the IPC input dir.
+   */
+  private async handleIpcCommand(command: DaemonCommand): Promise<DaemonResponse> {
+    const { randomUUID } = await import('crypto');
+    const responseId = randomUUID();
+
+    switch (command.command) {
+      case 'status': {
+        const healthData = this.health();
+        return {
+          id: responseId,
+          commandId: command.id,
+          success: true,
+          data: {
+            state: healthData.state,
+            uptime: healthData.uptime,
+            queueStats: healthData.queueStats as unknown as Record<string, unknown>,
+            activeChannels: healthData.activeChannels as unknown as Record<string, unknown>,
+            schedulerRunning: healthData.schedulerRunning,
+          },
+        };
+      }
+
+      case 'reload': {
+        const configPath =
+          typeof command.payload?.configPath === 'string'
+            ? command.payload.configPath
+            : undefined;
+        const reloadResult = await this.reload(configPath);
+        if (reloadResult.isErr()) {
+          return {
+            id: responseId,
+            commandId: command.id,
+            success: false,
+            error: reloadResult.error.message,
+          };
+        }
+        return {
+          id: responseId,
+          commandId: command.id,
+          success: true,
+          data: { configReloaded: true },
+        };
+      }
+
+      case 'shutdown': {
+        // Fire-and-forget the actual stop so the response can be written first.
+        setImmediate(() => {
+          void this.stop();
+        });
+        return {
+          id: responseId,
+          commandId: command.id,
+          success: true,
+          data: { message: 'Shutdown initiated' },
+        };
+      }
+
+      default: {
+        const unknownCommand = (command as DaemonCommand).command;
+        return {
+          id: responseId,
+          commandId: command.id,
+          success: false,
+          error: `Unknown command: ${String(unknownCommand)}`,
+        };
+      }
+    }
   }
 }
