@@ -21,6 +21,7 @@ export {
   MemoryError,
   PersonaError,
   McpError,
+  DaemonError,
 } from './error-types.js';
 
 export { ErrorCodes } from './error-codes.js';

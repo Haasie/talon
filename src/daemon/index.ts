@@ -6,4 +6,8 @@
  * Integrates with systemd sd_notify for service readiness signalling.
  */
 
-export {};
+export { TalondDaemon } from './daemon.js';
+export { setupSignalHandlers } from './signal-handler.js';
+export { recoverFromCrash, writePidFile, removePidFile } from './lifecycle.js';
+export { HealthCheck } from './health-check.js';
+export type { DaemonState, DaemonHealth, DaemonDependencies } from './daemon-types.js';

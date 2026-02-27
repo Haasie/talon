@@ -93,3 +93,8 @@ export class PersonaError extends TalonError {
 export class McpError extends TalonError {
   readonly code = 'MCP_ERROR' as const;
 }
+
+/** Daemon lifecycle error (startup, shutdown, configuration reload). */
+export class DaemonError extends TalonError {
+  readonly code = 'DAEMON_ERROR' as const;
+}
