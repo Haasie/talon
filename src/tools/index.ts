@@ -29,6 +29,8 @@ export { PolicyEngine } from './policy-engine.js';
 export type { ApprovalOutcome } from './approval-gate.js';
 export { ApprovalGate } from './approval-gate.js';
 
+export type { PendingApproval, ApprovalConfig } from './approval-types.js';
+
 export type {
   ChannelSendTool,
   ChannelSendArgs,
