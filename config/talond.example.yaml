@@ -3,6 +3,43 @@
 # Talon daemon configuration — copy to talond.yaml and edit as needed.
 # All paths are relative to the working directory unless absolute.
 # -----------------------------------------------------------------------
+#
+# ---------------------------------------------------------------------------
+# DEPLOYMENT MODES
+# ---------------------------------------------------------------------------
+# Talon supports three deployment modes. Choose the one that fits your
+# infrastructure and availability requirements.
+#
+# 1. Native daemon (systemd) — deploy/talond.service
+#    The daemon runs persistently as a systemd service. Recommended for
+#    production use when you need low-latency message handling and want
+#    systemd to supervise the process, manage restarts, and collect logs.
+#
+#    Setup:
+#      sudo cp deploy/talond.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now talond
+#
+# 2. Container daemon (Docker) — deploy/docker-compose.yaml
+#    The daemon runs inside a Docker container defined by deploy/Dockerfile.
+#    Recommended when you want container isolation or are running on a
+#    container-native host. Docker Compose manages the lifecycle.
+#
+#    Setup:
+#      cp config/talond.example.yaml config/talond.yaml  # then edit
+#      docker compose -f deploy/docker-compose.yaml up -d
+#
+# 3. Wake-only / timer mode — deploy/talond.timer + deploy/talond-wake.service
+#    Instead of a persistent daemon, a systemd timer fires every N minutes,
+#    runs 'talonctl wake' to drain the queue, and exits. Suitable for
+#    low-throughput workloads or memory-constrained hosts.
+#
+#    Setup:
+#      sudo cp deploy/talond-wake.service /etc/systemd/system/
+#      sudo cp deploy/talond.timer        /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now talond.timer
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Daemon settings

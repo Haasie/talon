@@ -1,0 +1,44 @@
+# =============================================================================
+# talond.timer — systemd timer for wake-only (periodic) mode
+# =============================================================================
+# Wake-only mode is an alternative to running talond as a long-lived daemon.
+# Instead of keeping the daemon resident, a timer fires periodically, starts
+# talond-wake.service (a one-shot run), and then exits.
+#
+# Use wake-only mode when:
+#   - The host has limited RAM and cannot afford a persistent daemon
+#   - Low message throughput makes a persistent daemon wasteful
+#   - You want to integrate with an existing scheduler (e.g. cron replacement)
+#
+# Setup:
+#   sudo systemctl enable --now talond.timer
+#
+# To change the interval, edit OnUnitActiveSec and reload:
+#   sudo systemctl daemon-reload && sudo systemctl restart talond.timer
+# =============================================================================
+
+[Unit]
+Description=Talon daemon periodic wake timer
+# The timer depends on the wake service being installed but does NOT require
+# the long-lived talond.service — the two modes are mutually exclusive.
+Documentation=https://github.com/user/talon
+
+[Timer]
+# How long after the timer unit is activated to fire the first time
+OnBootSec=1min
+
+# How long after the previous run completes before firing again.
+# Default is 5 minutes; adjust to match your expected message volume.
+OnUnitActiveSec=5min
+
+# Persistent=true means: if the system was off when the timer would have
+# fired, catch up by running the service once immediately on next boot.
+# This prevents indefinite delay of queued messages after downtime.
+Persistent=true
+
+# Which service to trigger on each interval
+Unit=talond-wake.service
+
+[Install]
+# The timer starts automatically when the system reaches multi-user mode
+WantedBy=timers.target

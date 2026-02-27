@@ -1,0 +1,67 @@
+# =============================================================================
+# talond-wake.service — one-shot service for timer-triggered wake
+# =============================================================================
+# This service is activated by talond.timer on a configurable interval.
+# It runs 'talonctl wake', which:
+#   1. Opens the SQLite queue
+#   2. Processes all pending messages (with retry/backoff)
+#   3. Exits cleanly when the queue is empty or max work is done
+#
+# It is intentionally Type=oneshot so systemd considers it finished as soon
+# as the process exits. The timer then uses that completion time as the
+# reference point for the next OnUnitActiveSec interval.
+# =============================================================================
+
+[Unit]
+Description=Talon daemon wake — process pending queue items and exit
+# Do not start if the persistent daemon is already running
+Conflicts=talond.service
+Documentation=https://github.com/user/talon
+
+[Service]
+Type=oneshot
+
+# talonctl wake opens the queue, drains pending items, and exits.
+# The binary path must match wherever talond is installed.
+ExecStart=/usr/bin/node /opt/talond/dist/cli/index.js wake --config /etc/talond/talond.yaml
+
+# Runtime environment
+Environment=NODE_ENV=production
+
+# Run as the same restricted user as the main daemon
+User=talond
+Group=talond
+
+# ---------------------------------------------------------------------------
+# Security hardening (mirrors talond.service)
+# ---------------------------------------------------------------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+PrivateIPC=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/talond /run/talond
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+RestrictSUIDSGID=true
+UMask=0027
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=talond-wake
+
+# Note: [Install] is intentionally absent — this service is managed
+# by talond.timer, not enabled directly.
