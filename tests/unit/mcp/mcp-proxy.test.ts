@@ -24,11 +24,21 @@ function makeCall(overrides: Partial<McpToolCall> = {}): McpToolCall {
 }
 
 function makeConfig(name: string, overrides: Partial<McpServerConfig> = {}): McpServerConfig {
+  const stdioEchoScript = [
+    "let data='';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (c) => { data += c; });",
+    "process.stdin.on('end', () => {",
+    '  const req = JSON.parse(data);',
+    '  process.stdout.write(JSON.stringify({ ok: true, requestId: req.requestId, toolName: req.toolName, args: req.args }));',
+    '});',
+  ].join(' ');
+
   return {
     name,
     transport: 'stdio',
-    command: 'npx',
-    args: [`@mcp/${name}`],
+    command: process.execPath,
+    args: ['-e', stdioEchoScript],
     ...overrides,
   };
 }
@@ -78,7 +88,7 @@ describe('McpProxy', () => {
       expect(result._unsafeUnwrap().durationMs).toBeGreaterThanOrEqual(0);
     });
 
-    it('echoes the call content in the mock result', async () => {
+    it('returns tool payload content from the MCP server', async () => {
       const call = makeCall({ args: { path: '/foo/bar.txt' } });
       const result = await proxy.handleToolCall(call, ['mcp.filesystem']);
       const content = result._unsafeUnwrap().content as Record<string, unknown>;
@@ -117,10 +127,9 @@ describe('McpProxy', () => {
       reg.register('stopped-server', makeConfig('stopped-server'));
       const p = new McpProxy(reg, testLogger());
 
-      const result = await p.handleToolCall(
-        makeCall({ serverName: 'stopped-server' }),
-        ['mcp.stopped-server'],
-      );
+      const result = await p.handleToolCall(makeCall({ serverName: 'stopped-server' }), [
+        'mcp.stopped-server',
+      ]);
 
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().message).toContain('not running');
@@ -174,10 +183,9 @@ describe('McpProxy', () => {
 
   describe('handleToolCall — tool allowlist', () => {
     it('allows all tools when allowedTools is not configured', async () => {
-      const result = await proxy.handleToolCall(
-        makeCall({ toolName: 'any_tool' }),
-        ['mcp.filesystem'],
-      );
+      const result = await proxy.handleToolCall(makeCall({ toolName: 'any_tool' }), [
+        'mcp.filesystem',
+      ]);
       expect(result.isOk()).toBe(true);
     });
 
@@ -187,10 +195,9 @@ describe('McpProxy', () => {
       });
       const p = new McpProxy(reg, testLogger());
 
-      const result = await p.handleToolCall(
-        makeCall({ serverName: 'fs', toolName: 'read_file' }),
-        ['mcp.fs'],
-      );
+      const result = await p.handleToolCall(makeCall({ serverName: 'fs', toolName: 'read_file' }), [
+        'mcp.fs',
+      ]);
       expect(result.isOk()).toBe(true);
     });
 
@@ -238,10 +245,9 @@ describe('McpProxy', () => {
       const reg = await makeRegistryWithServer('fs', { allowedTools: [] });
       const p = new McpProxy(reg, testLogger());
 
-      const result = await p.handleToolCall(
-        makeCall({ serverName: 'fs', toolName: 'any_tool' }),
-        ['mcp.fs'],
-      );
+      const result = await p.handleToolCall(makeCall({ serverName: 'fs', toolName: 'any_tool' }), [
+        'mcp.fs',
+      ]);
       expect(result.isOk()).toBe(true);
     });
   });
@@ -313,10 +319,7 @@ describe('McpProxy', () => {
     ];
 
     it('returns only servers for which the persona has capabilities', () => {
-      const result = proxy.buildAllowedServers(
-        ['mcp.filesystem', 'mcp.github'],
-        configs,
-      );
+      const result = proxy.buildAllowedServers(['mcp.filesystem', 'mcp.github'], configs);
       expect(result).toHaveLength(2);
       expect(result.map((s) => s.name)).toContain('filesystem');
       expect(result.map((s) => s.name)).toContain('github');
@@ -356,10 +359,9 @@ describe('McpProxy', () => {
 
   describe('error code', () => {
     it('all errors carry the MCP_ERROR code', async () => {
-      const result = await proxy.handleToolCall(
-        makeCall({ serverName: 'missing' }),
-        ['mcp.missing'],
-      );
+      const result = await proxy.handleToolCall(makeCall({ serverName: 'missing' }), [
+        'mcp.missing',
+      ]);
       expect(result._unsafeUnwrapErr().code).toBe('MCP_ERROR');
     });
   });

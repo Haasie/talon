@@ -6,7 +6,7 @@
  * 2. Checks that the requested tool is allowed (per-server allowedTools pattern).
  * 3. Checks that the persona has a capability matching this server.
  * 4. Enforces per-server rate limits (in-memory token bucket).
- * 5. Forwards the call to the MCP server (placeholder — returns mock success).
+ * 5. Forwards the call to the MCP server over configured transport.
  * 6. Returns Result<McpToolResult, McpError>; never throws.
  *
  * MCP server failures are caught and wrapped in McpError so the sandbox
@@ -14,6 +14,7 @@
  */
 
 import type pino from 'pino';
+import { spawn } from 'node:child_process';
 import { ok, err, type Result } from '../core/types/result.js';
 import { McpError } from '../core/errors/error-types.js';
 import type { McpRegistry } from './mcp-registry.js';
@@ -30,6 +31,7 @@ import type {
 
 /** Default calls per minute when no rate limit is configured. */
 const DEFAULT_CALLS_PER_MINUTE = 60;
+const STDIO_TIMEOUT_MS = 15_000;
 
 /**
  * Simple in-memory token bucket for per-server rate limiting.
@@ -117,18 +119,12 @@ export class McpProxy {
       // Step 1: Validate the server exists and is running.
       const entry = this.registry.get(call.serverName);
       if (!entry) {
-        return err(
-          new McpError(
-            `MCP server "${call.serverName}" is not registered`,
-          ),
-        );
+        return err(new McpError(`MCP server "${call.serverName}" is not registered`));
       }
 
       if (entry.status !== 'running') {
         return err(
-          new McpError(
-            `MCP server "${call.serverName}" is not running (status: ${entry.status})`,
-          ),
+          new McpError(`MCP server "${call.serverName}" is not running (status: ${entry.status})`),
         );
       }
 
@@ -164,9 +160,7 @@ export class McpProxy {
           'MCP call denied: tool not in allowlist',
         );
         return err(
-          new McpError(
-            `Tool "${call.toolName}" is not allowed on MCP server "${call.serverName}"`,
-          ),
+          new McpError(`Tool "${call.toolName}" is not allowed on MCP server "${call.serverName}"`),
         );
       }
 
@@ -181,11 +175,7 @@ export class McpProxy {
           },
           'MCP call denied: rate limit exceeded',
         );
-        return err(
-          new McpError(
-            `Rate limit exceeded for MCP server "${call.serverName}"`,
-          ),
-        );
+        return err(new McpError(`Rate limit exceeded for MCP server "${call.serverName}"`));
       }
 
       // Step 5: Forward the call.
@@ -198,7 +188,7 @@ export class McpProxy {
         'forwarding MCP tool call',
       );
 
-      const result = await this.forwardCall(call);
+      const result = await this.forwardCall(call, entry.config);
 
       this.logger.debug(
         {
@@ -213,8 +203,7 @@ export class McpProxy {
       return ok(result);
     } catch (caught) {
       // MCP server failures must never crash the daemon.
-      const message =
-        caught instanceof Error ? caught.message : String(caught);
+      const message = caught instanceof Error ? caught.message : String(caught);
       this.logger.error(
         {
           requestId: call.requestId,
@@ -247,9 +236,7 @@ export class McpProxy {
     personaCapabilities: string[],
     allServers: McpServerConfig[],
   ): McpServerConfig[] {
-    return allServers.filter((server) =>
-      personaCapabilities.includes(`mcp.${server.name}`),
-    );
+    return allServers.filter((server) => personaCapabilities.includes(`mcp.${server.name}`));
   }
 
   // ---------------------------------------------------------------------------
@@ -296,10 +283,7 @@ export class McpProxy {
    * @param serverName  - Server name (used as bucket key).
    * @param rateLimit   - Rate limit config from the server's config.
    */
-  private getOrCreateBucket(
-    serverName: string,
-    rateLimit?: McpRateLimitConfig,
-  ): TokenBucket {
+  private getOrCreateBucket(serverName: string, rateLimit?: McpRateLimitConfig): TokenBucket {
     let bucket = this.rateBuckets.get(serverName);
     if (!bucket) {
       const callsPerMinute = rateLimit?.callsPerMinute ?? DEFAULT_CALLS_PER_MINUTE;
@@ -312,27 +296,154 @@ export class McpProxy {
 
   /**
    * Forward the MCP tool call to the backing server.
-   *
-   * PLACEHOLDER: Actual MCP transport (stdio/SSE/HTTP) is a future task.
-   * This method returns a mock success response with the call arguments
-   * echoed back as content. The method signature is intentionally kept
-   * separate so the transport layer can be swapped in cleanly.
-   *
-   * @param call - The tool call to forward.
-   * @returns Mock McpToolResult.
    */
-  private async forwardCall(call: McpToolCall): Promise<McpToolResult> {
+  private async forwardCall(
+    call: McpToolCall,
+    serverConfig: McpServerConfig,
+  ): Promise<McpToolResult> {
     const startMs = Date.now();
 
-    // Simulate async work (future: real MCP client invocation).
-    await Promise.resolve();
+    if (serverConfig.transport === 'stdio') {
+      const content = await this.forwardStdioCall(call, serverConfig);
+      return {
+        requestId: call.requestId,
+        serverName: call.serverName,
+        toolName: call.toolName,
+        content,
+        durationMs: Date.now() - startMs,
+      };
+    }
 
-    return {
-      requestId: call.requestId,
-      serverName: call.serverName,
-      toolName: call.toolName,
-      content: { _mock: true, args: call.args },
-      durationMs: Date.now() - startMs,
-    };
+    if (serverConfig.transport === 'http' || serverConfig.transport === 'sse') {
+      if (!serverConfig.url) {
+        throw new McpError(`MCP server "${call.serverName}" is missing a URL`);
+      }
+
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), 15_000);
+
+      try {
+        const response = await fetch(serverConfig.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            requestId: call.requestId,
+            toolName: call.toolName,
+            args: call.args,
+          }),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          throw new McpError(`MCP server "${call.serverName}" returned HTTP ${response.status}`);
+        }
+
+        const contentType = response.headers.get('content-type') ?? '';
+        const content = contentType.includes('application/json')
+          ? await response.json()
+          : await response.text();
+
+        return {
+          requestId: call.requestId,
+          serverName: call.serverName,
+          toolName: call.toolName,
+          content,
+          durationMs: Date.now() - startMs,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    throw new McpError(`Unsupported MCP transport: ${String(serverConfig.transport)}`);
+  }
+
+  private forwardStdioCall(call: McpToolCall, serverConfig: McpServerConfig): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      if (!serverConfig.command) {
+        reject(new McpError(`MCP server "${call.serverName}" is missing stdio command`));
+        return;
+      }
+
+      const child = spawn(serverConfig.command, serverConfig.args ?? [], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, ...(serverConfig.env ?? {}) },
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+
+      const settleError = (error: McpError): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        child.kill('SIGKILL');
+        reject(error);
+      };
+
+      const settleSuccess = (value: unknown): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(value);
+      };
+
+      const timeout = setTimeout(() => {
+        settleError(new McpError(`MCP stdio call timed out for server "${call.serverName}"`));
+      }, STDIO_TIMEOUT_MS);
+
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+
+      child.on('error', (cause) => {
+        settleError(new McpError(`Failed to start MCP stdio process: ${cause.message}`, cause));
+      });
+
+      child.on('close', (code) => {
+        if (settled) return;
+        if (code !== 0) {
+          settleError(
+            new McpError(
+              `MCP stdio process exited with code ${code} for server "${call.serverName}": ${stderr.trim() || 'no stderr'}`,
+            ),
+          );
+          return;
+        }
+
+        const trimmed = stdout.trim();
+        if (!trimmed) {
+          settleSuccess({});
+          return;
+        }
+
+        try {
+          settleSuccess(JSON.parse(trimmed));
+        } catch {
+          settleSuccess(trimmed);
+        }
+      });
+
+      const payload = JSON.stringify({
+        requestId: call.requestId,
+        toolName: call.toolName,
+        args: call.args,
+      });
+      child.stdin.write(payload + '\n', 'utf8', (error) => {
+        if (error) {
+          settleError(new McpError(`Failed writing to MCP stdio stdin: ${error.message}`, error));
+          return;
+        }
+        child.stdin.end();
+      });
+    });
   }
 }
