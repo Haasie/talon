@@ -205,10 +205,10 @@ describe('MessagePipeline', () => {
       expect(mocks.threadRepo.findByExternalId).toHaveBeenCalledWith('chan-uuid-1', 'ext-42');
     });
 
-    it('calls messageRepo.existsByIdempotencyKey with the event idempotencyKey', async () => {
+    it('calls messageRepo.existsByIdempotencyKey with a channel-scoped idempotency key', async () => {
       const event = makeEvent({ idempotencyKey: 'my-key' });
       await pipeline.handleInboundEvent(event);
-      expect(mocks.messageRepo.existsByIdempotencyKey).toHaveBeenCalledWith('my-key');
+      expect(mocks.messageRepo.existsByIdempotencyKey).toHaveBeenCalledWith('chan-uuid-1:my-key');
     });
 
     it('calls router.resolvePersona with the channelId and threadId', async () => {
@@ -290,7 +290,6 @@ describe('MessagePipeline', () => {
       await pipeline.handleInboundEvent(makeEvent());
       expect(pipeline.stats().duplicates).toBe(1);
     });
-
   });
 
   // -------------------------------------------------------------------------
@@ -374,7 +373,9 @@ describe('MessagePipeline', () => {
       vi.mocked(mocks.threadRepo.findByExternalId).mockReturnValue(ok(null));
       vi.mocked(mocks.threadRepo.insert).mockReturnValue(ok(makeThreadRow({ id: 'new-thread' })));
       vi.mocked(mocks.messageRepo.existsByIdempotencyKey).mockReturnValue(false);
-      vi.mocked(mocks.messageRepo.insert).mockReturnValue(ok(makeMessageRow({ thread_id: 'new-thread' })));
+      vi.mocked(mocks.messageRepo.insert).mockReturnValue(
+        ok(makeMessageRow({ thread_id: 'new-thread' })),
+      );
       vi.mocked(mocks.router.resolvePersona).mockReturnValue(ok('persona-uuid-1'));
       vi.mocked(mocks.queueManager.enqueue).mockReturnValue(ok(makeQueueItem()));
 
@@ -406,9 +407,7 @@ describe('MessagePipeline', () => {
     it('returns Err on thread insert failure', async () => {
       vi.mocked(mocks.channelRepo.findByName).mockReturnValue(ok(makeChannelRow()));
       vi.mocked(mocks.threadRepo.findByExternalId).mockReturnValue(ok(null));
-      vi.mocked(mocks.threadRepo.insert).mockReturnValue(
-        err(new DbError('thread insert failed')),
-      );
+      vi.mocked(mocks.threadRepo.insert).mockReturnValue(err(new DbError('thread insert failed')));
 
       const result = await pipeline.handleInboundEvent(makeEvent());
       expect(result.isErr()).toBe(true);
@@ -436,9 +435,7 @@ describe('MessagePipeline', () => {
       vi.mocked(mocks.channelRepo.findByName).mockReturnValue(ok(makeChannelRow()));
       vi.mocked(mocks.threadRepo.findByExternalId).mockReturnValue(ok(makeThreadRow()));
       vi.mocked(mocks.messageRepo.existsByIdempotencyKey).mockReturnValue(false);
-      vi.mocked(mocks.messageRepo.insert).mockReturnValue(
-        err(new DbError('disk full')),
-      );
+      vi.mocked(mocks.messageRepo.insert).mockReturnValue(err(new DbError('disk full')));
 
       const result = await pipeline.handleInboundEvent(makeEvent());
       expect(result.isErr()).toBe(true);
@@ -465,9 +462,7 @@ describe('MessagePipeline', () => {
       vi.mocked(mocks.messageRepo.existsByIdempotencyKey).mockReturnValue(false);
       vi.mocked(mocks.messageRepo.insert).mockReturnValue(ok(makeMessageRow()));
       vi.mocked(mocks.router.resolvePersona).mockReturnValue(ok('persona-uuid-1'));
-      vi.mocked(mocks.queueManager.enqueue).mockReturnValue(
-        err(new QueueError('queue full')),
-      );
+      vi.mocked(mocks.queueManager.enqueue).mockReturnValue(err(new QueueError('queue full')));
 
       const result = await pipeline.handleInboundEvent(makeEvent());
       expect(result.isErr()).toBe(true);

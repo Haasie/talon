@@ -109,9 +109,7 @@ export class Supervisor {
 
     if (session.status !== 'active') {
       return err(
-        new CollaborationError(
-          `Cannot spawn worker on a ${session.status} session: ${sessionId}`,
-        ),
+        new CollaborationError(`Cannot spawn worker on a ${session.status} session: ${sessionId}`),
       );
     }
 
@@ -138,16 +136,37 @@ export class Supervisor {
       }
     }
 
+    const parentRunResult = this.runRepo.findById(session.supervisorRunId);
+    if (parentRunResult.isErr()) {
+      return err(
+        new CollaborationError(
+          `Failed to resolve supervisor run ${session.supervisorRunId}: ${parentRunResult.error.message}`,
+          parentRunResult.error,
+        ),
+      );
+    }
+
+    const parentRun = parentRunResult.value;
+    if (parentRun === null) {
+      return err(new CollaborationError(`Supervisor run not found: ${session.supervisorRunId}`));
+    }
+
+    if (!workerConfig.personaId) {
+      return err(
+        new CollaborationError(
+          `Worker config is missing canonical personaId for persona '${workerConfig.personaName}'`,
+        ),
+      );
+    }
+
     const workerId = uuidv4();
     const now = Date.now();
 
-    // Persist the child run record. We use a placeholder thread_id and
-    // persona_id here — the daemon integration layer is expected to resolve
-    // actual IDs from the persona registry before calling spawnWorker.
+    // Persist child run using canonical thread/persona IDs.
     const insertResult = this.runRepo.insert({
       id: workerId,
-      thread_id: session.supervisorRunId, // placeholder — replaced during integration
-      persona_id: workerConfig.personaName, // persona name used as placeholder id
+      thread_id: parentRun.thread_id,
+      persona_id: workerConfig.personaId,
       sandbox_id: null,
       session_id: sessionId,
       status: 'pending',
@@ -210,9 +229,7 @@ export class Supervisor {
 
     const worker = session.workers.find((w) => w.id === workerId);
     if (!worker) {
-      return err(
-        new CollaborationError(`Worker not found: ${workerId} in session: ${sessionId}`),
-      );
+      return err(new CollaborationError(`Worker not found: ${workerId} in session: ${sessionId}`));
     }
 
     const now = Date.now();
@@ -239,10 +256,7 @@ export class Supervisor {
     worker.result = result.output;
     worker.error = result.error;
 
-    this.logger.debug(
-      { sessionId, workerId, success: result.success },
-      'worker completed',
-    );
+    this.logger.debug({ sessionId, workerId, success: result.success }, 'worker completed');
 
     return ok(undefined);
   }

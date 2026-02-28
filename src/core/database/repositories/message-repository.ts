@@ -3,6 +3,7 @@
  *
  * Uses INSERT OR IGNORE to silently deduplicate messages with the same
  * idempotency_key (unique index on the column), making ingestion idempotent.
+ * Callers should scope the key by channel to preserve per-channel semantics.
  */
 
 import type Database from 'better-sqlite3';
@@ -72,7 +73,12 @@ export class MessageRepository extends BaseRepository {
       const persisted = this.findByIdempotencyKeyStmt.get(input.idempotency_key) as MessageRow;
       return ok(persisted);
     } catch (cause) {
-      return err(new DbError(`Failed to insert message: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+      return err(
+        new DbError(
+          `Failed to insert message: ${String(cause)}`,
+          cause instanceof Error ? cause : undefined,
+        ),
+      );
     }
   }
 
@@ -82,7 +88,12 @@ export class MessageRepository extends BaseRepository {
       const row = this.findByIdStmt.get(id) as MessageRow | undefined;
       return ok(row ?? null);
     } catch (cause) {
-      return err(new DbError(`Failed to find message by id: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+      return err(
+        new DbError(
+          `Failed to find message by id: ${String(cause)}`,
+          cause instanceof Error ? cause : undefined,
+        ),
+      );
     }
   }
 
@@ -98,7 +109,12 @@ export class MessageRepository extends BaseRepository {
       const rows = this.findByThreadStmt.all(threadId, limit, offset) as MessageRow[];
       return ok(rows);
     } catch (cause) {
-      return err(new DbError(`Failed to find messages by thread: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+      return err(
+        new DbError(
+          `Failed to find messages by thread: ${String(cause)}`,
+          cause instanceof Error ? cause : undefined,
+        ),
+      );
     }
   }
 

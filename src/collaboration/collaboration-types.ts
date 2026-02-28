@@ -36,6 +36,8 @@ export interface SupervisorConfig {
 export interface WorkerConfig {
   /** Name of the persona to run as the worker. */
   personaName: string;
+  /** Canonical persona ID from the personas table. */
+  personaId: string;
   /** Human-readable description of the subtask assigned to this worker. */
   taskDescription: string;
   /** Arbitrary payload passed to the worker at startup. */

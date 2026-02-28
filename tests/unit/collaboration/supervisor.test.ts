@@ -11,7 +11,10 @@ import pino from 'pino';
 import { v4 as uuidv4 } from 'uuid';
 import { Supervisor } from '../../../src/collaboration/supervisor.js';
 import { DbError } from '../../../src/core/errors/index.js';
-import type { RunRepository, RunRow } from '../../../src/core/database/repositories/run-repository.js';
+import type {
+  RunRepository,
+  RunRow,
+} from '../../../src/core/database/repositories/run-repository.js';
 import type {
   SupervisorConfig,
   WorkerConfig,
@@ -32,10 +35,30 @@ function silentLogger(): pino.Logger {
 
 function makeMockRepo(): RunRepository {
   return {
-    insert: vi.fn().mockImplementation((input) =>
-      ok({ ...input, created_at: Date.now() } as RunRow),
+    insert: vi
+      .fn()
+      .mockImplementation((input) => ok({ ...input, created_at: Date.now() } as RunRow)),
+    findById: vi.fn().mockImplementation((id: string) =>
+      ok({
+        id,
+        thread_id: 'thread-1',
+        persona_id: 'supervisor-persona-id',
+        sandbox_id: null,
+        session_id: null,
+        status: 'running',
+        parent_run_id: null,
+        queue_item_id: null,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_usd: 0,
+        error: null,
+        started_at: Date.now(),
+        ended_at: null,
+        created_at: Date.now(),
+      } as RunRow),
     ),
-    findById: vi.fn().mockReturnValue(ok(null)),
     findByThread: vi.fn().mockReturnValue(ok([])),
     findByParent: vi.fn().mockReturnValue(ok([])),
     updateStatus: vi.fn().mockReturnValue(ok(null)),
@@ -56,6 +79,7 @@ function makeDefaultSupervisorConfig(overrides: Partial<SupervisorConfig> = {}):
 function makeWorkerConfig(overrides: Partial<WorkerConfig> = {}): WorkerConfig {
   return {
     personaName: 'worker-a',
+    personaId: 'worker-a-id',
     taskDescription: 'Do something useful',
     payload: { key: 'value' },
     ...overrides,
@@ -127,9 +151,7 @@ describe('Supervisor.spawnWorker', () => {
     repo = makeMockRepo();
     supervisor = new Supervisor(repo, silentLogger());
     supervisorConfig = makeDefaultSupervisorConfig({ maxWorkers: 2 });
-    const s = supervisor
-      .createSession(uuid(), supervisorConfig)
-      ._unsafeUnwrap();
+    const s = supervisor.createSession(uuid(), supervisorConfig)._unsafeUnwrap();
     sessionId = s.id;
   });
 
@@ -174,11 +196,7 @@ describe('Supervisor.spawnWorker', () => {
     supervisor.spawnWorker(s.id, makeWorkerConfig({ personaName: 'worker-a' }), cfg);
 
     // Spawn a second one — should fail.
-    const result = supervisor.spawnWorker(
-      s.id,
-      makeWorkerConfig({ personaName: 'worker-b' }),
-      cfg,
-    );
+    const result = supervisor.spawnWorker(s.id, makeWorkerConfig({ personaName: 'worker-b' }), cfg);
 
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().message).toContain('Worker limit reached');
@@ -196,9 +214,7 @@ describe('Supervisor.spawnWorker', () => {
   });
 
   it('returns CollaborationError when repository insert fails', () => {
-    vi.mocked(repo.insert).mockReturnValueOnce(
-      err(new DbError('insert failed')),
-    );
+    vi.mocked(repo.insert).mockReturnValueOnce(err(new DbError('insert failed')));
 
     const result = supervisor.spawnWorker(sessionId, makeWorkerConfig(), supervisorConfig);
 
@@ -313,9 +329,7 @@ describe('Supervisor.completeWorker', () => {
   });
 
   it('returns CollaborationError when updateStatus fails', () => {
-    vi.mocked(repo.updateStatus).mockReturnValueOnce(
-      err(new DbError('update failed')),
-    );
+    vi.mocked(repo.updateStatus).mockReturnValueOnce(err(new DbError('update failed')));
 
     const result = supervisor.completeWorker(sessionId, workerId, {
       workerId,
@@ -379,9 +393,7 @@ describe('Supervisor.completeSession', () => {
   });
 
   it('marks session as completed with no workers', () => {
-    const session = supervisor
-      .createSession(uuid(), makeDefaultSupervisorConfig())
-      ._unsafeUnwrap();
+    const session = supervisor.createSession(uuid(), makeDefaultSupervisorConfig())._unsafeUnwrap();
 
     const result = supervisor.completeSession(session.id);
 
@@ -431,9 +443,7 @@ describe('Supervisor.getSession', () => {
 
   it('returns the session object after creation', () => {
     const supervisor = new Supervisor(makeMockRepo(), silentLogger());
-    const session = supervisor
-      .createSession(uuid(), makeDefaultSupervisorConfig())
-      ._unsafeUnwrap();
+    const session = supervisor.createSession(uuid(), makeDefaultSupervisorConfig())._unsafeUnwrap();
 
     expect(supervisor.getSession(session.id)).toStrictEqual(session);
   });

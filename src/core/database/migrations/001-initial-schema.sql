@@ -76,7 +76,7 @@ CREATE TABLE messages (
   thread_id       TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
   direction       TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
   content         TEXT NOT NULL,                -- JSON: normalized message content
-  idempotency_key TEXT NOT NULL,                -- unique per channel for dedup
+  idempotency_key TEXT NOT NULL,                -- caller provides channel-scoped key for dedup
   provider_id     TEXT,                         -- original provider message ID
   run_id          TEXT,                         -- which run produced this (outbound only)
   created_at      INTEGER NOT NULL

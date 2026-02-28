@@ -140,11 +140,12 @@ export class MessagePipeline {
       // Step 4: Persist with INSERT OR IGNORE deduplication.
       // Check before inserting to distinguish duplicate from first insert.
       // ------------------------------------------------------------------
-      const alreadyExists = this.messageRepo.existsByIdempotencyKey(normalized.idempotencyKey);
+      const scopedIdempotencyKey = `${channelId}:${normalized.idempotencyKey}`;
+      const alreadyExists = this.messageRepo.existsByIdempotencyKey(scopedIdempotencyKey);
       if (alreadyExists) {
         this.statsCounters.duplicates++;
         this.logger.debug(
-          { idempotencyKey: normalized.idempotencyKey, channelName: event.channelName },
+          { idempotencyKey: scopedIdempotencyKey, channelName: event.channelName },
           'pipeline: duplicate message detected, skipping',
         );
         return ok('duplicate');
@@ -155,7 +156,7 @@ export class MessagePipeline {
         thread_id: normalized.threadId,
         direction: 'inbound',
         content: normalized.content,
-        idempotency_key: normalized.idempotencyKey,
+        idempotency_key: scopedIdempotencyKey,
         provider_id: normalized.senderId,
         run_id: null,
       });
@@ -163,7 +164,7 @@ export class MessagePipeline {
         this.statsCounters.errors++;
         return err(
           new PipelineError(
-            `Failed to persist message with idempotency key '${normalized.idempotencyKey}': ${insertResult.error.message}`,
+            `Failed to persist message with idempotency key '${scopedIdempotencyKey}': ${insertResult.error.message}`,
             insertResult.error,
           ),
         );
@@ -199,7 +200,7 @@ export class MessagePipeline {
             channelName: event.channelName,
             externalThreadId: event.externalThreadId,
             messageId: normalized.id,
-            idempotencyKey: normalized.idempotencyKey,
+            idempotencyKey: scopedIdempotencyKey,
           },
         });
         return ok('no_persona');
@@ -251,7 +252,10 @@ export class MessagePipeline {
       const message = cause instanceof Error ? cause.message : String(cause);
       this.logger.error({ err: cause }, `pipeline: unexpected error: ${message}`);
       return err(
-        new PipelineError(`Unexpected pipeline error: ${message}`, cause instanceof Error ? cause : undefined),
+        new PipelineError(
+          `Unexpected pipeline error: ${message}`,
+          cause instanceof Error ? cause : undefined,
+        ),
       );
     }
   }
