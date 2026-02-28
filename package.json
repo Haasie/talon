@@ -19,7 +19,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "talond": "node dist/index.js",
     "talonctl": "node dist/cli/index.js",
-    "migrate": "node dist/core/database/migrations/run.js"
+    "migrate": "node dist/cli/index.js migrate"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

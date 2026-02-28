@@ -28,6 +28,7 @@ It is built for single-user or small-team deployments where you want persistent,
 ## Features
 
 ### Channels
+
 - **Telegram** — Long polling with MarkdownV2 formatting
 - **Slack** — Events API / Socket Mode with mrkdwn formatting
 - **Discord** — Gateway events with REST API, rate limit handling
@@ -35,6 +36,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Email** — IMAP polling + SMTP send, thread tracking via In-Reply-To headers
 
 ### Agent System
+
 - **Persona-per-channel** — Each channel gets its own agent with a dedicated system prompt, model, tools, and capabilities
 - **Container sandboxing** — Agents execute inside Docker containers with `--cap-drop=ALL`, read-only rootfs, no network by default
 - **Per-thread memory** — Each conversation thread gets its own workspace with transcript, working memory, and artifacts
@@ -42,6 +44,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **MCP integration** — Connect external MCP tool servers, host-brokered with policy enforcement
 
 ### Infrastructure
+
 - **Durable queue** — SQLite-backed message queue with crash recovery, retry, and dead-letter
 - **Scheduler** — Cron, interval, and one-shot scheduled tasks
 - **File-based IPC** — Atomic write + poll protocol between host and sandboxes
@@ -50,6 +53,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Token tracking** — Per-persona and per-thread usage aggregation with budget limits
 
 ### Security
+
 - **Default-deny capabilities** — Tools are gated by capability labels, not raw names
 - **Approval gates** — High-risk actions prompt for user approval in-channel before executing
 - **Secrets management** — Secrets delivered to containers via stdin JSON, never written to disk
@@ -180,68 +184,76 @@ Talon uses a single YAML configuration file. A fully annotated example ships at 
 ### Minimal Configuration
 
 ```yaml
-daemon:
-  database: data/talon.sqlite
-  log_level: info
-  log_format: json
-  max_concurrent_containers: 10
-
-claude:
-  auth_mode: api_key       # or oauth for Claude Pro/Max
-  default_model: claude-sonnet-4-6
-  default_max_tokens: 4096
+storage:
+  type: sqlite
+  path: data/talond.sqlite
 
 sandbox:
   runtime: docker
-  default_image: talon-sandbox:latest
-  defaults:
-    memory_limit_mb: 512
-    read_only_rootfs: true
-    cap_drop_all: true
+  image: talon-sandbox:latest
+  maxConcurrent: 3
+  networkDefault: off
+  idleTimeoutMs: 1800000
+  hardTimeoutMs: 3600000
+  resourceLimits:
+    memoryMb: 1024
+    cpus: 1
+    pidsLimit: 256
 
 queue:
-  max_attempts: 5
-  initial_backoff_ms: 1000
-  max_backoff_ms: 60000
+  maxAttempts: 3
+  backoffBaseMs: 1000
+  backoffMaxMs: 60000
+  concurrencyLimit: 5
 
 personas:
   - name: assistant
-    description: General-purpose assistant
-    system_prompt: |
-      You are a helpful, concise assistant. Reply in Markdown.
-    channels:
-      - my-telegram
+    model: claude-sonnet-4-6
+    systemPromptFile: personas/assistant/system.md
+    skills: []
     capabilities:
-      web_fetch: allow
-      send_channel: allow
+      allow:
+        - channel.send:telegram
+      requireApproval: []
+    mounts: []
 
 channels:
   - name: my-telegram
     type: telegram
-    token: ${TELEGRAM_BOT_TOKEN}
-    allowed_user_ids:
-      - 123456789
-    polling: true
+    enabled: true
+    config:
+      token: ${TELEGRAM_BOT_TOKEN}
+
+schedules: []
+
+ipc:
+  pollIntervalMs: 500
+  daemonSocketDir: data/ipc/daemon
 
 scheduler:
-  timezone: UTC
-  missed_run_policy: skip
-  tasks: []
+  tickIntervalMs: 5000
+
+auth:
+  mode: subscription
+
+logLevel: info
+dataDir: data
 ```
 
 ### Configuration Sections
 
-| Section | Purpose |
-|---------|---------|
-| `daemon` | Database path, logging, IPC settings, container limits |
-| `claude` | Auth mode (API key or OAuth), default model and token limits |
-| `sandbox` | Container runtime, default image, resource limits, security defaults |
-| `queue` | Retry policy, backoff strategy, dead-letter configuration |
-| `personas` | Agent profiles with prompts, capabilities, channel bindings |
-| `channels` | Channel connector configs with credentials and settings |
-| `scheduler` | Timezone, missed-run policy, scheduled task definitions |
-| `mcp` | MCP server and client configuration |
-| `observability` | Audit log, metrics endpoint settings |
+| Section                | Purpose                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `storage`              | Database backend and SQLite path                                              |
+| `sandbox`              | Container runtime, image, limits, and network defaults                        |
+| `queue`                | Retry/backoff/concurrency controls for durable queue processing               |
+| `personas`             | Persona profiles: model, system prompt, skills, capabilities, mounts          |
+| `channels`             | Channel connector entries with `type`, `name`, and connector `config` payload |
+| `schedules`            | Declarative schedule entries (`cron`, `interval`, `one_shot`, `event`)        |
+| `ipc`                  | IPC polling settings and daemon IPC directory                                 |
+| `scheduler`            | Scheduler tick interval                                                       |
+| `auth`                 | `subscription` or `api_key` authentication mode                               |
+| `logLevel` / `dataDir` | Runtime logging level and data root                                           |
 
 ### Environment Variable Substitution
 
@@ -307,9 +319,9 @@ channels:
   - name: my-discord
     type: discord
     token: ${DISCORD_BOT_TOKEN}
-    application_id: "123456789"
+    application_id: '123456789'
     allowed_channel_ids:
-      - "987654321"
+      - '987654321'
 ```
 
 - **Inbound**: Gateway `MESSAGE_CREATE` events
@@ -326,7 +338,7 @@ Webhook-based connector using the WhatsApp Cloud API.
 channels:
   - name: my-whatsapp
     type: whatsapp
-    phone_number_id: "123456789"
+    phone_number_id: '123456789'
     access_token: ${WHATSAPP_ACCESS_TOKEN}
     verify_token: ${WHATSAPP_VERIFY_TOKEN}
     webhook_path: /webhook/whatsapp
@@ -409,16 +421,16 @@ personas:
 
 Tools are gated by capability labels, not raw tool names. This allows fine-grained control:
 
-| Capability | Description |
-|-----------|-------------|
-| `web_fetch` | Fetch public URLs |
-| `fs_read` | Read host filesystem |
-| `fs_write` | Write host filesystem |
-| `shell` | Execute shell commands |
-| `send_channel` | Send messages to channels |
-| `db_query` | Execute database queries |
-| `schedule_manage` | Create/modify schedules |
-| `memory_access` | Read/write thread memory |
+| Capability        | Description               |
+| ----------------- | ------------------------- |
+| `web_fetch`       | Fetch public URLs         |
+| `fs_read`         | Read host filesystem      |
+| `fs_write`        | Write host filesystem     |
+| `shell`           | Execute shell commands    |
+| `send_channel`    | Send messages to channels |
+| `db_query`        | Execute database queries  |
+| `schedule_manage` | Create/modify schedules   |
+| `memory_access`   | Read/write thread memory  |
 
 Each capability can be set to `allow`, `deny`, or `require_approval`.
 
@@ -480,10 +492,10 @@ Skills with unmet capabilities produce a warning at startup and are skipped.
 
 ### Daemon Management
 
-| Command | Description |
-|---------|-------------|
+| Command           | Description                                                   |
+| ----------------- | ------------------------------------------------------------- |
 | `talonctl status` | Show daemon health, active channels, queue depth, token usage |
-| `talonctl reload` | Hot-reload config without restarting the daemon |
+| `talonctl reload` | Hot-reload config without restarting the daemon               |
 
 ```bash
 # Check daemon status
@@ -495,12 +507,12 @@ npx talonctl reload
 
 ### Setup and Configuration
 
-| Command | Description |
-|---------|-------------|
-| `talonctl setup` | First-time interactive setup (checks environment, creates dirs, generates config) |
-| `talonctl add-channel --name <n> --type <t>` | Add a channel connector to config |
-| `talonctl add-persona --name <n>` | Scaffold a persona directory and add to config |
-| `talonctl add-skill --name <n> --persona <p>` | Scaffold a skill and attach to a persona |
+| Command                                       | Description                                                                       |
+| --------------------------------------------- | --------------------------------------------------------------------------------- |
+| `talonctl setup`                              | First-time interactive setup (checks environment, creates dirs, generates config) |
+| `talonctl add-channel --name <n> --type <t>`  | Add a channel connector to config                                                 |
+| `talonctl add-persona --name <n>`             | Scaffold a persona directory and add to config                                    |
+| `talonctl add-skill --name <n> --persona <p>` | Scaffold a skill and attach to a persona                                          |
 
 ```bash
 # Full setup flow
@@ -512,11 +524,11 @@ npx talonctl add-skill --name web-search --persona researcher
 
 ### Database and Operations
 
-| Command | Description |
-|---------|-------------|
-| `talonctl migrate` | Apply pending database migrations |
-| `talonctl backup` | Snapshot SQLite database and data directory |
-| `talonctl doctor` | Run diagnostic checks on environment, config, and dependencies |
+| Command            | Description                                                    |
+| ------------------ | -------------------------------------------------------------- |
+| `talonctl migrate` | Apply pending database migrations                              |
+| `talonctl backup`  | Snapshot SQLite database and data directory                    |
+| `talonctl doctor`  | Run diagnostic checks on environment, config, and dependencies |
 
 ```bash
 # Run migrations
@@ -609,14 +621,14 @@ Default: wakes every 5 minutes. Adjust `OnUnitActiveSec` in `talond.timer`.
 
 ### Deployment Files
 
-| File | Purpose |
-|------|---------|
-| [`deploy/Dockerfile`](deploy/Dockerfile) | Multi-stage talond container image (node:22-slim) |
-| [`deploy/Dockerfile.sandbox`](deploy/Dockerfile.sandbox) | Agent sandbox image with SDK runtime |
-| [`deploy/docker-compose.yaml`](deploy/docker-compose.yaml) | Example Compose setup |
-| [`deploy/talond.service`](deploy/talond.service) | systemd service unit (native daemon) |
-| [`deploy/talond.timer`](deploy/talond.timer) | systemd timer (wake-only mode) |
-| [`deploy/talond-wake.service`](deploy/talond-wake.service) | systemd oneshot for timer-triggered wake |
+| File                                                       | Purpose                                           |
+| ---------------------------------------------------------- | ------------------------------------------------- |
+| [`deploy/Dockerfile`](deploy/Dockerfile)                   | Multi-stage talond container image (node:22-slim) |
+| [`deploy/Dockerfile.sandbox`](deploy/Dockerfile.sandbox)   | Agent sandbox image with SDK runtime              |
+| [`deploy/docker-compose.yaml`](deploy/docker-compose.yaml) | Example Compose setup                             |
+| [`deploy/talond.service`](deploy/talond.service)           | systemd service unit (native daemon)              |
+| [`deploy/talond.timer`](deploy/talond.timer)               | systemd timer (wake-only mode)                    |
+| [`deploy/talond-wake.service`](deploy/talond-wake.service) | systemd oneshot for timer-triggered wake          |
 
 ---
 
@@ -682,9 +694,9 @@ High-risk capabilities can require interactive user approval:
 
 ```yaml
 capabilities:
-  fs_write: require_approval   # prompts "Allow write to /workspace? [y/n]"
-  shell: deny                  # never allowed
-  send_channel: allow          # no prompt needed
+  fs_write: require_approval # prompts "Allow write to /workspace? [y/n]"
+  shell: deny # never allowed
+  send_channel: allow # no prompt needed
 ```
 
 Approval prompts are sent to the originating channel with a configurable timeout.
@@ -732,12 +744,12 @@ data/threads/<thread_id>/
 
 ### Memory Layers
 
-| Layer | Storage | Purpose |
-|-------|---------|---------|
-| Transcript | `messages` table | Canonical message log, never rewritten |
-| Working memory | In-prompt context | Recent message window included in agent prompts |
-| Thread notebook | Filesystem (`memory/`) | Human-editable per-thread notes |
-| Structured memory | `memory_items` table | Extracted facts and summaries |
+| Layer             | Storage                | Purpose                                         |
+| ----------------- | ---------------------- | ----------------------------------------------- |
+| Transcript        | `messages` table       | Canonical message log, never rewritten          |
+| Working memory    | In-prompt context      | Recent message window included in agent prompts |
+| Thread notebook   | Filesystem (`memory/`) | Human-editable per-thread notes                 |
+| Structured memory | `memory_items` table   | Extracted facts and summaries                   |
 
 Memory writes are gated by persona capabilities. Thread notebooks persist across container restarts.
 
@@ -752,23 +764,23 @@ scheduler:
   timezone: UTC
   tasks:
     - name: daily-summary
-      cron: "0 8 * * *"
+      cron: '0 8 * * *'
       persona: assistant
-      prompt: "Generate a daily briefing."
+      prompt: 'Generate a daily briefing.'
       channels:
         - my-telegram
 
     - name: hourly-check
       interval: 60m
       persona: monitor
-      prompt: "Check system health."
+      prompt: 'Check system health.'
 ```
 
-| Schedule Type | Example | Behavior |
-|---------------|---------|----------|
-| Cron | `0 9 * * *` | Fires at 09:00 daily |
-| Interval | `every 30m` | Recurring at fixed intervals |
-| One-shot | `at 2026-03-01T10:00Z` | Single execution at specified time |
+| Schedule Type | Example                | Behavior                           |
+| ------------- | ---------------------- | ---------------------------------- |
+| Cron          | `0 9 * * *`            | Fires at 09:00 daily               |
+| Interval      | `every 30m`            | Recurring at fixed intervals       |
+| One-shot      | `at 2026-03-01T10:00Z` | Single execution at specified time |
 
 Scheduled tasks are enqueued through the standard queue pipeline, subject to the same retry and dead-letter policies as regular messages.
 
@@ -808,8 +820,8 @@ When using Anthropic API keys, Talon tracks token usage per run:
 personas:
   - name: assistant
     budget:
-      daily_limit: 100000       # tokens
-      warning_threshold: 0.8    # warn at 80% usage
+      daily_limit: 100000 # tokens
+      warning_threshold: 0.8 # warn at 80% usage
 ```
 
 View current usage via `talonctl status`, which shows 24-hour token consumption per persona.
@@ -834,6 +846,7 @@ npm run test:coverage  # Coverage report (80% target)
 ```
 
 The test suite includes:
+
 - **Unit tests** — Every module, repository, connector, and CLI command
 - **Integration tests** — IPC round-trips, queue durability, channel registry lifecycle
 - **End-to-end tests** — Full message flow from inbound to outbound with real SQLite
@@ -957,20 +970,20 @@ Talon uses SQLite with WAL mode and foreign keys. All persistence goes through t
 
 ### Tables
 
-| Table | Purpose |
-|-------|---------|
-| `channels` | Channel connector configurations |
-| `personas` | Agent profiles and capabilities |
-| `bindings` | Channel+thread to persona routing |
-| `threads` | Conversation thread metadata |
-| `messages` | Normalized inbound/outbound messages |
-| `queue_items` | Durable work queue with retry state |
-| `runs` | Agent execution records (supports parent/child for multi-agent) |
-| `schedules` | Cron/interval/one-shot job definitions |
-| `memory_items` | Structured per-thread memory |
-| `artifacts` | Agent output files |
-| `audit_log` | Append-only audit trail |
-| `tool_results` | Idempotent tool result cache |
+| Table          | Purpose                                                         |
+| -------------- | --------------------------------------------------------------- |
+| `channels`     | Channel connector configurations                                |
+| `personas`     | Agent profiles and capabilities                                 |
+| `bindings`     | Channel+thread to persona routing                               |
+| `threads`      | Conversation thread metadata                                    |
+| `messages`     | Normalized inbound/outbound messages                            |
+| `queue_items`  | Durable work queue with retry state                             |
+| `runs`         | Agent execution records (supports parent/child for multi-agent) |
+| `schedules`    | Cron/interval/one-shot job definitions                          |
+| `memory_items` | Structured per-thread memory                                    |
+| `artifacts`    | Agent output files                                              |
+| `audit_log`    | Append-only audit trail                                         |
+| `tool_results` | Idempotent tool result cache                                    |
 
 ---
 
