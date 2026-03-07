@@ -832,15 +832,40 @@ export class TalondDaemon {
       // can resolve it by name.
       if (this.channelRepo !== null) {
         const existing = this.channelRepo.findByName(channelConfig.name);
-        if (existing.isOk() && existing.value === null) {
+        let channelId: string;
+        if (existing.isOk() && existing.value !== null) {
+          channelId = existing.value.id;
+        } else {
+          channelId = uuidv4();
           this.channelRepo.insert({
-            id: uuidv4(),
+            id: channelId,
             type: channelConfig.type,
             name: channelConfig.name,
             config: JSON.stringify(channelConfig.config),
             credentials_ref: null,
             enabled: 1,
           });
+        }
+
+        // Create a default binding to the first persona if none exists.
+        if (this.bindingRepo !== null && this.personaRepo !== null && config.personas.length > 0) {
+          const defaultBinding = this.bindingRepo.findDefaultForChannel(channelId);
+          if (defaultBinding.isOk() && defaultBinding.value === null) {
+            const personaResult = this.personaRepo.findByName(config.personas[0].name);
+            if (personaResult.isOk() && personaResult.value !== null) {
+              this.bindingRepo.insert({
+                id: uuidv4(),
+                channel_id: channelId,
+                thread_id: null,
+                persona_id: personaResult.value.id,
+                is_default: 1,
+              });
+              this.logger.info(
+                { channelName: channelConfig.name, persona: config.personas[0].name },
+                'daemon: created default channel->persona binding',
+              );
+            }
+          }
         }
       }
 
