@@ -1126,6 +1126,7 @@ export class TalondDaemon {
       return err(new Error(workspaceResult.error.message));
     }
 
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
       const content = typeof item.payload.content === 'string' ? item.payload.content : '';
       const skillPrompt =
@@ -1223,6 +1224,26 @@ export class TalondDaemon {
         agentOptions.resume = existingSessionId;
       }
 
+      // Resolve channel connector early so we can send typing indicators.
+      const threadResult = threadRepo.findById(item.threadId);
+      const channelRow = threadResult.isOk() && threadResult.value
+        ? channelRepo.findById(threadResult.value.channel_id)
+        : null;
+      const connector = channelRow && channelRow.isOk() && channelRow.value
+        ? channelRegistry.get(channelRow.value.name)
+        : undefined;
+      const externalId = threadResult.isOk() && threadResult.value
+        ? threadResult.value.external_id
+        : undefined;
+
+      // Send typing indicator and keep it alive every 4s while the agent works.
+      if (connector?.sendTyping && externalId) {
+        connector.sendTyping(externalId);
+        typingInterval = setInterval(() => {
+          connector.sendTyping!(externalId);
+        }, 4000);
+      }
+
       const agentQuery = query({
         prompt: content,
         options: agentOptions as Parameters<typeof query>[0]['options'],
@@ -1272,24 +1293,16 @@ export class TalondDaemon {
         runRepo.updateSessionId(runId, resultSessionId);
       }
 
+      // Stop typing indicator.
+      if (typingInterval) clearInterval(typingInterval);
+
       this.logger.info(
         { runId, inputTokens, outputTokens, totalCostUsd, sessionId: resultSessionId },
         'agent-sdk: query completed',
       );
 
-      const threadResult = threadRepo.findById(item.threadId);
-      if (threadResult.isErr() || threadResult.value === null) {
-        throw new Error(`thread not found for id ${item.threadId}`);
-      }
-
-      const channelResult = channelRepo.findById(threadResult.value.channel_id);
-      if (channelResult.isErr() || channelResult.value === null) {
-        throw new Error(`channel not found for id ${threadResult.value.channel_id}`);
-      }
-
-      const connector = channelRegistry.get(channelResult.value.name);
-      if (connector !== undefined) {
-        const sendResult = await connector.send(threadResult.value.external_id, {
+      if (connector !== undefined && externalId) {
+        const sendResult = await connector.send(externalId, {
           body: outputText,
         });
         if (sendResult.isErr()) {
@@ -1312,6 +1325,7 @@ export class TalondDaemon {
       });
       return ok(undefined);
     } catch (cause) {
+      if (typingInterval) clearInterval(typingInterval);
       const message = cause instanceof Error ? cause.message : String(cause);
       runRepo.updateStatus(runId, 'failed', { ended_at: Date.now(), error: message });
       return err(new Error(message));

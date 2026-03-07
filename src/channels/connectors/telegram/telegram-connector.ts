@@ -169,6 +169,22 @@ export class TelegramConnector implements ChannelConnector {
   }
 
   /**
+   * Send a "typing" chat action to Telegram.
+   * The indicator auto-expires after ~5 seconds on the client side.
+   */
+  async sendTyping(externalThreadId: string): Promise<void> {
+    try {
+      await fetch(this.apiUrl('sendChatAction'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: externalThreadId, action: 'typing' }),
+      });
+    } catch {
+      // Non-critical — swallow errors silently.
+    }
+  }
+
+  /**
    * Convert a Markdown string to Telegram MarkdownV2 format.
    */
   format(markdown: string): string {

@@ -136,6 +136,14 @@ export interface ChannelConnector {
   send(externalThreadId: string, output: AgentOutput): Promise<Result<void, ChannelError>>;
 
   /**
+   * Signal that the agent is working (e.g. "typing" indicator).
+   * No-op by default if the channel doesn't support it.
+   *
+   * @param externalThreadId - The channel-specific thread identifier.
+   */
+  sendTyping?(externalThreadId: string): Promise<void>;
+
+  /**
    * Convert a Markdown string to the channel's native format.
    * This is a pure, synchronous transformation — no I/O.
    *
