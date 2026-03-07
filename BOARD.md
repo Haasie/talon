@@ -18,6 +18,8 @@
 | FEAT-001 | Agent SDK integration (replaced direct-mode API calls) | `bd25665` |
 | FEAT-002 | Session persistence across daemon restarts | `df9342e` |
 | FEAT-003 | Conversation history / multi-turn support | `1861f20` |
+| FEAT-004 | Skill MCP server passthrough to Agent SDK | `da2728b` |
+| FEAT-005 | Skills system live (web-research + picnic on VM) | — |
 
 ---
 
@@ -32,7 +34,7 @@ _Nothing currently in progress._
 | ID | Title | Description |
 |----|-------|-------------|
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
-| TASK-038 | Setup skill → talonctl migration | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. Needs: `add-channel --set key=value`, `add-persona --model --system-prompt`, `bind`, `env-check`. |
+| TASK-038 | talonctl as single source of truth | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. All config mutations (channels, personas, MCP, skills, bindings) should go through CLI. The setup skill should only call CLI commands, never write YAML. Needs: `add-channel`, `add-persona`, `add-mcp`, `add-skill`, `bind`, `env-check`. |
 | TASK-039 | Systemd service unit | Create a systemd service file for `talond` so it auto-starts on boot, restarts on crash, and manages env vars via an EnvironmentFile. |
 | TASK-040 | Per-persona tool restrictions | Map persona `capabilities.allow` / `capabilities.requireApproval` to Agent SDK `allowedTools` / `disallowedTools` / `canUseTool`. Currently all tools are allowed via `bypassPermissions`. |
 
@@ -46,8 +48,8 @@ _Nothing currently in progress._
 | TASK-042 | Slack channel connector | Test and fix the Slack connector end-to-end. Add a Slack channel, bind a persona, verify message flow. |
 | TASK-043 | Discord channel connector | Test and fix the Discord connector end-to-end. |
 | TASK-044 | Scheduled tasks | Test cron/interval schedules. Verify the scheduler triggers queue items and personas execute on schedule. |
-| TASK-045 | MCP server per persona | Configure per-persona MCP servers in `talond.yaml` and pass them through to the Agent SDK `mcpServers` option. |
-| TASK-046 | Skills system integration | Load skills from `personas/{name}/skills/` and inject them into Agent SDK runs. Verify skill-specific tools and prompts work. |
+| TASK-045 | `talonctl add-mcp` command | Add MCP servers to skills or personas via CLI: `talonctl add-mcp --skill web-research --name brave-search --transport stdio --command npx --args "-y @modelcontextprotocol/server-brave-search" --env BRAVE_API_KEY=\${BRAVE_API_KEY}`. Should create the skill directory structure and MCP JSON config. The setup skill should expose this as a conversational flow. |
+| TASK-046 | Setup skill cleanup | Rewrite the `/talon-setup` skill to use `talonctl` commands exclusively. Add flows for: adding MCP servers to skills, adding skills to personas, managing env vars. Remove all direct YAML editing. |
 | TASK-047 | Cost tracking & limits | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command. |
 | TASK-048 | Thread memory | Use the thread workspace's `memory/` directory for persistent agent memory across sessions. Explore Agent SDK file persistence. |
 
