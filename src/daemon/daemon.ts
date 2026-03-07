@@ -1138,10 +1138,10 @@ export class TalondDaemon {
             );
 
       const model = loadedPersona.config.model;
-      const authMode = currentConfig.auth.mode;
-      const apiKey = authMode === 'api_key' ? process.env.ANTHROPIC_API_KEY : undefined;
-      if (authMode === 'api_key' && (!apiKey || apiKey.trim() === '')) {
-        throw new Error('auth.mode is api_key but ANTHROPIC_API_KEY is not set');
+      // Direct mode always needs an API key, regardless of auth.mode config.
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey || apiKey.trim() === '') {
+        throw new Error('ANTHROPIC_API_KEY must be set for direct mode (see TODO.md TASK-035)');
       }
 
       const systemPrompt = [loadedPersona.systemPromptContent ?? '', skillPrompt]
@@ -1159,7 +1159,7 @@ export class TalondDaemon {
       );
 
       const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      const client = new Anthropic(apiKey ? { apiKey } : {});
+      const client = new Anthropic({ apiKey });
 
       const response = await client.messages.create({
         model,
