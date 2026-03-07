@@ -5,7 +5,8 @@
  * with the rest of the Talon error-handling conventions.
  */
 
-import { parseExpression } from 'cron-parser';
+import cronParser from 'cron-parser';
+const { parseExpression } = cronParser;
 import { ok, err, type Result } from 'neverthrow';
 import { ScheduleError } from '../core/errors/index.js';
 
