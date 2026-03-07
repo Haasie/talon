@@ -10,7 +10,7 @@
     "talonctl": "bin/talonctl.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp src/core/database/migrations/*.sql dist/core/database/migrations/",
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
