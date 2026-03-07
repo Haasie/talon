@@ -22,6 +22,7 @@
     "migrate": "node dist/cli/index.js migrate"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.71",
     "@anthropic-ai/sdk": "^0.78.0",
     "better-sqlite3": "^12.6.2",
     "commander": "^12.1.0",

@@ -1138,75 +1138,99 @@ export class TalondDaemon {
             );
 
       const model = loadedPersona.config.model;
-      // Direct mode always needs an API key, regardless of auth.mode config.
-      const apiKey = process.env.ANTHROPIC_API_KEY;
-      if (!apiKey || apiKey.trim() === '') {
-        throw new Error('ANTHROPIC_API_KEY must be set for direct mode (see TODO.md TASK-035)');
-      }
 
       const systemPrompt = [loadedPersona.systemPromptContent ?? '', skillPrompt]
         .filter(Boolean)
         .join('\n\n');
 
       // ----------------------------------------------------------------
-      // DIRECT MODE: Call Claude API from host process (temporary).
-      // Bypasses container sandboxing. See TODO.md TASK-035 for the
-      // proper in-container agent runner that replaces this.
+      // Agent SDK mode: run Claude Code as a full autonomous agent with
+      // tools, hooks, MCP servers, session resumption, and permissions.
       // ----------------------------------------------------------------
 
-      // Build conversation history from stored messages for this thread.
-      const historyResult = messageRepo.findByThread(item.threadId, 50, 0);
-      const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-      if (historyResult.isOk()) {
-        for (const msg of historyResult.value) {
-          try {
-            const parsed = JSON.parse(msg.content);
-            const body = parsed.body ?? parsed.content ?? msg.content;
-            history.push({
-              role: msg.direction === 'inbound' ? 'user' : 'assistant',
-              content: typeof body === 'string' ? body : JSON.stringify(body),
-            });
-          } catch {
-            history.push({
-              role: msg.direction === 'inbound' ? 'user' : 'assistant',
-              content: msg.content,
-            });
-          }
-        }
-      }
-      // Append the current message if not already the last entry.
-      const lastMsg = history[history.length - 1];
-      if (!lastMsg || lastMsg.role !== 'user' || lastMsg.content !== content) {
-        history.push({ role: 'user', content });
-      }
-
-      this.logger.info(
-        { runId, personaId, model, threadId: item.threadId, historyLength: history.length },
-        'direct mode: calling Claude API from host',
-      );
-
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      const client = new Anthropic({ apiKey });
-
-      const response = await client.messages.create({
-        model,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: history,
-      });
-
-      const outputText = response.content
-        .filter((block) => block.type === 'text')
-        .map((block) => 'text' in block ? (block as { text: string }).text : '')
-        .join('\n');
+      const existingSessionId = sessionTracker.getSessionId(item.threadId);
 
       this.logger.info(
         {
           runId,
-          inputTokens: response.usage.input_tokens,
-          outputTokens: response.usage.output_tokens,
+          personaId,
+          model,
+          threadId: item.threadId,
+          resumeSession: existingSessionId ?? null,
         },
-        'direct mode: Claude API response received',
+        'agent-sdk: starting query',
+      );
+
+      const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+      // Build Agent SDK options from persona config.
+      const agentOptions: Record<string, unknown> = {
+        model,
+        systemPrompt,
+        permissionMode: 'bypassPermissions' as const,
+        allowDangerouslySkipPermissions: true,
+        cwd: workspaceResult.value,
+        maxTurns: 25,
+        allowedTools: loadedPersona.config.capabilities.allow,
+        disallowedTools: [],
+      };
+
+      // Resume existing session for conversation continuity.
+      if (existingSessionId) {
+        agentOptions.resume = existingSessionId;
+      }
+
+      const agentQuery = query({
+        prompt: content,
+        options: agentOptions as Parameters<typeof query>[0]['options'],
+      });
+
+      let outputText = '';
+      let resultSessionId: string | undefined;
+      let totalCostUsd = 0;
+      let inputTokens = 0;
+      let outputTokens = 0;
+
+      for await (const message of agentQuery) {
+        if (message.type === 'assistant' && message.message?.content) {
+          for (const block of message.message.content) {
+            if ('text' in block && typeof (block as { text: string }).text === 'string') {
+              outputText += (block as { text: string }).text;
+            }
+          }
+        } else if (message.type === 'result') {
+          const result = message as {
+            subtype: string;
+            result?: string;
+            session_id?: string;
+            total_cost_usd?: number;
+            usage?: { input_tokens?: number; output_tokens?: number };
+            is_error?: boolean;
+          };
+          resultSessionId = result.session_id;
+          totalCostUsd = result.total_cost_usd ?? 0;
+          inputTokens = result.usage?.input_tokens ?? 0;
+          outputTokens = result.usage?.output_tokens ?? 0;
+
+          // Use the result text if we didn't capture streaming content.
+          if (!outputText && result.result) {
+            outputText = result.result;
+          }
+
+          if (result.is_error) {
+            this.logger.warn({ runId, result: result.result }, 'agent-sdk: run ended with error');
+          }
+        }
+      }
+
+      // Store session ID for future conversation resumption.
+      if (resultSessionId) {
+        sessionTracker.setSessionId(item.threadId, resultSessionId);
+      }
+
+      this.logger.info(
+        { runId, inputTokens, outputTokens, totalCostUsd, sessionId: resultSessionId },
+        'agent-sdk: query completed',
       );
 
       const threadResult = threadRepo.findById(item.threadId);
