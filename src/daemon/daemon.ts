@@ -1153,8 +1153,35 @@ export class TalondDaemon {
       // Bypasses container sandboxing. See TODO.md TASK-035 for the
       // proper in-container agent runner that replaces this.
       // ----------------------------------------------------------------
+
+      // Build conversation history from stored messages for this thread.
+      const historyResult = messageRepo.findByThread(item.threadId, 50, 0);
+      const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+      if (historyResult.isOk()) {
+        for (const msg of historyResult.value) {
+          try {
+            const parsed = JSON.parse(msg.content);
+            const body = parsed.body ?? parsed.content ?? msg.content;
+            history.push({
+              role: msg.direction === 'inbound' ? 'user' : 'assistant',
+              content: typeof body === 'string' ? body : JSON.stringify(body),
+            });
+          } catch {
+            history.push({
+              role: msg.direction === 'inbound' ? 'user' : 'assistant',
+              content: msg.content,
+            });
+          }
+        }
+      }
+      // Append the current message if not already the last entry.
+      const lastMsg = history[history.length - 1];
+      if (!lastMsg || lastMsg.role !== 'user' || lastMsg.content !== content) {
+        history.push({ role: 'user', content });
+      }
+
       this.logger.info(
-        { runId, personaId, model, threadId: item.threadId },
+        { runId, personaId, model, threadId: item.threadId, historyLength: history.length },
         'direct mode: calling Claude API from host',
       );
 
@@ -1165,7 +1192,7 @@ export class TalondDaemon {
         model,
         max_tokens: 4096,
         system: systemPrompt,
-        messages: [{ role: 'user', content }],
+        messages: history,
       });
 
       const outputText = response.content
