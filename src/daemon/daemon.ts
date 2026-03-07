@@ -828,6 +828,22 @@ export class TalondDaemon {
         continue;
       }
 
+      // Ensure the channel exists in the database so the message pipeline
+      // can resolve it by name.
+      if (this.channelRepo !== null) {
+        const existing = this.channelRepo.findByName(channelConfig.name);
+        if (existing.isOk() && existing.value === null) {
+          this.channelRepo.insert({
+            id: uuidv4(),
+            type: channelConfig.type,
+            name: channelConfig.name,
+            config: JSON.stringify(channelConfig.config),
+            credentials_ref: null,
+            enabled: 1,
+          });
+        }
+      }
+
       connector.onMessage(async (event: InboundEvent) => {
         if (this.messagePipeline === null) {
           return;

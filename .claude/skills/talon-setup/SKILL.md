@@ -161,15 +161,15 @@ Add to `talond.yaml` channels array:
   type: telegram
   enabled: true
   config:
-    token: ${TELEGRAM_BOT_TOKEN}
-    allowedUserIds: []
+    botToken: ${TELEGRAM_BOT_TOKEN}
+    allowedChatIds: []
     pollIntervalMs: 1000
 ```
 
 Tell the user:
 - "Create a Telegram bot via @BotFather — send `/newbot` and follow the prompts."
 - "Set the `TELEGRAM_BOT_TOKEN` environment variable to the token BotFather gives you."
-- "Add your Telegram user ID to `allowedUserIds` to restrict who can talk to the bot. You can find your ID by messaging @userinfobot on Telegram."
+- "Add your Telegram chat ID (as a string) to `allowedChatIds` to restrict who can talk to the bot. You can find your ID by messaging @userinfobot on Telegram."
 
 #### Channel: Slack
 
