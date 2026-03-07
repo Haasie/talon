@@ -1126,22 +1126,6 @@ export class TalondDaemon {
       return err(new Error(workspaceResult.error.message));
     }
 
-    const sandboxResult = await sandboxManager.getOrSpawn(
-      item.threadId,
-      personaId,
-      loadedPersona.config,
-    );
-    if (sandboxResult.isErr()) {
-      runRepo.updateStatus(runId, 'failed', {
-        ended_at: Date.now(),
-        error: sandboxResult.error.message,
-      });
-      return err(new Error(sandboxResult.error.message));
-    }
-
-    const sandbox = sandboxResult.value;
-    sandboxManager.markBusy(item.threadId);
-
     try {
       const content = typeof item.payload.content === 'string' ? item.payload.content : '';
       const skillPrompt =
@@ -1160,32 +1144,43 @@ export class TalondDaemon {
         throw new Error('auth.mode is api_key but ANTHROPIC_API_KEY is not set');
       }
 
-      const spawnResult = await sdkProcessSpawner.spawn(
-        sandbox.containerId,
-        {
-          personaId,
-          systemPrompt: [loadedPersona.systemPromptContent ?? '', skillPrompt]
-            .filter(Boolean)
-            .join('\n\n'),
-          model,
-          sessionId: sessionTracker.getSessionId(item.threadId),
-          authMode,
-          apiKey,
-          skills: loadedPersona.config.skills,
-          allowedTools: loadedPersona.resolvedCapabilities.allow,
-          env: { TALON_INPUT_MESSAGE: content },
-        },
-        threadWorkspace.getIpcInputDir(item.threadId),
-        threadWorkspace.getIpcOutputDir(item.threadId),
+      const systemPrompt = [loadedPersona.systemPromptContent ?? '', skillPrompt]
+        .filter(Boolean)
+        .join('\n\n');
+
+      // ----------------------------------------------------------------
+      // DIRECT MODE: Call Claude API from host process (temporary).
+      // Bypasses container sandboxing. See TODO.md TASK-035 for the
+      // proper in-container agent runner that replaces this.
+      // ----------------------------------------------------------------
+      this.logger.info(
+        { runId, personaId, model, threadId: item.threadId },
+        'direct mode: calling Claude API from host',
       );
 
-      if (spawnResult.isErr()) {
-        runRepo.updateStatus(runId, 'failed', {
-          ended_at: Date.now(),
-          error: spawnResult.error.message,
-        });
-        return err(new Error(spawnResult.error.message));
-      }
+      const { default: Anthropic } = await import('@anthropic-ai/sdk');
+      const client = new Anthropic(apiKey ? { apiKey } : {});
+
+      const response = await client.messages.create({
+        model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: 'user', content }],
+      });
+
+      const outputText = response.content
+        .filter((block) => block.type === 'text')
+        .map((block) => 'text' in block ? (block as { text: string }).text : '')
+        .join('\n');
+
+      this.logger.info(
+        {
+          runId,
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+        },
+        'direct mode: Claude API response received',
+      );
 
       const threadResult = threadRepo.findById(item.threadId);
       if (threadResult.isErr() || threadResult.value === null) {
@@ -1200,7 +1195,7 @@ export class TalondDaemon {
       const connector = channelRegistry.get(channelResult.value.name);
       if (connector !== undefined) {
         const sendResult = await connector.send(threadResult.value.external_id, {
-          body: spawnResult.value.output,
+          body: outputText,
         });
         if (sendResult.isErr()) {
           throw new Error(`channel send failed: ${sendResult.error.message}`);
@@ -1211,21 +1206,20 @@ export class TalondDaemon {
         id: uuidv4(),
         thread_id: item.threadId,
         direction: 'outbound',
-        content: JSON.stringify({ body: spawnResult.value.output }),
+        content: JSON.stringify({ body: outputText }),
         idempotency_key: `outbound:${runId}`,
         provider_id: null,
         run_id: runId,
       });
 
-      sessionTracker.setSessionId(item.threadId, spawnResult.value.sessionId);
-      runRepo.updateStatus(runId, 'completed', { ended_at: Date.now() });
+      runRepo.updateStatus(runId, 'completed', {
+        ended_at: Date.now(),
+      });
       return ok(undefined);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       runRepo.updateStatus(runId, 'failed', { ended_at: Date.now(), error: message });
       return err(new Error(message));
-    } finally {
-      sandboxManager.markWarm(item.threadId);
     }
   }
 }
