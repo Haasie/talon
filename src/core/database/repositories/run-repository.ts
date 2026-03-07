@@ -159,6 +159,32 @@ export class RunRepository extends BaseRepository {
     }
   }
 
+  /** Updates the session_id of a run (used to persist Agent SDK session for resumption). */
+  updateSessionId(id: string, sessionId: string): Result<void, DbError> {
+    try {
+      const stmt = this.db.prepare(`UPDATE runs SET session_id = @sessionId WHERE id = @id`);
+      stmt.run({ id, sessionId });
+      return ok(undefined);
+    } catch (cause) {
+      return err(new DbError(`Failed to update run session_id: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /** Returns the most recent session_id for a thread from completed runs. */
+  getLatestSessionId(threadId: string): Result<string | null, DbError> {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT session_id FROM runs
+        WHERE thread_id = ? AND session_id IS NOT NULL AND status = 'completed'
+        ORDER BY created_at DESC LIMIT 1
+      `);
+      const row = stmt.get(threadId) as { session_id: string } | undefined;
+      return ok(row?.session_id ?? null);
+    } catch (cause) {
+      return err(new DbError(`Failed to get latest session_id: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Aggregation queries
   // ---------------------------------------------------------------------------

@@ -1148,7 +1148,15 @@ export class TalondDaemon {
       // tools, hooks, MCP servers, session resumption, and permissions.
       // ----------------------------------------------------------------
 
-      const existingSessionId = sessionTracker.getSessionId(item.threadId);
+      // Try in-memory tracker first, fall back to DB for daemon restart recovery.
+      let existingSessionId = sessionTracker.getSessionId(item.threadId);
+      if (!existingSessionId) {
+        const dbSessionResult = runRepo.getLatestSessionId(item.threadId);
+        if (dbSessionResult.isOk() && dbSessionResult.value) {
+          existingSessionId = dbSessionResult.value;
+          sessionTracker.setSessionId(item.threadId, existingSessionId);
+        }
+      }
 
       this.logger.info(
         {
@@ -1223,9 +1231,10 @@ export class TalondDaemon {
         }
       }
 
-      // Store session ID for future conversation resumption.
+      // Store session ID for future conversation resumption (memory + DB).
       if (resultSessionId) {
         sessionTracker.setSessionId(item.threadId, resultSessionId);
+        runRepo.updateSessionId(runId, resultSessionId);
       }
 
       this.logger.info(
