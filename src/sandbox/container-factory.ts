@@ -13,6 +13,7 @@
  * variables or mounted files written to the container filesystem.
  */
 
+import { resolve } from 'node:path';
 import Dockerode from 'dockerode';
 import { ok, err, type Result } from 'neverthrow';
 import { SandboxError } from '../core/errors/index.js';
@@ -51,7 +52,7 @@ export const TMP_SIZE = '100m';
  * @returns Resolved host path.
  */
 export function resolveMountSource(source: string, threadId: string): string {
-  return source.split(THREAD_TOKEN).join(threadId);
+  return resolve(source.split(THREAD_TOKEN).join(threadId));
 }
 
 /**

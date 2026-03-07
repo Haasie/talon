@@ -51,7 +51,7 @@ describe('resolveMountSource()', () => {
   });
 
   it('replaces multiple {thread} occurrences', () => {
-    expect(resolveMountSource('{thread}/a/{thread}/b', 'T1')).toBe('T1/a/T1/b');
+    expect(resolveMountSource('{thread}/a/{thread}/b', 'T1')).toBe(require('path').resolve('T1/a/T1/b'));
   });
 
   it('returns source unchanged when no token present', () => {
