@@ -52,10 +52,15 @@ function deepFreeze<T>(value: T): T {
  * Returns a ConfigError when the YAML is malformed or fails schema validation.
  */
 function parseAndValidate(yamlContent: string, source: string): Result<TalondConfig, ConfigError> {
+  // Substitute ${ENV_VAR} placeholders with process.env values before parsing.
+  const substituted = yamlContent.replace(/\$\{(\w+)\}/g, (_match, name: string) => {
+    return process.env[name] ?? '';
+  });
+
   let raw: unknown;
 
   try {
-    raw = yaml.load(yamlContent);
+    raw = yaml.load(substituted);
   } catch (e) {
     const cause = e instanceof Error ? e : new Error(String(e));
     return err(
