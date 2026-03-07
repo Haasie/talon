@@ -1171,6 +1171,32 @@ export class TalondDaemon {
 
       const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
+      // Collect MCP servers from skills assigned to this persona.
+      const personaSkills = this.loadedSkills.filter((skill) =>
+        loadedPersona.config.skills.includes(skill.manifest.name),
+      );
+      const mcpServers: Record<string, unknown> = {};
+      for (const skill of personaSkills) {
+        for (const mcpDef of skill.resolvedMcpServers) {
+          const cfg = mcpDef.config;
+          // Substitute env var placeholders in MCP env values.
+          const resolvedEnv: Record<string, string> = {};
+          if (cfg.env) {
+            for (const [key, val] of Object.entries(cfg.env)) {
+              const envVarMatch = /^\$\{(\w+)\}$/.exec(val);
+              resolvedEnv[key] = envVarMatch ? (process.env[envVarMatch[1] ?? ''] ?? '') : val;
+            }
+          }
+          mcpServers[mcpDef.name] = {
+            type: cfg.transport,
+            command: cfg.command,
+            args: cfg.args ?? [],
+            ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
+            ...(cfg.url ? { url: cfg.url } : {}),
+          };
+        }
+      }
+
       // Build Agent SDK options from persona config.
       const agentOptions: Record<string, unknown> = {
         model,
@@ -1182,6 +1208,15 @@ export class TalondDaemon {
         allowedTools: loadedPersona.config.capabilities.allow,
         disallowedTools: [],
       };
+
+      // Attach MCP servers from skills.
+      if (Object.keys(mcpServers).length > 0) {
+        agentOptions.mcpServers = mcpServers;
+        this.logger.info(
+          { runId, mcpServers: Object.keys(mcpServers) },
+          'agent-sdk: attaching MCP servers from skills',
+        );
+      }
 
       // Resume existing session for conversation continuity.
       if (existingSessionId) {
