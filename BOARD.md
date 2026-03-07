@@ -37,6 +37,7 @@ _Nothing currently in progress._
 | TASK-038 | talonctl as single source of truth | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. All config mutations (channels, personas, MCP, skills, bindings) should go through CLI. The setup skill should only call CLI commands, never write YAML. Needs: `add-channel`, `add-persona`, `add-mcp`, `add-skill`, `bind`, `env-check`. |
 | TASK-039 | Systemd service unit | Create a systemd service file for `talond` so it auto-starts on boot, restarts on crash, and manages env vars via an EnvironmentFile. |
 | TASK-040 | Per-persona tool restrictions | Map persona `capabilities.allow` / `capabilities.requireApproval` to Agent SDK `allowedTools` / `disallowedTools` / `canUseTool`. Currently all tools are allowed via `bypassPermissions`. |
+| TASK-057 | Extract AgentRunner from daemon.ts | `daemon.ts` is 1373 lines. Extract `handleQueueItem` into an `AgentRunner` class owning: Agent SDK query, MCP wiring, typing indicators, session management, output parsing. Also extract `DaemonBootstrap` for the `start()` init sequence. Daemon becomes a thin lifecycle orchestrator. Prepares cleanly for Docker sandbox mode (just swap `spawnClaudeCodeProcess` in the runner). |
 
 ---
 
