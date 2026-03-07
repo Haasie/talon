@@ -1,0 +1,86 @@
+# Talon — Project Board
+
+> Last updated: 2026-03-07
+
+## ✅ Done
+
+| ID | Title | Commit |
+|----|-------|--------|
+| TASK-032 | Wire daemon bootstrap and runtime orchestration | `9f6aa4b` |
+| TASK-033 | Implement MCP transport forwarding in proxy | `f34e17d` |
+| TASK-034 | Fix run identity and channel-scoped idempotency | `b20efd4` |
+| FIX-001 | cron-parser ESM default import | `5456c61` |
+| FIX-002 | Copy SQL migrations to dist/ | `8e22e9f` |
+| FIX-003 | Add ${ENV_VAR} substitution in config loader | `fb6a309` |
+| FIX-004 | Seed channel DB rows on startup | `79e82bd` |
+| FIX-005 | Create default channel→persona binding on startup | `f382655` |
+| FIX-006 | Resolve Docker bind mount paths to absolute | `5828635` |
+| FEAT-001 | Agent SDK integration (replaced direct-mode API calls) | `bd25665` |
+| FEAT-002 | Session persistence across daemon restarts | `df9342e` |
+| FEAT-003 | Conversation history / multi-turn support | `1861f20` |
+
+---
+
+## 🔨 In Progress
+
+_Nothing currently in progress._
+
+---
+
+## 📋 Backlog — High Priority
+
+| ID | Title | Description |
+|----|-------|-------------|
+| TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
+| TASK-038 | Setup skill → talonctl migration | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. Needs: `add-channel --set key=value`, `add-persona --model --system-prompt`, `bind`, `env-check`. |
+| TASK-039 | Systemd service unit | Create a systemd service file for `talond` so it auto-starts on boot, restarts on crash, and manages env vars via an EnvironmentFile. |
+| TASK-040 | Per-persona tool restrictions | Map persona `capabilities.allow` / `capabilities.requireApproval` to Agent SDK `allowedTools` / `disallowedTools` / `canUseTool`. Currently all tools are allowed via `bypassPermissions`. |
+
+---
+
+## 📋 Backlog — Medium Priority
+
+| ID | Title | Description |
+|----|-------|-------------|
+| TASK-041 | Multi-persona support | Test multiple personas bound to different channels (e.g. a "coder" persona for Slack, an "assistant" persona for Telegram). Verify routing and isolation. |
+| TASK-042 | Slack channel connector | Test and fix the Slack connector end-to-end. Add a Slack channel, bind a persona, verify message flow. |
+| TASK-043 | Discord channel connector | Test and fix the Discord connector end-to-end. |
+| TASK-044 | Scheduled tasks | Test cron/interval schedules. Verify the scheduler triggers queue items and personas execute on schedule. |
+| TASK-045 | MCP server per persona | Configure per-persona MCP servers in `talond.yaml` and pass them through to the Agent SDK `mcpServers` option. |
+| TASK-046 | Skills system integration | Load skills from `personas/{name}/skills/` and inject them into Agent SDK runs. Verify skill-specific tools and prompts work. |
+| TASK-047 | Cost tracking & limits | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command. |
+| TASK-048 | Thread memory | Use the thread workspace's `memory/` directory for persistent agent memory across sessions. Explore Agent SDK file persistence. |
+
+---
+
+## 📋 Backlog — Low Priority
+
+| ID | Title | Description |
+|----|-------|-------------|
+| TASK-049 | Email channel connector | Test and fix the email (IMAP/SMTP) connector. |
+| TASK-050 | WhatsApp channel connector | Test and fix the WhatsApp Business connector. |
+| TASK-051 | Audit logging | Verify audit log entries are written for all tool calls, messages, and permission decisions. Add `talonctl audit` query command. |
+| TASK-052 | Health endpoint | Expose an HTTP health endpoint for monitoring (uptime, active threads, queue depth, last error). |
+| TASK-053 | Backup & restore | Test the SQLite backup mechanism. Add `talonctl backup` and `talonctl restore` commands. |
+| TASK-054 | Multi-agent collaboration | Test the Agent SDK's subagent/Task tool support. Configure `agents` in persona config for specialized sub-tasks. |
+| TASK-055 | Graceful shutdown | Verify SIGTERM handling: drain queue, finish active runs, close channels, then exit. |
+| TASK-056 | Fix pre-existing test failures | 30 test files / 359 tests failing (pre-existing, mostly tool-result-repository setup issues). |
+
+---
+
+## 🐛 Known Issues
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| BUG-001 | 359 tests failing (pre-existing, not from recent changes) — likely test setup/teardown issues in repository tests | Low |
+| BUG-002 | `SdkProcessSpawner` is dead code now that Agent SDK runs on host — should be removed or repurposed for Docker mode | Low |
+| BUG-003 | `zod` peer dep conflict: Agent SDK wants zod@4, project uses zod@3 (installed with `--legacy-peer-deps`) | Medium |
+
+---
+
+## 📝 Notes
+
+- **Auth**: Running on Claude Max subscription via `claude login` on VM. No API key needed.
+- **VM**: 10.0.80.200, user `talon`, Debian 13, Node.js 22, Claude Code 2.1.71
+- **Security**: Telegram bot restricted to chat ID `74575531` via `allowedChatIds`
+- **Architecture decision**: Agent SDK runs on host (not in Docker) for v1. Docker isolation deferred to TASK-037 for defense-in-depth against prompt injection from untrusted input.
