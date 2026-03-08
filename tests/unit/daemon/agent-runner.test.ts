@@ -99,6 +99,10 @@ function makeMockContext(): DaemonContext {
         send: vi.fn().mockResolvedValue(ok(undefined)),
         sendTyping: vi.fn(),
       }),
+      listAll: vi.fn().mockReturnValue([
+        { name: 'test-channel' },
+        { name: 'other-channel' },
+      ]),
     } as any,
     queueManager: {} as any,
     scheduler: {} as any,
@@ -383,6 +387,53 @@ describe('AgentRunner', () => {
       const result = await runner.run(item);
 
       expect(result.isOk()).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Channel context injection into system prompt
+  // -------------------------------------------------------------------------
+
+  describe('channel context in system prompt', () => {
+    it('includes available channels and current channel in system prompt', async () => {
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as { options: { systemPrompt: string } };
+      const systemPrompt = queryCall.options.systemPrompt;
+
+      expect(systemPrompt).toContain('Available channels for channel_send tool:');
+      expect(systemPrompt).toContain('test-channel (current thread)');
+      expect(systemPrompt).toContain('other-channel');
+      expect(systemPrompt).toContain('When sending messages, use channelId: "test-channel".');
+    });
+
+    it('lists channels without current marker when thread has no channel', async () => {
+      vi.mocked(ctx.repos.thread.findById).mockReturnValue(ok(null));
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as { options: { systemPrompt: string } };
+      const systemPrompt = queryCall.options.systemPrompt;
+
+      expect(systemPrompt).toContain('Available channels for channel_send tool:');
+      expect(systemPrompt).toContain('  - test-channel');
+      expect(systemPrompt).not.toContain('(current thread)');
+      expect(systemPrompt).not.toContain('When sending messages');
+    });
+
+    it('still includes persona system prompt alongside channel context', async () => {
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as { options: { systemPrompt: string } };
+      const systemPrompt = queryCall.options.systemPrompt;
+
+      expect(systemPrompt).toContain('You are a test bot.');
+      expect(systemPrompt).toContain('Available channels');
     });
   });
 

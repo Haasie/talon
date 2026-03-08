@@ -524,11 +524,12 @@ npx talonctl add-skill --name web-search --persona researcher
 
 ### Database and Operations
 
-| Command            | Description                                                    |
-| ------------------ | -------------------------------------------------------------- |
-| `talonctl migrate` | Apply pending database migrations                              |
-| `talonctl backup`  | Snapshot SQLite database and data directory                    |
-| `talonctl doctor`  | Run diagnostic checks on environment, config, and dependencies |
+| Command                 | Description                                                    |
+| ----------------------- | -------------------------------------------------------------- |
+| `talonctl migrate`      | Apply pending database migrations                              |
+| `talonctl backup`       | Snapshot SQLite database and data directory                    |
+| `talonctl doctor`       | Run diagnostic checks on environment, config, and dependencies |
+| `talonctl queue-purge`  | Purge queue items by status                                    |
 
 ```bash
 # Run migrations
@@ -539,6 +540,15 @@ npx talonctl backup --config talond.yaml --output /backups/talon-$(date +%Y%m%d)
 
 # Check system health
 npx talonctl doctor --config talond.yaml
+
+# Purge completed, pending, and failed queue items (default)
+npx talonctl queue-purge
+
+# Purge specific statuses
+npx talonctl queue-purge --statuses dead_letter,failed
+
+# Purge ALL queue items including in-flight (claimed, processing)
+npx talonctl queue-purge --all
 ```
 
 ### Doctor Checks

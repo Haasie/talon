@@ -213,4 +213,124 @@ describe('QueueRepository', () => {
       expect(counts['completed']).toBeGreaterThanOrEqual(1);
     });
   });
+
+  describe('purge', () => {
+    it('returns ok(0) and deletes nothing when given an empty array', () => {
+      const a = makeItem();
+      repo.enqueue(a);
+
+      const result = repo.purge([]);
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBe(0);
+
+      // Item should still exist.
+      const row = repo.findById(a.id)._unsafeUnwrap();
+      expect(row).not.toBeNull();
+    });
+
+    it('deletes only items matching the specified statuses', () => {
+      const pending1 = makeItem();
+      const pending2 = makeItem();
+      const completed1 = makeItem();
+      repo.enqueue(pending1);
+      repo.enqueue(pending2);
+      repo.enqueue(completed1);
+
+      // Move completed1 through claimed -> completed.
+      repo.claimNext(threadId);
+      repo.complete(pending1.id);
+
+      // Now pending1 is completed, pending2 and completed1 are pending.
+      // Purge only completed items.
+      const result = repo.purge(['completed']);
+      expect(result._unsafeUnwrap()).toBe(1);
+
+      // The completed item should be gone.
+      expect(repo.findById(pending1.id)._unsafeUnwrap()).toBeNull();
+      // The pending items should remain.
+      expect(repo.findById(pending2.id)._unsafeUnwrap()).not.toBeNull();
+      expect(repo.findById(completed1.id)._unsafeUnwrap()).not.toBeNull();
+    });
+
+    it('returns the correct count of deleted items', () => {
+      // Create 3 items and complete all of them.
+      const items = [makeItem(), makeItem(), makeItem()];
+      for (const item of items) {
+        repo.enqueue(item);
+      }
+      for (const item of items) {
+        repo.claimNext(threadId);
+        repo.complete(item.id);
+      }
+
+      const result = repo.purge(['completed']);
+      expect(result._unsafeUnwrap()).toBe(3);
+    });
+
+    it('purges items across multiple statuses in a single call', () => {
+      const a = makeItem();
+      const b = makeItem();
+      const c = makeItem();
+      const d = makeItem();
+      repo.enqueue(a);
+      repo.enqueue(b);
+      repo.enqueue(c);
+      repo.enqueue(d);
+
+      // a -> completed
+      repo.claimNext(threadId);
+      repo.complete(a.id);
+
+      // b -> dead_letter
+      repo.markDeadLetter(b.id, 'permanent failure');
+
+      // c, d remain pending.
+
+      const result = repo.purge(['completed', 'dead_letter']);
+      expect(result._unsafeUnwrap()).toBe(2);
+
+      expect(repo.findById(a.id)._unsafeUnwrap()).toBeNull();
+      expect(repo.findById(b.id)._unsafeUnwrap()).toBeNull();
+      expect(repo.findById(c.id)._unsafeUnwrap()).not.toBeNull();
+      expect(repo.findById(d.id)._unsafeUnwrap()).not.toBeNull();
+    });
+
+    it('returns ok(0) when no items match the given statuses', () => {
+      const a = makeItem();
+      repo.enqueue(a); // status = pending
+
+      const result = repo.purge(['completed', 'dead_letter']);
+      expect(result._unsafeUnwrap()).toBe(0);
+
+      // The pending item should be untouched.
+      expect(repo.findById(a.id)._unsafeUnwrap()).not.toBeNull();
+    });
+
+    it('leaves remaining items fully queryable after purge', () => {
+      const toRemove = makeItem();
+      const toKeep = makeItem();
+      repo.enqueue(toRemove);
+      repo.enqueue(toKeep);
+
+      // claimNext claims oldest first (toRemove), then complete it.
+      repo.claimNext(threadId);
+      repo.complete(toRemove.id);
+
+      // toRemove is now completed, toKeep is still pending.
+      repo.purge(['completed']);
+
+      // toKeep is still pending and queryable.
+      const row = repo.findById(toKeep.id)._unsafeUnwrap();
+      expect(row).not.toBeNull();
+      expect(row!.status).toBe('pending');
+
+      // toRemove is gone.
+      expect(repo.findById(toRemove.id)._unsafeUnwrap()).toBeNull();
+
+      // countByStatus should still work correctly.
+      const counts = repo.countByStatus()._unsafeUnwrap();
+      expect(counts['pending']).toBeGreaterThanOrEqual(1);
+      expect(counts['completed']).toBeUndefined();
+    });
+  });
 });

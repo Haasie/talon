@@ -91,7 +91,33 @@ export class AgentRunner {
 
       const model = loadedPersona.config.model;
 
-      const systemPrompt = [loadedPersona.systemPromptContent ?? '', skillPrompt]
+      // Build channel context so the agent knows which channels are available.
+      const threadRow = this.ctx.repos.thread.findById(item.threadId);
+      const currentChannelRow =
+        threadRow.isOk() && threadRow.value
+          ? this.ctx.repos.channel.findById(threadRow.value.channel_id)
+          : null;
+      const currentChannelName =
+        currentChannelRow && currentChannelRow.isOk() && currentChannelRow.value
+          ? currentChannelRow.value.name
+          : undefined;
+      const allChannels = this.ctx.channelRegistry
+        .listAll()
+        .map((c) => c.name);
+
+      const channelContext = [
+        'Available channels for channel_send tool:',
+        ...allChannels.map((name) =>
+          name === currentChannelName ? `  - ${name} (current thread)` : `  - ${name}`,
+        ),
+        currentChannelName
+          ? `When sending messages, use channelId: "${currentChannelName}".`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const systemPrompt = [loadedPersona.systemPromptContent ?? '', skillPrompt, channelContext]
         .filter(Boolean)
         .join('\n\n');
 
