@@ -21,7 +21,7 @@ export interface ScheduleManageTool {
 /** Arguments accepted by the schedule.manage tool. */
 export interface ScheduleManageArgs {
   /** Action to perform on the schedule entry. */
-  action: 'create' | 'update' | 'cancel';
+  action: 'create' | 'update' | 'cancel' | 'list';
   /** Unique schedule identifier (required for update/cancel). */
   scheduleId?: string;
   /** Cron expression defining when the task fires (required for create/update). */
@@ -33,7 +33,7 @@ export interface ScheduleManageArgs {
 }
 
 /** Valid actions for the schedule.manage tool. */
-const VALID_ACTIONS = new Set(['create', 'update', 'cancel']);
+const VALID_ACTIONS = new Set(['create', 'update', 'cancel', 'list']);
 
 /**
  * Basic validation for cron expressions.
@@ -104,6 +104,8 @@ export class ScheduleManageHandler {
         return this.handleUpdate(args, context, requestId);
       case 'cancel':
         return this.handleCancel(args, context, requestId);
+      case 'list':
+        return this.handleList(context, requestId);
       default: {
         // TypeScript exhaustiveness guard
         const error = new ToolError(`schedule.manage: unknown action "${action as string}"`);
@@ -293,6 +295,48 @@ export class ScheduleManageHandler {
       tool: 'schedule.manage',
       status: 'success',
       result: { scheduleId, action: 'cancel', cancelled: true },
+    };
+  }
+
+  /** Handle the 'list' action — return all schedules for the persona. */
+  private handleList(context: ToolExecutionContext, requestId: string): ToolCallResult {
+    const result = this.deps.scheduleRepository.findByPersona(context.personaId);
+    if (result.isErr()) {
+      const msg = `schedule.manage: list failed — ${result.error.message}`;
+      this.deps.logger.error({ requestId, err: result.error }, msg);
+      return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+    }
+
+    const schedules = result.value.map((row) => {
+      const payload = (() => {
+        try {
+          return JSON.parse(row.payload);
+        } catch {
+          return row.payload;
+        }
+      })();
+      return {
+        scheduleId: row.id,
+        type: row.type,
+        expression: row.expression,
+        label: payload?.label ?? '',
+        prompt: payload?.prompt ?? '',
+        enabled: row.enabled === 1,
+        nextRunAt: row.next_run_at ? new Date(row.next_run_at).toISOString() : null,
+        lastRunAt: row.last_run_at ? new Date(row.last_run_at).toISOString() : null,
+      };
+    });
+
+    this.deps.logger.debug(
+      { requestId, personaId: context.personaId, count: schedules.length },
+      'schedule.manage: list complete',
+    );
+
+    return {
+      requestId,
+      tool: 'schedule.manage',
+      status: 'success',
+      result: { schedules, count: schedules.length },
     };
   }
 }

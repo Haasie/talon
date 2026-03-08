@@ -179,14 +179,14 @@ class SocketClient {
 const TOOLS = [
   {
     name: 'schedule_manage',
-    description: 'Creates, updates, or cancels scheduled tasks on behalf of a persona.',
+    description: 'Creates, updates, cancels, or lists scheduled tasks on behalf of a persona.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         action: {
           type: 'string' as const,
-          enum: ['create', 'update', 'cancel'],
-          description: 'Action to perform on the schedule entry',
+          enum: ['create', 'update', 'cancel', 'list'],
+          description: 'Action to perform. Use "list" to see all schedules for this persona.',
         },
         scheduleId: {
           type: 'string' as const,

@@ -387,3 +387,58 @@ describe('ScheduleManageHandler — invalid action', () => {
     expect(result.error).toMatch(/invalid action/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
+
+describe('ScheduleManageHandler — list', () => {
+  it('returns all schedules for the persona', async () => {
+    const schedules = [
+      makeScheduleRow({ id: 'sched-001', expression: '0 9 * * 1', next_run_at: 1700000000000 }),
+      makeScheduleRow({ id: 'sched-002', expression: '30 18 * * *', next_run_at: 1700050000000, enabled: 0 }),
+    ];
+    const repo = makeRepo({ findByPersona: vi.fn().mockReturnValue(ok(schedules)) });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute({ action: 'list' }, makeContext());
+
+    expect(result.status).toBe('success');
+    const data = result.result as { schedules: unknown[]; count: number };
+    expect(data.count).toBe(2);
+    expect(data.schedules).toHaveLength(2);
+    expect(data.schedules[0]).toMatchObject({
+      scheduleId: 'sched-001',
+      expression: '0 9 * * 1',
+      enabled: true,
+    });
+    expect(data.schedules[1]).toMatchObject({
+      scheduleId: 'sched-002',
+      enabled: false,
+    });
+  });
+
+  it('returns empty list when no schedules exist', async () => {
+    const repo = makeRepo({ findByPersona: vi.fn().mockReturnValue(ok([])) });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute({ action: 'list' }, makeContext());
+
+    expect(result.status).toBe('success');
+    const data = result.result as { schedules: unknown[]; count: number };
+    expect(data.count).toBe(0);
+    expect(data.schedules).toHaveLength(0);
+  });
+
+  it('returns error when repository fails', async () => {
+    const repo = makeRepo({
+      findByPersona: vi.fn().mockReturnValue(err(new DbError('DB read failed'))),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute({ action: 'list' }, makeContext());
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('list failed');
+  });
+});
