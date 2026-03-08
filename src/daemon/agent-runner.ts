@@ -6,7 +6,7 @@ import type { DaemonContext } from './daemon-context.js';
 import type { QueueItem } from '../queue/queue-types.js';
 
 /** Default maximum time (ms) an Agent SDK query may run before being aborted. */
-const DEFAULT_QUERY_TIMEOUT_MS = 90 * 1000; // 90 seconds
+const DEFAULT_QUERY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 
 /**
  * AgentRunner — executes queue items by running the Claude Agent SDK.
@@ -100,9 +100,10 @@ export class AgentRunner {
       // tools, hooks, MCP servers, session resumption, and permissions.
       // ----------------------------------------------------------------
 
-      // Use in-memory tracker only. After a daemon restart, sessions are fresh
-      // — DB session IDs from previous runs are stale and cause the SDK to hang.
-      const existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
+      // Session resume disabled: the Agent SDK hangs or takes excessively long
+      // when resuming sessions with MCP servers attached. Revisit when the SDK
+      // stabilizes session resume + MCP interaction.
+      const existingSessionId: string | undefined = undefined;
 
       this.ctx.logger.info(
         {
