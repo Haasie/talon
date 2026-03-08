@@ -10,6 +10,7 @@
 - **This file is the living document** — update it after every significant change so context survives compression.
 - **Ivo is building a mental model** — explain the "why" not just the "what". Don't skip steps.
 - **GPT-5.4 via OpenCode** handles batch/mechanical refactors across many files. Claude handles analysis, design, and targeted changes.
+- **GPT-5.4 reviews ALL changes before committing.** No exceptions — always get a review pass before `git commit`.
 
 ---
 
