@@ -31,7 +31,7 @@ import {
 
 import { ChannelRegistry } from '../channels/channel-registry.js';
 import { ChannelRouter } from '../channels/channel-router.js';
-import type { InboundEvent } from '../channels/channel-types.js';
+import { registerChannels } from '../channels/channel-setup.js';
 import { MessagePipeline } from '../pipeline/message-pipeline.js';
 import { QueueManager } from '../queue/queue-manager.js';
 import { Scheduler } from '../scheduler/scheduler.js';
@@ -44,7 +44,6 @@ import { ThreadWorkspace } from '../memory/thread-workspace.js';
 import { SessionTracker } from '../sandbox/session-tracker.js';
 
 import { recoverFromCrash } from './lifecycle.js';
-import { createConnector } from './channel-factory.js';
 import type { DaemonContext } from './daemon-context.js';
 
 // ---------------------------------------------------------------------------
@@ -175,7 +174,13 @@ export async function bootstrap(
     logger,
   );
 
-  registerChannels(config, channelRegistry, repos, messagePipeline, logger);
+  registerChannels(config, channelRegistry, {
+    channelRepo: repos.channel,
+    bindingRepo: repos.binding,
+    personaRepo: repos.persona,
+    messagePipeline,
+    logger,
+  });
 
   logger.info('bootstrap: context ready');
 
@@ -196,84 +201,6 @@ export async function bootstrap(
     loadedSkills: loadedSkills.value,
     logger,
   });
-}
-
-/**
- * Registers channel connectors, seeds DB rows, and creates default bindings.
- * Extracted from daemon.ts rebuildChannelRegistrations().
- */
-function registerChannels(
-  config: import('../core/config/config-types.js').TalondConfig,
-  channelRegistry: ChannelRegistry,
-  repos: DaemonContext['repos'],
-  messagePipeline: MessagePipeline,
-  logger: pino.Logger,
-): void {
-  for (const channelConfig of config.channels.filter((channel) => channel.enabled)) {
-    const connector = createConnector(
-      channelConfig.type,
-      channelConfig.name,
-      channelConfig.config,
-      logger,
-    );
-    if (connector === null) {
-      logger.warn(
-        { channelName: channelConfig.name, channelType: channelConfig.type },
-        'bootstrap: failed to construct channel connector; skipping',
-      );
-      continue;
-    }
-
-    // Ensure the channel exists in the database.
-    const existing = repos.channel.findByName(channelConfig.name);
-    let channelId: string;
-    if (existing.isOk() && existing.value !== null) {
-      channelId = existing.value.id;
-    } else {
-      channelId = uuidv4();
-      repos.channel.insert({
-        id: channelId,
-        type: channelConfig.type,
-        name: channelConfig.name,
-        config: JSON.stringify(channelConfig.config),
-        credentials_ref: null,
-        enabled: 1,
-      });
-    }
-
-    // Create a default binding to the first persona if none exists.
-    if (config.personas.length > 0) {
-      const defaultBinding = repos.binding.findDefaultForChannel(channelId);
-      if (defaultBinding.isOk() && defaultBinding.value === null) {
-        const personaResult = repos.persona.findByName(config.personas[0].name);
-        if (personaResult.isOk() && personaResult.value !== null) {
-          repos.binding.insert({
-            id: uuidv4(),
-            channel_id: channelId,
-            thread_id: null,
-            persona_id: personaResult.value.id,
-            is_default: 1,
-          });
-          logger.info(
-            { channelName: channelConfig.name, persona: config.personas[0].name },
-            'bootstrap: created default channel->persona binding',
-          );
-        }
-      }
-    }
-
-    connector.onMessage(async (event: InboundEvent) => {
-      const pipelineResult = await messagePipeline.handleInboundEvent(event);
-      if (pipelineResult.isErr()) {
-        logger.error(
-          { channelName: event.channelName, err: pipelineResult.error.message },
-          'bootstrap: inbound message pipeline failed',
-        );
-      }
-    });
-
-    channelRegistry.register(connector);
-  }
 }
 
 // ---------------------------------------------------------------------------
