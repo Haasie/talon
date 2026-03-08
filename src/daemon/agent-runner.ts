@@ -165,8 +165,6 @@ export class AgentRunner {
         allowDangerouslySkipPermissions: true,
         cwd: workspaceResult.value,
         maxTurns: 25,
-        allowedTools: loadedPersona.config.capabilities.allow,
-        disallowedTools: [],
       };
 
       // Attach MCP servers from skills.
