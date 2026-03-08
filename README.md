@@ -571,23 +571,28 @@ Talon supports three deployment modes.
 
 ### 1. Native Daemon (systemd)
 
-The recommended mode for Linux servers. The daemon runs as a systemd service, sandboxes are spawned via local Docker.
+The recommended mode for Linux servers. The daemon runs as a systemd service with automatic restart on failure.
 
 ```bash
-# Copy the service file
-sudo cp deploy/talond.service /etc/systemd/system/
+# Install the service (detects user, directory, and node path)
+sudo ./deploy/install-service.sh
 
-# Enable and start
-sudo systemctl daemon-reload
-sudo systemctl enable talond
+# Or with explicit options
+sudo ./deploy/install-service.sh --user talon --dir /home/talon/talon
+
+# Start the daemon
 sudo systemctl start talond
 
-# Check status
+# Check status and follow logs
 sudo systemctl status talond
 journalctl -u talond -f
+
+# The daemon will auto-start on boot and restart on crash
 ```
 
-The service includes comprehensive security hardening: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `ProtectKernelTunables`, `CapabilityBoundingSet=`, and `SystemCallFilter`.
+The install script generates a systemd unit from `deploy/talond.service` with your paths substituted. It reads environment variables from `.env` in the project root via `EnvironmentFile`.
+
+The service includes security hardening: `NoNewPrivileges`, `PrivateTmp`, `ProtectKernelTunables`, `SystemCallFilter=@system-service`, `RestrictAddressFamilies`, and more.
 
 ### 2. Containerized Daemon (Docker)
 
@@ -631,14 +636,15 @@ Default: wakes every 5 minutes. Adjust `OnUnitActiveSec` in `talond.timer`.
 
 ### Deployment Files
 
-| File                                                       | Purpose                                           |
-| ---------------------------------------------------------- | ------------------------------------------------- |
-| [`deploy/Dockerfile`](deploy/Dockerfile)                   | Multi-stage talond container image (node:22-slim) |
-| [`deploy/Dockerfile.sandbox`](deploy/Dockerfile.sandbox)   | Agent sandbox image with SDK runtime              |
-| [`deploy/docker-compose.yaml`](deploy/docker-compose.yaml) | Example Compose setup                             |
-| [`deploy/talond.service`](deploy/talond.service)           | systemd service unit (native daemon)              |
-| [`deploy/talond.timer`](deploy/talond.timer)               | systemd timer (wake-only mode)                    |
-| [`deploy/talond-wake.service`](deploy/talond-wake.service) | systemd oneshot for timer-triggered wake          |
+| File                                                           | Purpose                                           |
+| -------------------------------------------------------------- | ------------------------------------------------- |
+| [`deploy/talond.service`](deploy/talond.service)               | systemd service unit template                     |
+| [`deploy/install-service.sh`](deploy/install-service.sh)       | Install script (generates unit, enables service)  |
+| [`deploy/Dockerfile`](deploy/Dockerfile)                       | Multi-stage talond container image (node:22-slim) |
+| [`deploy/Dockerfile.sandbox`](deploy/Dockerfile.sandbox)       | Agent sandbox image with SDK runtime              |
+| [`deploy/docker-compose.yaml`](deploy/docker-compose.yaml)     | Example Compose setup                             |
+| [`deploy/talond.timer`](deploy/talond.timer)                   | systemd timer (wake-only mode)                    |
+| [`deploy/talond-wake.service`](deploy/talond-wake.service)     | systemd oneshot for timer-triggered wake          |
 
 ---
 

@@ -1,94 +1,46 @@
 [Unit]
 Description=Talon Autonomous Agent Daemon
-# Require network before starting (channel connectors need it)
-After=network.target docker.service
-# Request docker but tolerate its absence (daemon still starts without containers)
-Wants=docker.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-Type=notify
-ExecStart=/usr/bin/node /opt/talond/dist/daemon/main.js --config /etc/talond/talond.yaml
+Type=simple
+WorkingDirectory=/home/talon/talon
+ExecStart=/usr/bin/node dist/index.js --config talond.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
-WatchdogSec=30
 TimeoutStartSec=30
 TimeoutStopSec=30
 
-# Runtime environment
+# Environment
 Environment=NODE_ENV=production
+EnvironmentFile=-/home/talon/talon/.env
 
-# Run as a dedicated system user (create with: useradd --system --no-create-home talond)
-User=talond
-Group=talond
+# Run as dedicated user
+User=talon
+Group=talon
 
-# ---------------------------------------------------------------------------
 # Security hardening
-# ---------------------------------------------------------------------------
-# Prevent the process from gaining new privileges via setuid bits or capabilities
 NoNewPrivileges=true
-
-# Make the full filesystem read-only except for explicitly listed paths
-ProtectSystem=strict
-
-# Hide /home and /root from the process
-ProtectHome=true
-
-# Provide private /tmp and /var/tmp directories (not shared with other services)
 PrivateTmp=true
-
-# Hide /proc entries of other processes (process isolation)
-ProtectProc=invisible
-
-# Restrict access to kernel tunables in /proc/sys
 ProtectKernelTunables=true
-
-# Prevent the process from loading or unloading kernel modules
 ProtectKernelModules=true
-
-# Hide kernel log buffers from the process
 ProtectKernelLogs=true
-
-# Prevent access to hardware clock via /dev/rtc
 ProtectClock=true
-
-# Only allow IPC namespaced to this service (no cross-service shared memory)
-PrivateIPC=true
-
-# Provide private /dev with only essential device nodes
+ProtectControlGroups=true
 PrivateDevices=true
-
-# Allow writes only to the daemon data and PID/IPC socket directories
-ReadWritePaths=/var/lib/talond /run/talond
-
-# Restrict the set of system calls the process may use to the minimum
-# required for a Node.js application.
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-
-# Restrict address families to TCP/IP and Unix sockets (no AF_PACKET, etc.)
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-
-# Prevent the process from changing its own resource limits
-LockPersonality=true
-
-# Restrict memory mappings: no anonymous executable mappings (blocks JIT abuse)
-MemoryDenyWriteExecute=false
-# Note: MemoryDenyWriteExecute is disabled because Node.js V8 JIT requires it.
-
-# Prevent the process from creating SUID/SGID files
-RestrictSUIDSGID=true
-
-# Do not allow the process to call umask() with a permissive value
 UMask=0027
 
-# Capability bounding set: drop all capabilities not needed
-CapabilityBoundingSet=
-AmbientCapabilities=
+# Node.js V8 JIT requires writable+executable memory
+MemoryDenyWriteExecute=false
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
+# Logging to journal
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=talond

@@ -364,7 +364,33 @@ Run: `npx talonctl doctor --config talond.yaml`
 
 Report each check result. For failures, provide specific remediation steps.
 
-### Step 7: Summary
+### Step 7: Systemd Service (Linux only)
+
+Ask: **"Want to install talond as a systemd service? It'll auto-start on boot and restart on crash."**
+
+If yes:
+
+1. Check if systemd is available: `systemctl --version`
+2. Tell the user to run:
+   ```bash
+   sudo ./deploy/install-service.sh --user $(whoami) --dir $(pwd)
+   ```
+3. Explain what this does:
+   - Generates a systemd unit file at `/etc/systemd/system/talond.service`
+   - Sets `WorkingDirectory`, `User`, `ExecStart`, and `EnvironmentFile` to match their setup
+   - Enables the service (auto-start on boot)
+   - Does NOT start it yet
+4. Tell the user:
+   ```
+   Start:   sudo systemctl start talond
+   Status:  sudo systemctl status talond
+   Logs:    journalctl -u talond -f
+   Stop:    sudo systemctl stop talond
+   ```
+
+If no, skip and continue to summary.
+
+### Step 8: Summary
 
 Print a summary of everything that was configured:
 
@@ -385,10 +411,8 @@ Environment variables to set:
   - SLACK_SIGNING_SECRET
 
 To start the daemon:
-  node dist/index.js --config talond.yaml
-
-Or with npm:
-  npm run talond
+  sudo systemctl start talond     (if systemd service installed)
+  node dist/index.js              (or run directly)
 ```
 
 ## Important Rules
