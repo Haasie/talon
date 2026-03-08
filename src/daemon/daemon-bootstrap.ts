@@ -1,0 +1,352 @@
+/**
+ * DaemonBootstrap — builds a fully-initialized DaemonContext.
+ *
+ * Handles the pure setup phase: config loading, database, migrations,
+ * repositories, persona/skill loading, and subsystem wiring.
+ *
+ * Does NOT start any services (channels, queue, scheduler, IPC).
+ * The daemon orchestrator calls start methods after receiving the context.
+ */
+
+import { join } from 'node:path';
+import { access } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { v4 as uuidv4 } from 'uuid';
+import { ok, err, type Result } from 'neverthrow';
+import type pino from 'pino';
+
+import { loadConfig } from '../core/config/config-loader.js';
+import { createDatabase } from '../core/database/connection.js';
+import { runMigrations } from '../core/database/migrations/runner.js';
+
+import {
+  QueueRepository,
+  ThreadRepository,
+  ChannelRepository,
+  PersonaRepository,
+  ScheduleRepository,
+  AuditRepository,
+  MessageRepository,
+  RunRepository,
+  BindingRepository,
+} from '../core/database/repositories/index.js';
+
+import { ChannelRegistry } from '../channels/channel-registry.js';
+import { ChannelRouter } from '../channels/channel-router.js';
+import type { InboundEvent } from '../channels/channel-types.js';
+import { MessagePipeline } from '../pipeline/message-pipeline.js';
+import { QueueManager } from '../queue/queue-manager.js';
+import { Scheduler } from '../scheduler/scheduler.js';
+import { DaemonError } from '../core/errors/error-types.js';
+import { AuditLogger, type AuditEntry, type AuditStore } from '../core/logging/audit-logger.js';
+import { PersonaLoader } from '../personas/persona-loader.js';
+import { SkillLoader } from '../skills/skill-loader.js';
+import { SkillResolver } from '../skills/skill-resolver.js';
+import { ThreadWorkspace } from '../memory/thread-workspace.js';
+import { SessionTracker } from '../sandbox/session-tracker.js';
+
+import { recoverFromCrash } from './lifecycle.js';
+import { createConnector } from './channel-factory.js';
+import type { DaemonContext } from './daemon-context.js';
+
+// ---------------------------------------------------------------------------
+// Bootstrap
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a fully-initialized DaemonContext from a config file path.
+ *
+ * On success, all subsystems are constructed and wired but NOT started.
+ * On failure, any partially-opened resources (DB) are cleaned up.
+ *
+ * @param configPath - Path to the talond.yaml config file.
+ * @param logger     - Root pino logger instance.
+ * @returns Ok(DaemonContext) or Err(DaemonError).
+ */
+export async function bootstrap(
+  configPath: string,
+  logger: pino.Logger,
+): Promise<Result<DaemonContext, DaemonError>> {
+  logger.info({ configPath }, 'bootstrap: loading config');
+
+  // 1. Load config
+  const configResult = loadConfig(configPath);
+  if (configResult.isErr()) {
+    return err(
+      new DaemonError(`Failed to load config: ${configResult.error.message}`, configResult.error),
+    );
+  }
+  const config = configResult.value;
+  const dataDir = config.dataDir;
+  logger.info({ logLevel: config.logLevel }, 'bootstrap: config loaded');
+
+  // 2. Open database
+  const dbResult = createDatabase(config.storage.path);
+  if (dbResult.isErr()) {
+    return err(
+      new DaemonError(`Failed to open database: ${dbResult.error.message}`, dbResult.error),
+    );
+  }
+  const db = dbResult.value;
+
+  // 3. Run migrations
+  const migrationsDir = join(import.meta.dirname, '../core/database/migrations');
+  const migrationsResult = runMigrations(db, migrationsDir);
+  if (migrationsResult.isErr()) {
+    db.close();
+    return err(
+      new DaemonError(
+        `Failed to run migrations: ${migrationsResult.error.message}`,
+        migrationsResult.error,
+      ),
+    );
+  }
+  logger.info({ applied: migrationsResult.value }, 'bootstrap: migrations complete');
+
+  // 4. Create repositories
+  const repos = {
+    queue: new QueueRepository(db),
+    thread: new ThreadRepository(db),
+    channel: new ChannelRepository(db),
+    persona: new PersonaRepository(db),
+    schedule: new ScheduleRepository(db),
+    audit: new AuditRepository(db),
+    message: new MessageRepository(db),
+    run: new RunRepository(db),
+    binding: new BindingRepository(db),
+  };
+
+  // 5. Audit logger
+  const auditStore = new RepositoryAuditStore(repos.audit);
+  const auditLogger = new AuditLogger(logger, auditStore);
+
+  // 6. Thread workspace
+  const threadWorkspace = new ThreadWorkspace(dataDir);
+
+  // 7. Load personas
+  const personaLoader = new PersonaLoader(repos.persona, logger);
+  const personaLoadResult = await personaLoader.loadFromConfig(config.personas);
+  if (personaLoadResult.isErr()) {
+    db.close();
+    return err(
+      new DaemonError(
+        `Failed to load personas: ${personaLoadResult.error.message}`,
+        personaLoadResult.error,
+      ),
+    );
+  }
+
+  // 8. Load skills
+  const skillLoader = new SkillLoader(logger);
+  const skillResolver = new SkillResolver(logger);
+  const loadedSkills = await loadSkillsFromConfig(config.personas, dataDir, skillLoader, logger);
+  if (loadedSkills.isErr()) {
+    db.close();
+    return err(loadedSkills.error);
+  }
+
+  // 9. Session tracker
+  const sessionTracker = new SessionTracker();
+
+  // 10. Crash recovery
+  recoverFromCrash(repos.queue, logger);
+
+  // 11. Channel registry
+  const channelRegistry = new ChannelRegistry(logger);
+
+  // 12. Queue manager
+  const queueManager = new QueueManager(repos.queue, repos.thread, config.queue, logger);
+
+  // 13. Scheduler
+  const scheduler = new Scheduler(repos.schedule, queueManager, config.scheduler, logger);
+
+  // 14. Message pipeline and channel registration
+  const router = new ChannelRouter(repos.binding, logger);
+  const messagePipeline = new MessagePipeline(
+    repos.message,
+    repos.thread,
+    repos.channel,
+    queueManager,
+    router,
+    auditLogger,
+    logger,
+  );
+
+  registerChannels(config, channelRegistry, repos, messagePipeline, logger);
+
+  logger.info('bootstrap: context ready');
+
+  return ok({
+    db,
+    config,
+    configPath,
+    dataDir,
+    repos,
+    channelRegistry,
+    queueManager,
+    scheduler,
+    personaLoader,
+    sessionTracker,
+    threadWorkspace,
+    auditLogger,
+    skillResolver,
+    loadedSkills: loadedSkills.value,
+    logger,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Discovers and loads skill directories referenced by personas.
+ * Extracted to deduplicate logic shared between bootstrap and reload.
+ */
+async function loadSkillsFromConfig(
+  personas: { skills: string[] }[],
+  dataDir: string,
+  skillLoader: SkillLoader,
+  logger: pino.Logger,
+): Promise<Result<import('../skills/skill-types.js').LoadedSkill[], DaemonError>> {
+  const uniqueSkillNames = new Set<string>();
+  for (const persona of personas) {
+    for (const skill of persona.skills) {
+      uniqueSkillNames.add(skill);
+    }
+  }
+
+  const skillDirs: string[] = [];
+  for (const skillName of uniqueSkillNames) {
+    const candidates = [
+      join(process.cwd(), 'skills', skillName),
+      join(dataDir, 'skills', skillName),
+    ];
+    let foundPath: string | null = null;
+    for (const candidate of candidates) {
+      try {
+        await access(candidate, fsConstants.R_OK);
+        foundPath = candidate;
+        break;
+      } catch {
+        continue;
+      }
+    }
+    if (foundPath !== null) {
+      skillDirs.push(foundPath);
+    } else {
+      logger.warn({ skillName }, 'bootstrap: skill directory not found; skipping');
+    }
+  }
+
+  if (skillDirs.length === 0) {
+    return ok([]);
+  }
+
+  const skillsResult = await skillLoader.loadMultiple(skillDirs);
+  if (skillsResult.isErr()) {
+    return err(
+      new DaemonError(`Failed to load skills: ${skillsResult.error.message}`, skillsResult.error),
+    );
+  }
+  return ok(skillsResult.value);
+}
+
+/**
+ * Registers channel connectors, seeds DB rows, and creates default bindings.
+ * Extracted from daemon.ts rebuildChannelRegistrations().
+ */
+function registerChannels(
+  config: import('../core/config/config-types.js').TalondConfig,
+  channelRegistry: ChannelRegistry,
+  repos: DaemonContext['repos'],
+  messagePipeline: MessagePipeline,
+  logger: pino.Logger,
+): void {
+  for (const channelConfig of config.channels.filter((channel) => channel.enabled)) {
+    const connector = createConnector(
+      channelConfig.type,
+      channelConfig.name,
+      channelConfig.config,
+      logger,
+    );
+    if (connector === null) {
+      logger.warn(
+        { channelName: channelConfig.name, channelType: channelConfig.type },
+        'bootstrap: failed to construct channel connector; skipping',
+      );
+      continue;
+    }
+
+    // Ensure the channel exists in the database.
+    const existing = repos.channel.findByName(channelConfig.name);
+    let channelId: string;
+    if (existing.isOk() && existing.value !== null) {
+      channelId = existing.value.id;
+    } else {
+      channelId = uuidv4();
+      repos.channel.insert({
+        id: channelId,
+        type: channelConfig.type,
+        name: channelConfig.name,
+        config: JSON.stringify(channelConfig.config),
+        credentials_ref: null,
+        enabled: 1,
+      });
+    }
+
+    // Create a default binding to the first persona if none exists.
+    if (config.personas.length > 0) {
+      const defaultBinding = repos.binding.findDefaultForChannel(channelId);
+      if (defaultBinding.isOk() && defaultBinding.value === null) {
+        const personaResult = repos.persona.findByName(config.personas[0].name);
+        if (personaResult.isOk() && personaResult.value !== null) {
+          repos.binding.insert({
+            id: uuidv4(),
+            channel_id: channelId,
+            thread_id: null,
+            persona_id: personaResult.value.id,
+            is_default: 1,
+          });
+          logger.info(
+            { channelName: channelConfig.name, persona: config.personas[0].name },
+            'bootstrap: created default channel->persona binding',
+          );
+        }
+      }
+    }
+
+    connector.onMessage(async (event: InboundEvent) => {
+      const pipelineResult = await messagePipeline.handleInboundEvent(event);
+      if (pipelineResult.isErr()) {
+        logger.error(
+          { channelName: event.channelName, err: pipelineResult.error.message },
+          'bootstrap: inbound message pipeline failed',
+        );
+      }
+    });
+
+    channelRegistry.register(connector);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RepositoryAuditStore (moved from daemon.ts)
+// ---------------------------------------------------------------------------
+
+class RepositoryAuditStore implements AuditStore {
+  constructor(private readonly auditRepo: AuditRepository) {}
+
+  append(entry: AuditEntry): void {
+    this.auditRepo.insert({
+      id: uuidv4(),
+      run_id: entry.runId ?? null,
+      thread_id: entry.threadId ?? null,
+      persona_id: entry.personaId ?? null,
+      action: entry.action,
+      tool: entry.tool ?? null,
+      request_id: entry.requestId ?? null,
+      details: JSON.stringify(entry.details),
+    });
+  }
+}

@@ -178,10 +178,10 @@ The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.prox
 | Step | Description | Status |
 |------|-------------|--------|
 | 1 | Create `DaemonContext` interface | Done (`daemon-context.ts`) |
-| 2 | Extract `DaemonBootstrap` | Not started |
+| 2 | Extract `DaemonBootstrap` | Done (`daemon-bootstrap.ts`) |
 | 3 | Extract `AgentRunner` | Not started |
 | 4 | Extract `SkillResolverService` (dedup) | Not started |
-| 5 | Extract `ChannelFactory` | Not started |
+| 5 | Extract `ChannelFactory` | Done (`channel-factory.ts`) |
 | 6 | Remove confirmed dead code | Not started |
 | 7 | Wire host-tools as MCP servers | Not started |
 | 8 | Fix BUG-005 (next_run_at null) | Not started |
