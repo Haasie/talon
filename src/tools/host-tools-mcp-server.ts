@@ -323,14 +323,17 @@ function getEnvRequired(name: string): string {
   return value;
 }
 
-/** Parse TALOND_ALLOWED_TOOLS into a Set of MCP tool names. */
-function parseAllowedTools(): Set<string> | null {
+/**
+ * Parse TALOND_ALLOWED_TOOLS into a Set of MCP tool names.
+ *
+ * Returns an empty set when the env var is missing or empty (secure default:
+ * no tools exposed). The agent-runner is responsible for computing the correct
+ * comma-separated list from persona capabilities.
+ */
+function parseAllowedTools(): Set<string> {
   const raw = process.env.TALOND_ALLOWED_TOOLS;
   if (raw === undefined || raw === '') {
-    return null; // No tools allowed (secure default)
-  }
-  if (raw === '*') {
-    return null; // Sentinel: all tools allowed (bypass filtering)
+    return new Set(); // Secure default: no tools
   }
   const names = raw
     .split(',')
@@ -345,18 +348,10 @@ async function main(): Promise<void> {
   const threadId = getEnvRequired('TALOND_THREAD_ID');
   const personaId = getEnvRequired('TALOND_PERSONA_ID');
 
-  // Determine which tools this persona may use.
-  const allowedToolsEnv = process.env.TALOND_ALLOWED_TOOLS;
+  // Determine which tools this persona may use. Only tools whose MCP names
+  // appear in TALOND_ALLOWED_TOOLS are listed and callable.
   const allowedSet = parseAllowedTools();
-  // Filter: if allowedSet is null AND env was '*', expose all; if null AND env
-  // was empty/missing, expose none.
-  const exposeAll = allowedToolsEnv === '*';
-  const filteredTools =
-    exposeAll || allowedSet === null
-      ? exposeAll
-        ? TOOLS
-        : [] // No env var → expose nothing
-      : TOOLS.filter((t) => allowedSet.has(t.name));
+  const filteredTools = TOOLS.filter((t) => allowedSet.has(t.name));
   const allowedToolNames = new Set(filteredTools.map((t) => t.name));
 
   console.error('[host-tools-mcp] Starting with socket:', socketPath);
