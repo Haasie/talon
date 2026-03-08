@@ -177,7 +177,7 @@ The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.prox
 
 | Step | Description | Status |
 |------|-------------|--------|
-| 1 | Create `DaemonContext` interface | Not started |
+| 1 | Create `DaemonContext` interface | Done (`daemon-context.ts`) |
 | 2 | Extract `DaemonBootstrap` | Not started |
 | 3 | Extract `AgentRunner` | Not started |
 | 4 | Extract `SkillResolverService` (dedup) | Not started |
