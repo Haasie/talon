@@ -2,8 +2,7 @@
  * Model Context Protocol (MCP) support.
  *
  * Exposes talond resources and tools as an MCP server, and allows personas
- * to consume external MCP servers as tool sources. Versioned plugin interface
- * kept small and stable.
+ * to consume external MCP servers as tool sources.
  */
 
 export type {
@@ -16,4 +15,3 @@ export type {
 } from './mcp-types.js';
 
 export { McpRegistry } from './mcp-registry.js';
-export { McpProxy } from './mcp-proxy.js';

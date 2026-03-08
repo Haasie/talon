@@ -1,9 +1,7 @@
 /**
- * Tool registry and dispatch.
+ * Tool types and host-tool implementations.
  *
- * Registers built-in and capability-gated tools. All tool calls are
- * host-mediated — the sandbox requests an action, the host validates it
- * against persona policy, executes it, and returns the result.
+ * Host tools are fully implemented but not yet wired as MCP servers (Step 7).
  */
 
 export type {
@@ -13,23 +11,6 @@ export type {
   ToolCallRequest,
   ToolCallResult,
 } from './tool-types.js';
-
-export { ToolRegistry } from './tool-registry.js';
-
-export type { ResolvedCapabilities } from './capability-resolver.js';
-export {
-  resolveCapabilities,
-  hasCapability,
-  isValidCapabilityLabel,
-} from './capability-resolver.js';
-
-export type { PolicyConfig } from './policy-engine.js';
-export { PolicyEngine } from './policy-engine.js';
-
-export type { ApprovalOutcome } from './approval-gate.js';
-export { ApprovalGate } from './approval-gate.js';
-
-export type { PendingApproval, ApprovalConfig } from './approval-types.js';
 
 export type {
   ChannelSendTool,

@@ -182,7 +182,7 @@ The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.prox
 | 3 | Extract `AgentRunner` | Done (`agent-runner.ts`) |
 | 4 | Extract `SkillResolverService` (dedup) | Done (moved to `SkillLoader.loadFromPersonaConfig()`) |
 | 5 | Extract `ChannelFactory` | Done (`channel-factory.ts`) |
-| 6 | Remove confirmed dead code | Not started |
+| 6 | Remove confirmed dead code | Done |
 | 7 | Wire host-tools as MCP servers | Not started |
 | 8 | Fix BUG-005 (next_run_at null) | Not started |
 | 9 | Add SessionTracker eviction | Not started |
@@ -273,3 +273,4 @@ _Updated after each commit._
 - **Cleanup**: Moved `registerChannels` to `src/channels/channel-setup.ts` (shared by bootstrap and reload).
 - **Cleanup**: Moved `RepositoryAuditStore` from `daemon-bootstrap.ts` to `audit-repository.ts` (keep classes with their domain).
 - **Step 3**: Extracted `AgentRunner` (`agent-runner.ts`) — 287-line `handleQueueItem` → standalone class taking `DaemonContext`. Eliminated 12-field null guard, removed dead `sandboxManager`/`sdkProcessSpawner` refs.
+- **Step 6**: Removed dead code — 14 source files, 10 test files. Deleted: `src/collaboration/` (entire), sandbox Docker scaffolding (5 files), container IPC (3 files), `mcp-proxy`, `tool-registry`, `approval-gate`, `capability-resolver`, `policy-engine`. Updated barrel files. Kept: `session-tracker`, `daemon-ipc-*`, `mcp-registry`, `host-tools/`, `tool-types`.
