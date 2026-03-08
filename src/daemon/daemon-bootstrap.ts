@@ -9,7 +9,6 @@
  */
 
 import { join } from 'node:path';
-import { v4 as uuidv4 } from 'uuid';
 import { ok, err, type Result } from 'neverthrow';
 import type pino from 'pino';
 
@@ -36,7 +35,8 @@ import { MessagePipeline } from '../pipeline/message-pipeline.js';
 import { QueueManager } from '../queue/queue-manager.js';
 import { Scheduler } from '../scheduler/scheduler.js';
 import { DaemonError } from '../core/errors/error-types.js';
-import { AuditLogger, type AuditEntry, type AuditStore } from '../core/logging/audit-logger.js';
+import { AuditLogger } from '../core/logging/audit-logger.js';
+import { RepositoryAuditStore } from '../core/database/repositories/audit-repository.js';
 import { PersonaLoader } from '../personas/persona-loader.js';
 import { SkillLoader } from '../skills/skill-loader.js';
 import { SkillResolver } from '../skills/skill-resolver.js';
@@ -201,25 +201,4 @@ export async function bootstrap(
     loadedSkills: loadedSkills.value,
     logger,
   });
-}
-
-// ---------------------------------------------------------------------------
-// RepositoryAuditStore (moved from daemon.ts)
-// ---------------------------------------------------------------------------
-
-class RepositoryAuditStore implements AuditStore {
-  constructor(private readonly auditRepo: AuditRepository) {}
-
-  append(entry: AuditEntry): void {
-    this.auditRepo.insert({
-      id: uuidv4(),
-      run_id: entry.runId ?? null,
-      thread_id: entry.threadId ?? null,
-      persona_id: entry.personaId ?? null,
-      action: entry.action,
-      tool: entry.tool ?? null,
-      request_id: entry.requestId ?? null,
-      details: JSON.stringify(entry.details),
-    });
-  }
 }

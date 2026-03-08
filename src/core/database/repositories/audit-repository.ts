@@ -6,10 +6,12 @@
  * should be recorded here with enough context for forensic analysis.
  */
 
+import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import { ok, err, type Result } from 'neverthrow';
 import { DbError } from '../../errors/index.js';
 import { BaseRepository } from './base-repository.js';
+import type { AuditEntry, AuditStore } from '../../logging/audit-logger.js';
 
 /** Row shape matching the `audit_log` table exactly. */
 export interface AuditLogRow {
@@ -131,5 +133,27 @@ export class AuditRepository extends BaseRepository {
     } catch (cause) {
       return err(new DbError(`Failed to find audit log by action: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AuditStore implementation backed by AuditRepository
+// ---------------------------------------------------------------------------
+
+/** Bridges the AuditStore interface to the AuditRepository for SQLite persistence. */
+export class RepositoryAuditStore implements AuditStore {
+  constructor(private readonly auditRepo: AuditRepository) {}
+
+  append(entry: AuditEntry): void {
+    this.auditRepo.insert({
+      id: uuidv4(),
+      run_id: entry.runId ?? null,
+      thread_id: entry.threadId ?? null,
+      persona_id: entry.personaId ?? null,
+      action: entry.action,
+      tool: entry.tool ?? null,
+      request_id: entry.requestId ?? null,
+      details: JSON.stringify(entry.details),
+    });
   }
 }
