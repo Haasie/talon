@@ -5,6 +5,9 @@ import { ok, err, type Result } from 'neverthrow';
 import type { DaemonContext } from './daemon-context.js';
 import type { QueueItem } from '../queue/queue-types.js';
 
+/** Default maximum time (ms) an Agent SDK query may run before being aborted. */
+const DEFAULT_QUERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * AgentRunner — executes queue items by running the Claude Agent SDK.
  *
@@ -13,9 +16,11 @@ import type { QueueItem } from '../queue/queue-types.js';
  */
 export class AgentRunner {
   private readonly ctx: DaemonContext;
+  private readonly queryTimeoutMs: number;
 
-  constructor(ctx: DaemonContext) {
+  constructor(ctx: DaemonContext, options?: { queryTimeoutMs?: number }) {
     this.ctx = ctx;
+    this.queryTimeoutMs = options?.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS;
   }
 
   /**
@@ -213,38 +218,67 @@ export class AgentRunner {
       let inputTokens = 0;
       let outputTokens = 0;
 
-      for await (const message of agentQuery) {
-        if (message.type === 'assistant' && message.message?.content) {
-          for (const block of message.message.content) {
-            if ('text' in block && typeof (block as { text: string }).text === 'string') {
-              outputText += (block as { text: string }).text;
+      // Wrap the streaming loop in a timeout to prevent indefinite hangs
+      // (e.g. stale session resume, SDK bugs, network issues).
+      const queryPromise = (async () => {
+        for await (const message of agentQuery) {
+          if (message.type === 'assistant' && message.message?.content) {
+            for (const block of message.message.content) {
+              if ('text' in block && typeof (block as { text: string }).text === 'string') {
+                outputText += (block as { text: string }).text;
+              }
             }
-          }
-        } else if (message.type === 'result') {
-          const result = message as {
-            subtype: string;
-            result?: string;
-            session_id?: string;
-            total_cost_usd?: number;
-            usage?: { input_tokens?: number; output_tokens?: number };
-            is_error?: boolean;
-          };
-          resultSessionId = result.session_id;
-          totalCostUsd = result.total_cost_usd ?? 0;
-          inputTokens = result.usage?.input_tokens ?? 0;
-          outputTokens = result.usage?.output_tokens ?? 0;
+          } else if (message.type === 'result') {
+            const result = message as {
+              subtype: string;
+              result?: string;
+              session_id?: string;
+              total_cost_usd?: number;
+              usage?: { input_tokens?: number; output_tokens?: number };
+              is_error?: boolean;
+            };
+            resultSessionId = result.session_id;
+            totalCostUsd = result.total_cost_usd ?? 0;
+            inputTokens = result.usage?.input_tokens ?? 0;
+            outputTokens = result.usage?.output_tokens ?? 0;
 
-          // Use the result text if we didn't capture streaming content.
-          if (!outputText && result.result) {
-            outputText = result.result;
-          }
+            // Use the result text if we didn't capture streaming content.
+            if (!outputText && result.result) {
+              outputText = result.result;
+            }
 
-          if (result.is_error) {
-            this.ctx.logger.warn(
-              { runId, result: result.result },
-              'agent-sdk: run ended with error',
+            if (result.is_error) {
+              this.ctx.logger.warn(
+                { runId, result: result.result },
+                'agent-sdk: run ended with error',
+              );
+            }
+          } else {
+            // Log progress for non-text message types (tool_use, tool_result, etc.)
+            const msg = message as { type: string; tool?: string; subtype?: string };
+            this.ctx.logger.debug(
+              { runId, messageType: msg.type, tool: msg.tool, subtype: msg.subtype },
+              'agent-sdk: streaming event',
             );
           }
+        }
+      })();
+
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`agent-sdk query timed out after ${this.queryTimeoutMs / 1000}s`)),
+          this.queryTimeoutMs,
+        );
+      });
+
+      try {
+        await Promise.race([queryPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutId!);
+        // If the query timed out, close the async generator to release SDK resources.
+        if (typeof agentQuery.return === 'function') {
+          agentQuery.return(undefined).catch(() => {});
         }
       }
 

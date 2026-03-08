@@ -5,7 +5,7 @@
  * A mock DaemonContext provides all required repositories and subsystems.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ok, err } from 'neverthrow';
 
 // ---------------------------------------------------------------------------
@@ -341,6 +341,101 @@ describe('AgentRunner', () => {
         'failed',
         expect.objectContaining({ error: expect.stringContaining('channel send failed') }),
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Timeout behavior
+  // -------------------------------------------------------------------------
+
+  describe('query timeout', () => {
+    it('rejects with timeout error when agent query hangs', async () => {
+      // Use a very short timeout (200ms) to test the timeout mechanism.
+      const shortRunner = new AgentRunner(ctx, { queryTimeoutMs: 200 });
+
+      async function* hangingStream() {
+        yield {
+          type: 'assistant',
+          message: { content: [{ text: 'partial' }] },
+        };
+        // Never yields a result — simulates indefinite hang
+        await new Promise(() => {});
+      }
+
+      mockQuery.mockReturnValue(hangingStream());
+      const item = makeQueueItem();
+
+      const result = await shortRunner.run(item);
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().message).toContain('timed out after');
+      expect(ctx.repos.run.updateStatus).toHaveBeenCalledWith(
+        expect.any(String),
+        'failed',
+        expect.objectContaining({ error: expect.stringContaining('timed out') }),
+      );
+    }, 10_000);
+
+    it('does not reject when query completes within the timeout', async () => {
+      mockQuery.mockReturnValue(makeAgentStream());
+      const item = makeQueueItem();
+
+      const result = await runner.run(item);
+
+      expect(result.isOk()).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Debug logging for non-text streaming events
+  // -------------------------------------------------------------------------
+
+  describe('debug logging for streaming events', () => {
+    it('logs tool_use events with type, tool name, and subtype', async () => {
+      async function* streamWithToolUse() {
+        yield { type: 'tool_use', tool: 'Read', subtype: undefined };
+        yield { type: 'tool_result', tool: 'Read', subtype: 'success' };
+        yield {
+          type: 'assistant',
+          message: { content: [{ text: 'Done reading.' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: 'Done reading.',
+          session_id: 'session-xyz',
+          total_cost_usd: 0.01,
+          usage: { input_tokens: 200, output_tokens: 100 },
+          is_error: false,
+        };
+      }
+
+      mockQuery.mockReturnValue(streamWithToolUse());
+      const item = makeQueueItem();
+
+      const result = await runner.run(item);
+
+      expect(result.isOk()).toBe(true);
+      expect(ctx.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ messageType: 'tool_use', tool: 'Read' }),
+        'agent-sdk: streaming event',
+      );
+      expect(ctx.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ messageType: 'tool_result', tool: 'Read', subtype: 'success' }),
+        'agent-sdk: streaming event',
+      );
+    });
+
+    it('does not debug-log assistant or result message types as streaming events', async () => {
+      mockQuery.mockReturnValue(makeAgentStream());
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      const streamingEventCalls = vi.mocked(ctx.logger.debug).mock.calls.filter(
+        (call) => call[1] === 'agent-sdk: streaming event',
+      );
+      expect(streamingEventCalls).toHaveLength(0);
     });
   });
 });
