@@ -21,33 +21,41 @@ import type { ResolvedCapabilities } from '../personas/persona-types.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Maps the `domain.action` prefix of a capability label to the internal
- * (dot-notation) host tool name.
+ * Single source of truth for the host tool registry.
  *
- * For example:
- *   - capability `channel.send:TalonMain` → tool `channel.send`
- *   - capability `schedule.manage` → tool `schedule.manage`
- *   - capability `net.http` → tool `net.http`
+ * Each entry maps: capability prefix → internal name → MCP name.
+ * The capability prefix is the `domain.action` part of a capability label
+ * (e.g., `channel.send` from `channel.send:TalonMain`).
+ *
+ * Adding a new host tool requires only a single entry here.
  */
-const CAPABILITY_TO_TOOL: Record<string, string> = {
-  'schedule.manage': 'schedule.manage',
-  'channel.send': 'channel.send',
-  'memory.access': 'memory.access',
-  'net.http': 'net.http',
-  'db.query': 'db.query',
-};
+const HOST_TOOL_REGISTRY: ReadonlyArray<{
+  /** Capability prefix that grants access to this tool. */
+  capabilityPrefix: string;
+  /** Internal dot-notation tool name used by the bridge dispatcher. */
+  internalName: string;
+  /** MCP-style underscore tool name used in the MCP server protocol. */
+  mcpName: string;
+}> = [
+  { capabilityPrefix: 'schedule.manage', internalName: 'schedule.manage', mcpName: 'schedule_manage' },
+  { capabilityPrefix: 'channel.send', internalName: 'channel.send', mcpName: 'channel_send' },
+  { capabilityPrefix: 'memory.access', internalName: 'memory.access', mcpName: 'memory_access' },
+  { capabilityPrefix: 'net.http', internalName: 'net.http', mcpName: 'net_http' },
+  { capabilityPrefix: 'db.query', internalName: 'db.query', mcpName: 'db_query' },
+];
 
-/** Internal tool names mapped to MCP-style names (underscores). */
-const TOOL_TO_MCP: Record<string, string> = {
-  'schedule.manage': 'schedule_manage',
-  'channel.send': 'channel_send',
-  'memory.access': 'memory_access',
-  'net.http': 'net_http',
-  'db.query': 'db_query',
-};
+/** Derived lookup: capability prefix → internal tool name. */
+const CAPABILITY_TO_TOOL = new Map(
+  HOST_TOOL_REGISTRY.map((e) => [e.capabilityPrefix, e.internalName]),
+);
+
+/** Derived lookup: internal tool name → MCP tool name. */
+const TOOL_TO_MCP = new Map(
+  HOST_TOOL_REGISTRY.map((e) => [e.internalName, e.mcpName]),
+);
 
 /** All known host tool names (internal format). */
-export const ALL_HOST_TOOLS = Object.values(CAPABILITY_TO_TOOL);
+export const ALL_HOST_TOOLS = HOST_TOOL_REGISTRY.map((e) => e.internalName);
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -99,10 +107,10 @@ export function filterAllowedMcpTools(capabilities: ResolvedCapabilities): strin
     const prefix = extractCapabilityPrefix(label);
     if (prefix === null) continue;
 
-    const toolName = CAPABILITY_TO_TOOL[prefix];
+    const toolName = CAPABILITY_TO_TOOL.get(prefix);
     if (toolName === undefined) continue;
 
-    const mcpName = TOOL_TO_MCP[toolName];
+    const mcpName = TOOL_TO_MCP.get(toolName);
     if (mcpName !== undefined) {
       allowedMcpNames.add(mcpName);
     }
@@ -126,7 +134,7 @@ export function filterAllowedTools(capabilities: ResolvedCapabilities): string[]
     const prefix = extractCapabilityPrefix(label);
     if (prefix === null) continue;
 
-    const toolName = CAPABILITY_TO_TOOL[prefix];
+    const toolName = CAPABILITY_TO_TOOL.get(prefix);
     if (toolName !== undefined) {
       allowedTools.add(toolName);
     }
