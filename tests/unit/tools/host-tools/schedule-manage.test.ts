@@ -129,6 +129,8 @@ describe('ScheduleManageHandler — create', () => {
     expect(insertArg.expression).toBe('*/5 * * * *');
     expect(insertArg.type).toBe('cron');
     expect(insertArg.enabled).toBe(1);
+    expect(insertArg.next_run_at).toEqual(expect.any(Number));
+    expect(insertArg.next_run_at).toBeGreaterThan(Date.now() - 60_000);
     expect(JSON.parse(insertArg.payload)).toEqual({ label: 'Poll', prompt: 'Check status' });
   });
 
@@ -206,6 +208,22 @@ describe('ScheduleManageHandler — update', () => {
 
     expect(result.status).toBe('success');
     expect((result.result as { updated: boolean }).updated).toBe(true);
+  });
+
+  it('recomputes next_run_at when cronExpr changes', async () => {
+    const updateFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
+    const repo = makeRepo({ update: updateFn });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    await handler.execute(
+      { action: 'update', scheduleId: 'sched-001', cronExpr: '0 10 * * *' },
+      makeContext(),
+    );
+
+    const updateArg = updateFn.mock.calls[0][2];
+    expect(updateArg.expression).toBe('0 10 * * *');
+    expect(updateArg.next_run_at).toEqual(expect.any(Number));
+    expect(updateArg.next_run_at).toBeGreaterThan(Date.now() - 60_000);
   });
 
   it('calls update with correct persona_id for ownership enforcement', async () => {

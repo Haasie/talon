@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ToolManifest, ToolCallResult } from '../tool-types.js';
 import type { ScheduleRepository } from '../../core/database/repositories/schedule-repository.js';
 import { ToolError } from '../../core/errors/error-types.js';
+import { getNextCronTime } from '../../scheduler/cron-evaluator.js';
 import type { ToolExecutionContext } from './channel-send.js';
 
 /** Manifest for the schedule.manage host tool. */
@@ -139,6 +140,15 @@ export class ScheduleManageHandler {
       prompt: prompt ?? '',
     });
 
+    // Compute next_run_at from the cron expression so the scheduler
+    // can find this schedule on its next tick. (Fixes BUG-005.)
+    const nextRunResult = getNextCronTime(cronExpr.trim());
+    if (nextRunResult.isErr()) {
+      const msg = `schedule.manage: failed to compute next run time — ${nextRunResult.error.message}`;
+      this.deps.logger.warn({ requestId, cronExpr }, msg);
+      return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+    }
+
     const insertResult = this.deps.scheduleRepository.insert({
       id: scheduleId,
       persona_id: context.personaId,
@@ -148,7 +158,7 @@ export class ScheduleManageHandler {
       payload,
       enabled: 1,
       last_run_at: null,
-      next_run_at: null,
+      next_run_at: nextRunResult.value,
     });
 
     if (insertResult.isErr()) {
@@ -196,6 +206,14 @@ export class ScheduleManageHandler {
     const fields: Record<string, unknown> = {};
     if (cronExpr !== undefined) {
       fields['expression'] = cronExpr.trim();
+      // Recompute next_run_at so the schedule fires at the new time.
+      const nextRunResult = getNextCronTime(cronExpr.trim());
+      if (nextRunResult.isErr()) {
+        const msg = `schedule.manage: failed to compute next run time — ${nextRunResult.error.message}`;
+        this.deps.logger.warn({ requestId, cronExpr }, msg);
+        return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+      }
+      fields['next_run_at'] = nextRunResult.value;
     }
     if (label !== undefined || prompt !== undefined) {
       fields['payload'] = JSON.stringify({
@@ -213,9 +231,12 @@ export class ScheduleManageHandler {
     }
 
     // Build a typed UpdateScheduleInput from the collected fields
-    const updateInput: { expression?: string; payload?: string } = {};
+    const updateInput: { expression?: string; payload?: string; next_run_at?: number } = {};
     if (typeof fields['expression'] === 'string') {
       updateInput.expression = fields['expression'];
+    }
+    if (typeof fields['next_run_at'] === 'number') {
+      updateInput.next_run_at = fields['next_run_at'];
     }
     if (typeof fields['payload'] === 'string') {
       updateInput.payload = fields['payload'];

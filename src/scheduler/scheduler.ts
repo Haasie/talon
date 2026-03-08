@@ -129,15 +129,23 @@ export class Scheduler {
       );
       // Still advance / disable so we do not loop on it forever.
     } else {
-      let payload: Record<string, unknown> = {};
+      let rawPayload: Record<string, unknown> = {};
       try {
-        payload = JSON.parse(schedule.payload) as Record<string, unknown>;
+        rawPayload = JSON.parse(schedule.payload) as Record<string, unknown>;
       } catch {
         this.logger.warn(
           { scheduleId: schedule.id, raw: schedule.payload },
           'scheduler: schedule has invalid JSON payload — using empty object',
         );
       }
+
+      // Map schedule fields to the payload shape AgentRunner expects:
+      // personaId (from schedule row) and content (from payload.prompt).
+      const payload: Record<string, unknown> = {
+        ...rawPayload,
+        personaId: schedule.persona_id,
+        content: typeof rawPayload.prompt === 'string' ? rawPayload.prompt : '',
+      };
 
       const enqueueResult = this.queueManager.enqueue(schedule.thread_id, 'schedule', payload);
       if (enqueueResult.isErr()) {

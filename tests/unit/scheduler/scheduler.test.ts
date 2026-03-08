@@ -171,7 +171,31 @@ describe('Scheduler', () => {
       await wait(150);
       scheduler.stop();
 
-      expect(queueStub.enqueue).toHaveBeenCalledWith(threadId, 'schedule', payload);
+      // Scheduler injects personaId and content from schedule row.
+      expect(queueStub.enqueue).toHaveBeenCalledWith(threadId, 'schedule', {
+        ...payload,
+        personaId,
+        content: '',
+      });
+    });
+
+    it('maps schedule prompt to content for AgentRunner compatibility', async () => {
+      const payload = { label: 'Daily', prompt: 'Summarize open issues' };
+      seedDueSchedule(db, personaId, threadId, {
+        type: 'one_shot',
+        payload: JSON.stringify(payload),
+      });
+
+      scheduler.start();
+      await wait(150);
+      scheduler.stop();
+
+      expect(queueStub.enqueue).toHaveBeenCalledWith(threadId, 'schedule', {
+        label: 'Daily',
+        prompt: 'Summarize open issues',
+        personaId,
+        content: 'Summarize open issues',
+      });
     });
 
     it('uses the thread_id of the schedule when enqueuing', async () => {
@@ -489,8 +513,11 @@ describe('Scheduler', () => {
       await wait(150);
       scheduler.stop();
 
-      // enqueue should still be called with an empty object payload
-      expect(queueStub.enqueue).toHaveBeenCalledWith(threadId, 'schedule', {});
+      // enqueue should still be called — scheduler injects personaId and content.
+      expect(queueStub.enqueue).toHaveBeenCalledWith(threadId, 'schedule', {
+        personaId,
+        content: '',
+      });
       void scheduleId;
     });
   });

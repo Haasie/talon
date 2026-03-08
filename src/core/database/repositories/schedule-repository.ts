@@ -32,7 +32,7 @@ export interface ScheduleRow {
 export type InsertScheduleInput = Omit<ScheduleRow, 'created_at' | 'updated_at'>;
 
 /** Fields that may be updated on an existing schedule by the schedule.manage tool. */
-export type UpdateScheduleInput = Partial<Pick<ScheduleRow, 'expression' | 'payload'>>;
+export type UpdateScheduleInput = Partial<Pick<ScheduleRow, 'expression' | 'payload' | 'next_run_at'>>;
 
 /** Repository for reading and writing schedule records. */
 export class ScheduleRepository extends BaseRepository {
