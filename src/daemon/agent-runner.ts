@@ -100,15 +100,9 @@ export class AgentRunner {
       // tools, hooks, MCP servers, session resumption, and permissions.
       // ----------------------------------------------------------------
 
-      // Try in-memory tracker first, fall back to DB for daemon restart recovery.
-      let existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
-      if (!existingSessionId) {
-        const dbSessionResult = this.ctx.repos.run.getLatestSessionId(item.threadId);
-        if (dbSessionResult.isOk() && dbSessionResult.value) {
-          existingSessionId = dbSessionResult.value;
-          this.ctx.sessionTracker.setSessionId(item.threadId, existingSessionId);
-        }
-      }
+      // Use in-memory tracker only. After a daemon restart, sessions are fresh
+      // — DB session IDs from previous runs are stale and cause the SDK to hang.
+      const existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
 
       this.ctx.logger.info(
         {
