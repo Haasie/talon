@@ -179,7 +179,7 @@ The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.prox
 |------|-------------|--------|
 | 1 | Create `DaemonContext` interface | Done (`daemon-context.ts`) |
 | 2 | Extract `DaemonBootstrap` | Done (`daemon-bootstrap.ts`) |
-| 3 | Extract `AgentRunner` | Not started |
+| 3 | Extract `AgentRunner` | Done (`agent-runner.ts`) |
 | 4 | Extract `SkillResolverService` (dedup) | Done (moved to `SkillLoader.loadFromPersonaConfig()`) |
 | 5 | Extract `ChannelFactory` | Done (`channel-factory.ts`) |
 | 6 | Remove confirmed dead code | Not started |
@@ -263,3 +263,13 @@ Tests are slow. Ivo runs them manually. When proposing changes, describe what to
 ## Progress Log
 
 _Updated after each commit._
+
+### 2026-03-08
+
+- **Step 1**: Created `DaemonContext` interface (`daemon-context.ts`) — immutable runtime state, all fields non-null, `DaemonRepos` bundle.
+- **Step 2**: Extracted `DaemonBootstrap` (`daemon-bootstrap.ts`) — pure setup phase returning `Result<DaemonContext, DaemonError>`.
+- **Step 4**: Deduplicated skill loading — moved to `SkillLoader.loadFromPersonaConfig()` instead of separate `SkillResolverService`.
+- **Step 5**: Extracted `ChannelFactory` (`channel-factory.ts`) — `createConnector()` switch from daemon.ts bottom.
+- **Cleanup**: Moved `registerChannels` to `src/channels/channel-setup.ts` (shared by bootstrap and reload).
+- **Cleanup**: Moved `RepositoryAuditStore` from `daemon-bootstrap.ts` to `audit-repository.ts` (keep classes with their domain).
+- **Step 3**: Extracted `AgentRunner` (`agent-runner.ts`) — 287-line `handleQueueItem` → standalone class taking `DaemonContext`. Eliminated 12-field null guard, removed dead `sandboxManager`/`sdkProcessSpawner` refs.
