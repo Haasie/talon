@@ -264,4 +264,26 @@ export class QueueRepository extends BaseRepository {
       return err(new DbError(`Failed to check inflight item for thread: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
   }
+
+  /**
+   * Deletes queue items matching the given statuses.
+   *
+   * @param statuses - Array of statuses to purge (e.g. ['pending', 'failed', 'dead_letter']).
+   * @returns Ok(number) with the count of deleted rows, or DbError.
+   */
+  purge(statuses: QueueStatus[]): Result<number, DbError> {
+    if (statuses.length === 0) {
+      return ok(0);
+    }
+    try {
+      const placeholders = statuses.map(() => '?').join(', ');
+      const stmt = this.db.prepare(
+        `DELETE FROM queue_items WHERE status IN (${placeholders})`,
+      );
+      const result = stmt.run(...statuses);
+      return ok(result.changes);
+    } catch (cause) {
+      return err(new DbError(`Failed to purge queue items: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
 }

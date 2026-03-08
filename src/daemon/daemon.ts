@@ -447,6 +447,48 @@ export class TalondDaemon {
         };
       }
 
+      case 'queue-purge': {
+        if (!this.ctx) {
+          return {
+            id: responseId,
+            commandId: command.id,
+            success: false,
+            error: 'Daemon not running',
+          };
+        }
+
+        // Default: purge pending, failed, and completed. Accept override via payload.
+        type QS = 'pending' | 'claimed' | 'processing' | 'completed' | 'failed' | 'dead_letter';
+        const validStatuses: readonly QS[] = ['pending', 'claimed', 'processing', 'completed', 'failed', 'dead_letter'];
+        const requestedStatuses: QS[] = Array.isArray(command.payload?.statuses)
+          ? (command.payload.statuses as string[]).filter((s): s is QS =>
+              (validStatuses as readonly string[]).includes(s),
+            )
+          : ['pending', 'failed', 'completed'];
+
+        const purgeResult = this.ctx.repos.queue.purge(requestedStatuses);
+        if (purgeResult.isErr()) {
+          return {
+            id: responseId,
+            commandId: command.id,
+            success: false,
+            error: purgeResult.error.message,
+          };
+        }
+
+        this.logger.info(
+          { purged: purgeResult.value, statuses: requestedStatuses },
+          'daemon: queue purged',
+        );
+
+        return {
+          id: responseId,
+          commandId: command.id,
+          success: true,
+          data: { purged: purgeResult.value, statuses: requestedStatuses },
+        };
+      }
+
       default: {
         const unknownCommand = (command as DaemonCommand).command;
         return {

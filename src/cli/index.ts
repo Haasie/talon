@@ -20,6 +20,7 @@ import { setupCommand } from './commands/setup.js';
 import { addChannelCommand } from './commands/add-channel.js';
 import { addPersonaCommand } from './commands/add-persona.js';
 import { addSkillCommand } from './commands/add-skill.js';
+import { queuePurgeCommand } from './commands/queue-purge.js';
 
 const program = new Command();
 
@@ -129,6 +130,22 @@ program
       name: opts.name,
       personaName: opts.persona,
       configPath: opts.config,
+    });
+  });
+
+program
+  .command('queue-purge')
+  .description('Purge queue items by status (default: pending, failed, completed)')
+  .option('--ipc-dir <path>', 'IPC directory (overrides config default)')
+  .option('--timeout <ms>', 'Response timeout in milliseconds', '5000')
+  .option('--statuses <list>', 'Comma-separated statuses to purge (pending,failed,completed,dead_letter,claimed,processing)')
+  .option('--all', 'Purge all statuses including in-flight items')
+  .action(async (opts: { ipcDir?: string; timeout: string; statuses?: string; all?: boolean }) => {
+    await queuePurgeCommand({
+      ipcDir: opts.ipcDir,
+      timeoutMs: parseInt(opts.timeout, 10),
+      statuses: opts.statuses?.split(',').map((s) => s.trim()),
+      all: opts.all,
     });
   });
 
