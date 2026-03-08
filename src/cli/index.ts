@@ -9,6 +9,8 @@
  *   - doctor   Check system requirements and configuration (standalone)
  */
 
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Command } from 'commander';
 
 import { statusCommand } from './commands/status.js';
@@ -21,6 +23,12 @@ import { addChannelCommand } from './commands/add-channel.js';
 import { addPersonaCommand } from './commands/add-persona.js';
 import { addSkillCommand } from './commands/add-skill.js';
 import { queuePurgeCommand } from './commands/queue-purge.js';
+
+// Load .env before anything else so ${VAR} substitution works in config.
+const envPath = resolve(process.env.TALOND_ENV_FILE ?? '.env');
+if (existsSync(envPath)) {
+  process.loadEnvFile(envPath);
+}
 
 const program = new Command();
 
