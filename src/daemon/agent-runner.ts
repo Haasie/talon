@@ -6,7 +6,7 @@ import type { DaemonContext } from './daemon-context.js';
 import type { QueueItem } from '../queue/queue-types.js';
 
 /** Default maximum time (ms) an Agent SDK query may run before being aborted. */
-const DEFAULT_QUERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_QUERY_TIMEOUT_MS = 90 * 1000; // 90 seconds
 
 /**
  * AgentRunner — executes queue items by running the Claude Agent SDK.
