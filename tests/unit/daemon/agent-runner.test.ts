@@ -124,6 +124,7 @@ function makeMockContext(): DaemonContext {
       mergePromptFragments: vi.fn().mockReturnValue(''),
     } as any,
     loadedSkills: [],
+    messagePipeline: {} as any,
     hostToolsBridge: {
       path: '/tmp/test-data/host-tools.sock',
     } as any,

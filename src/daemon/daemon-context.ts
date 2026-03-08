@@ -33,6 +33,7 @@ import type { ThreadWorkspace } from '../memory/thread-workspace.js';
 import type { AuditLogger } from '../core/logging/audit-logger.js';
 import type { LoadedSkill } from '../skills/skill-types.js';
 import type { SkillResolver } from '../skills/skill-resolver.js';
+import type { MessagePipeline } from '../pipeline/message-pipeline.js';
 import type { HostToolsBridge } from '../tools/host-tools-bridge.js';
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,7 @@ export interface DaemonContext {
   readonly auditLogger: AuditLogger;
   readonly skillResolver: SkillResolver;
   readonly loadedSkills: LoadedSkill[];
+  readonly messagePipeline: MessagePipeline;
   readonly hostToolsBridge: HostToolsBridge;
   readonly logger: pino.Logger;
 }

@@ -1,9 +1,9 @@
 /**
  * Unit tests for TalondDaemon lifecycle.
  *
- * All filesystem and SQLite subsystems are mocked via vi.mock() so tests
- * run without touching the disk. State transitions, health reporting, and
- * idempotency behaviours are verified against the mock stubs.
+ * The daemon now delegates setup to bootstrap(), so tests mock that
+ * module rather than individual subsystems. State transitions, health
+ * reporting, and idempotency behaviours are verified.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -12,42 +12,42 @@ import pino from 'pino';
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
-//
-// Must be declared before any import that triggers the modules being mocked.
 // ---------------------------------------------------------------------------
 
-// Mock config loader
+vi.mock('../../../src/daemon/daemon-bootstrap.js', () => ({
+  bootstrap: vi.fn(),
+}));
+
 vi.mock('../../../src/core/config/config-loader.js', () => ({
   loadConfig: vi.fn(),
 }));
 
-// Mock database connection
-vi.mock('../../../src/core/database/connection.js', () => ({
-  createDatabase: vi.fn(),
-}));
-
-// Mock migration runner
-vi.mock('../../../src/core/database/migrations/runner.js', () => ({
-  runMigrations: vi.fn(),
-}));
-
-// Mock lifecycle helpers to avoid real FS operations
 vi.mock('../../../src/daemon/lifecycle.js', () => ({
   recoverFromCrash: vi.fn(),
   writePidFile: vi.fn(),
   removePidFile: vi.fn(),
 }));
 
+vi.mock('../../../src/channels/channel-setup.js', () => ({
+  registerChannels: vi.fn(),
+}));
+
+vi.mock('../../../src/skills/skill-loader.js', () => ({
+  SkillLoader: vi.fn().mockImplementation(() => ({
+    loadFromPersonaConfig: vi.fn().mockResolvedValue(ok([])),
+  })),
+}));
+
 // ---------------------------------------------------------------------------
-// Imports (after mocks are declared)
+// Imports (after mocks)
 // ---------------------------------------------------------------------------
 
 import { TalondDaemon } from '../../../src/daemon/daemon.js';
+import { bootstrap } from '../../../src/daemon/daemon-bootstrap.js';
 import { loadConfig } from '../../../src/core/config/config-loader.js';
-import { createDatabase } from '../../../src/core/database/connection.js';
-import { runMigrations } from '../../../src/core/database/migrations/runner.js';
-import { recoverFromCrash, writePidFile, removePidFile } from '../../../src/daemon/lifecycle.js';
-import { ConfigError, DbError, MigrationError } from '../../../src/core/errors/index.js';
+import { writePidFile, removePidFile } from '../../../src/daemon/lifecycle.js';
+import { DaemonError } from '../../../src/core/errors/index.js';
+import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -57,64 +57,99 @@ function createSilentLogger(): pino.Logger {
   return pino({ level: 'silent' });
 }
 
-/** Minimal valid TalondConfig fixture. */
-function makeConfig(overrides: Record<string, unknown> = {}): unknown {
+/**
+ * Creates a mock DaemonContext with all required fields.
+ */
+function makeMockContext(overrides: Partial<DaemonContext> = {}): DaemonContext {
+  const mockLogger = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  };
+
   return {
-    storage: { type: 'sqlite', path: ':memory:' },
+    db: { close: vi.fn() } as any,
+    config: {
+      storage: { type: 'sqlite', path: ':memory:' },
+      dataDir: '/tmp/test-data',
+      logLevel: 'info',
+      channels: [],
+      personas: [],
+      schedules: [],
+      ipc: { pollIntervalMs: 500, daemonSocketDir: 'data/ipc/daemon' },
+      queue: { maxAttempts: 3, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 },
+      scheduler: { tickIntervalMs: 5000 },
+      sandbox: {
+        runtime: 'docker',
+        image: 'talon-sandbox:latest',
+        maxConcurrent: 3,
+        networkDefault: 'off',
+        idleTimeoutMs: 1800000,
+        hardTimeoutMs: 3600000,
+        resourceLimits: { memoryMb: 1024, cpus: 1, pidsLimit: 256 },
+      },
+      auth: { mode: 'subscription' },
+    } as any,
+    configPath: '/etc/talond/config.yaml',
     dataDir: '/tmp/test-data',
-    logLevel: 'info',
-    channels: [],
-    personas: [],
-    schedules: [],
-    ipc: { pollIntervalMs: 500, daemonSocketDir: 'data/ipc/daemon' },
-    queue: { maxAttempts: 3, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 },
-    scheduler: { tickIntervalMs: 5000 },
-    sandbox: {
-      runtime: 'docker',
-      image: 'talon-sandbox:latest',
-      maxConcurrent: 3,
-      networkDefault: 'off',
-      idleTimeoutMs: 1800000,
-      hardTimeoutMs: 3600000,
-      resourceLimits: { memoryMb: 1024, cpus: 1, pidsLimit: 256 },
+    repos: {
+      queue: {} as any,
+      thread: {} as any,
+      channel: {} as any,
+      persona: {} as any,
+      schedule: {} as any,
+      audit: {} as any,
+      message: {} as any,
+      run: { aggregateByPeriod: vi.fn().mockReturnValue(ok({ total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 })) } as any,
+      binding: {} as any,
+      memory: {} as any,
     },
-    auth: { mode: 'subscription' },
+    channelRegistry: {
+      startAll: vi.fn().mockResolvedValue(undefined),
+      stopAll: vi.fn().mockResolvedValue(undefined),
+      listAll: vi.fn().mockReturnValue([]),
+      register: vi.fn(),
+      unregister: vi.fn(),
+      get: vi.fn(),
+    } as any,
+    queueManager: {
+      startProcessing: vi.fn(),
+      stopProcessing: vi.fn(),
+      stats: vi.fn().mockReturnValue({ pending: 0, claimed: 0, processing: 0, deadLetter: 0 }),
+    } as any,
+    scheduler: {
+      start: vi.fn(),
+      stop: vi.fn(),
+    } as any,
+    personaLoader: {
+      loadFromConfig: vi.fn().mockResolvedValue(ok(undefined)),
+    } as any,
+    sessionTracker: {
+      clearAll: vi.fn(),
+      getSessionId: vi.fn(),
+      setSessionId: vi.fn(),
+    } as any,
+    threadWorkspace: {} as any,
+    auditLogger: {} as any,
+    skillResolver: {} as any,
+    loadedSkills: [],
+    messagePipeline: {} as any,
+    hostToolsBridge: { path: '/tmp/host-tools.sock', stop: vi.fn() } as any,
+    logger: mockLogger as any,
     ...overrides,
   };
 }
 
 /**
- * Creates a mock better-sqlite3 Database object.
- * Returns minimal methods used by repositories and the daemon itself.
+ * Sets up bootstrap mock to return a successful context.
+ * Returns the mock context for assertions.
  */
-function makeMockDb() {
-  const mockStatement = {
-    run: vi.fn().mockReturnValue({ changes: 0, lastInsertRowid: 0 }),
-    get: vi.fn().mockReturnValue(undefined),
-    all: vi.fn().mockReturnValue([]),
-  };
-
-  return {
-    prepare: vi.fn().mockReturnValue(mockStatement),
-    pragma: vi.fn().mockReturnValue(0),
-    exec: vi.fn(),
-    close: vi.fn(),
-  };
-}
-
-/**
- * Sets up mocks for a successful daemon startup.
- * Returns the mock DB so callers can inspect it.
- */
-function setupSuccessfulStartMocks() {
-  const config = makeConfig();
-  const db = makeMockDb();
-
-  vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-  vi.mocked(createDatabase).mockReturnValue(ok(db as unknown as import('better-sqlite3').Database));
-  vi.mocked(runMigrations).mockReturnValue(ok(1));
-
-  return { config, db };
+function setupSuccessfulBootstrap(overrides: Partial<DaemonContext> = {}) {
+  const ctx = makeMockContext(overrides);
+  vi.mocked(bootstrap).mockResolvedValue(ok(ctx));
+  return ctx;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +165,6 @@ describe('TalondDaemon', () => {
   });
 
   afterEach(async () => {
-    // Ensure daemon is stopped after each test to avoid timer leaks.
     if (daemon.state !== 'stopped') {
       await daemon.stop();
     }
@@ -166,7 +200,7 @@ describe('TalondDaemon', () => {
 
   describe('start()', () => {
     it('returns Ok(void) on successful startup', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
 
       const result = await daemon.start('/etc/talond/config.yaml');
 
@@ -174,51 +208,47 @@ describe('TalondDaemon', () => {
     });
 
     it('transitions state to running after successful start', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
 
       await daemon.start('/etc/talond/config.yaml');
 
       expect(daemon.state).toBe('running');
     });
 
-    it('calls loadConfig with the provided path', async () => {
-      setupSuccessfulStartMocks();
+    it('calls bootstrap with the provided config path', async () => {
+      setupSuccessfulBootstrap();
 
       await daemon.start('/custom/path.yaml');
 
-      expect(loadConfig).toHaveBeenCalledWith('/custom/path.yaml');
+      expect(bootstrap).toHaveBeenCalledWith('/custom/path.yaml', expect.anything());
     });
 
-    it('calls createDatabase with the storage path from config', async () => {
-      const config = makeConfig({ storage: { type: 'sqlite', path: '/var/lib/talond.db' } });
-      const db = makeMockDb();
-      vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-      vi.mocked(createDatabase).mockReturnValue(ok(db as unknown as import('better-sqlite3').Database));
-      vi.mocked(runMigrations).mockReturnValue(ok(0));
+    it('starts channel connectors after bootstrap', async () => {
+      const ctx = setupSuccessfulBootstrap();
 
       await daemon.start('/config.yaml');
 
-      expect(createDatabase).toHaveBeenCalledWith('/var/lib/talond.db');
+      expect(ctx.channelRegistry.startAll).toHaveBeenCalledOnce();
     });
 
-    it('calls runMigrations after opening the database', async () => {
-      setupSuccessfulStartMocks();
+    it('starts queue processing after bootstrap', async () => {
+      const ctx = setupSuccessfulBootstrap();
 
       await daemon.start('/config.yaml');
 
-      expect(runMigrations).toHaveBeenCalledOnce();
+      expect(ctx.queueManager.startProcessing).toHaveBeenCalledOnce();
     });
 
-    it('calls recoverFromCrash after creating repositories', async () => {
-      setupSuccessfulStartMocks();
+    it('starts scheduler after bootstrap', async () => {
+      const ctx = setupSuccessfulBootstrap();
 
       await daemon.start('/config.yaml');
 
-      expect(recoverFromCrash).toHaveBeenCalledOnce();
+      expect(ctx.scheduler.start).toHaveBeenCalledOnce();
     });
 
     it('writes the PID file on successful start', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
 
       await daemon.start('/config.yaml');
 
@@ -226,7 +256,7 @@ describe('TalondDaemon', () => {
     });
 
     it('health() shows running state and positive uptime after start', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       const health = daemon.health();
@@ -241,9 +271,9 @@ describe('TalondDaemon', () => {
   // -------------------------------------------------------------------------
 
   describe('start() failure scenarios', () => {
-    it('returns Err(DaemonError) when config fails to load', async () => {
-      vi.mocked(loadConfig).mockReturnValue(
-        err(new ConfigError('config file not found')),
+    it('returns Err(DaemonError) when bootstrap fails', async () => {
+      vi.mocked(bootstrap).mockResolvedValue(
+        err(new DaemonError('Failed to load config: config file not found')),
       );
 
       const result = await daemon.start('/missing.yaml');
@@ -253,80 +283,12 @@ describe('TalondDaemon', () => {
       expect(result._unsafeUnwrapErr().message).toContain('config file not found');
     });
 
-    it('transitions state to error when config loading fails', async () => {
-      vi.mocked(loadConfig).mockReturnValue(
-        err(new ConfigError('invalid config')),
+    it('transitions state to error when bootstrap fails', async () => {
+      vi.mocked(bootstrap).mockResolvedValue(
+        err(new DaemonError('bootstrap failure')),
       );
 
       await daemon.start('/bad.yaml');
-
-      expect(daemon.state).toBe('error');
-    });
-
-    it('returns Err(DaemonError) when database cannot be opened', async () => {
-      const config = makeConfig();
-      vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-      vi.mocked(createDatabase).mockReturnValue(
-        err(new DbError('cannot open database')),
-      );
-
-      const result = await daemon.start('/config.yaml');
-
-      expect(result.isErr()).toBe(true);
-      expect(result._unsafeUnwrapErr().code).toBe('DAEMON_ERROR');
-    });
-
-    it('transitions state to error when database fails to open', async () => {
-      const config = makeConfig();
-      vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-      vi.mocked(createDatabase).mockReturnValue(
-        err(new DbError('cannot open database')),
-      );
-
-      await daemon.start('/config.yaml');
-
-      expect(daemon.state).toBe('error');
-    });
-
-    it('returns Err(DaemonError) when migrations fail', async () => {
-      const config = makeConfig();
-      const db = makeMockDb();
-      vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-      vi.mocked(createDatabase).mockReturnValue(ok(db as unknown as import('better-sqlite3').Database));
-      vi.mocked(runMigrations).mockReturnValue(
-        err(new MigrationError('migration 001 failed')),
-      );
-
-      const result = await daemon.start('/config.yaml');
-
-      expect(result.isErr()).toBe(true);
-      expect(result._unsafeUnwrapErr().code).toBe('DAEMON_ERROR');
-    });
-
-    it('closes the database if migrations fail', async () => {
-      const config = makeConfig();
-      const db = makeMockDb();
-      vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-      vi.mocked(createDatabase).mockReturnValue(ok(db as unknown as import('better-sqlite3').Database));
-      vi.mocked(runMigrations).mockReturnValue(
-        err(new MigrationError('migration failed')),
-      );
-
-      await daemon.start('/config.yaml');
-
-      expect(db.close).toHaveBeenCalledOnce();
-    });
-
-    it('transitions state to error when migrations fail', async () => {
-      const config = makeConfig();
-      const db = makeMockDb();
-      vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-      vi.mocked(createDatabase).mockReturnValue(ok(db as unknown as import('better-sqlite3').Database));
-      vi.mocked(runMigrations).mockReturnValue(
-        err(new MigrationError('migration failed')),
-      );
-
-      await daemon.start('/config.yaml');
 
       expect(daemon.state).toBe('error');
     });
@@ -338,10 +300,9 @@ describe('TalondDaemon', () => {
 
   describe('double-start idempotency', () => {
     it('returns Err(DaemonError) if start() is called while already running', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
-      // Second call — should fail without calling loadConfig again
       const result = await daemon.start('/config.yaml');
 
       expect(result.isErr()).toBe(true);
@@ -349,12 +310,11 @@ describe('TalondDaemon', () => {
     });
 
     it('does not change state on a rejected second start', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       await daemon.start('/config.yaml');
 
-      // Should still be running from the first start
       expect(daemon.state).toBe('running');
     });
   });
@@ -365,7 +325,7 @@ describe('TalondDaemon', () => {
 
   describe('stop()', () => {
     it('transitions state to stopped after shutdown', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       await daemon.stop();
@@ -374,16 +334,16 @@ describe('TalondDaemon', () => {
     });
 
     it('closes the database during shutdown', async () => {
-      const { db } = setupSuccessfulStartMocks();
+      const ctx = setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       await daemon.stop();
 
-      expect(db.close).toHaveBeenCalledOnce();
+      expect(ctx.db.close).toHaveBeenCalledOnce();
     });
 
     it('removes the PID file during shutdown', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       await daemon.stop();
@@ -391,8 +351,44 @@ describe('TalondDaemon', () => {
       expect(removePidFile).toHaveBeenCalledWith('/tmp/test-data');
     });
 
+    it('stops channel connectors during shutdown', async () => {
+      const ctx = setupSuccessfulBootstrap();
+      await daemon.start('/config.yaml');
+
+      await daemon.stop();
+
+      expect(ctx.channelRegistry.stopAll).toHaveBeenCalledOnce();
+    });
+
+    it('stops scheduler during shutdown', async () => {
+      const ctx = setupSuccessfulBootstrap();
+      await daemon.start('/config.yaml');
+
+      await daemon.stop();
+
+      expect(ctx.scheduler.stop).toHaveBeenCalledOnce();
+    });
+
+    it('stops queue processing during shutdown', async () => {
+      const ctx = setupSuccessfulBootstrap();
+      await daemon.start('/config.yaml');
+
+      await daemon.stop();
+
+      expect(ctx.queueManager.stopProcessing).toHaveBeenCalledOnce();
+    });
+
+    it('clears session tracker during shutdown', async () => {
+      const ctx = setupSuccessfulBootstrap();
+      await daemon.start('/config.yaml');
+
+      await daemon.stop();
+
+      expect(ctx.sessionTracker.clearAll).toHaveBeenCalledOnce();
+    });
+
     it('health() shows stopped state after stop()', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
       await daemon.stop();
 
@@ -401,7 +397,7 @@ describe('TalondDaemon', () => {
     });
 
     it('health() reports uptime 0 after stop()', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
       await daemon.stop();
 
@@ -415,22 +411,21 @@ describe('TalondDaemon', () => {
 
   describe('double-stop idempotency', () => {
     it('is safe to call stop() twice', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       await daemon.stop();
-      // Second call should be a no-op
       await expect(daemon.stop()).resolves.not.toThrow();
     });
 
     it('database is closed only once on double-stop', async () => {
-      const { db } = setupSuccessfulStartMocks();
+      const ctx = setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       await daemon.stop();
       await daemon.stop();
 
-      expect(db.close).toHaveBeenCalledOnce();
+      expect(ctx.db.close).toHaveBeenCalledOnce();
     });
 
     it('is safe to call stop() on a daemon that was never started', async () => {
@@ -448,14 +443,14 @@ describe('TalondDaemon', () => {
     });
 
     it('reports schedulerRunning=true while running', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       expect(daemon.health().schedulerRunning).toBe(true);
     });
 
     it('reports schedulerRunning=false after stop', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
       await daemon.stop();
 
@@ -463,18 +458,17 @@ describe('TalondDaemon', () => {
     });
 
     it('reports activeChannels as empty when no connectors are registered', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       expect(daemon.health().activeChannels).toEqual([]);
     });
 
     it('reports queueStats from the queue manager', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
 
       const health = daemon.health();
-      // With a mock DB returning no rows, all counts are 0
       expect(health.queueStats.pending).toBeGreaterThanOrEqual(0);
       expect(health.queueStats.deadLetter).toBeGreaterThanOrEqual(0);
     });
@@ -492,50 +486,16 @@ describe('TalondDaemon', () => {
       expect(result._unsafeUnwrapErr().code).toBe('DAEMON_ERROR');
     });
 
-    it('returns Ok when daemon is running and configPath is provided', async () => {
-      setupSuccessfulStartMocks();
-      await daemon.start('/original.yaml');
-
-      // Re-mock loadConfig for the reload call
-      const newConfig = makeConfig();
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
-
-      const result = await daemon.reload('/updated.yaml');
-
-      expect(result.isOk()).toBe(true);
-    });
-
-    it('returns Ok when configPath is omitted', async () => {
-      setupSuccessfulStartMocks();
+    it('does not change daemon state on reload', async () => {
+      const ctx = setupSuccessfulBootstrap();
       await daemon.start('/config.yaml');
+
+      // Reload calls loadConfig directly (not bootstrap).
+      vi.mocked(loadConfig).mockReturnValue(ok(ctx.config as any));
 
       const result = await daemon.reload();
 
       expect(result.isOk()).toBe(true);
-    });
-
-    it('returns Err if reload config fails to load', async () => {
-      setupSuccessfulStartMocks();
-      await daemon.start('/config.yaml');
-
-      vi.mocked(loadConfig).mockReturnValue(
-        err(new ConfigError('bad reload config')),
-      );
-
-      const result = await daemon.reload('/bad.yaml');
-
-      expect(result.isErr()).toBe(true);
-      expect(result._unsafeUnwrapErr().code).toBe('DAEMON_ERROR');
-    });
-
-    it('does not change daemon state on reload', async () => {
-      setupSuccessfulStartMocks();
-      await daemon.start('/config.yaml');
-
-      const newConfig = makeConfig();
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
-      await daemon.reload('/updated.yaml');
-
       expect(daemon.state).toBe('running');
     });
   });
@@ -546,14 +506,13 @@ describe('TalondDaemon', () => {
 
   describe('PID file failure tolerance', () => {
     it('continues startup even if writePidFile throws', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulBootstrap();
       vi.mocked(writePidFile).mockImplementation(() => {
         throw new Error('disk full');
       });
 
       const result = await daemon.start('/config.yaml');
 
-      // Daemon should still reach running state despite PID file failure
       expect(result.isOk()).toBe(true);
       expect(daemon.state).toBe('running');
     });

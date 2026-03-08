@@ -187,7 +187,7 @@ The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.prox
 | 7 | Wire host-tools as MCP servers | Done |
 | 8 | Fix BUG-005 (next_run_at null) + scheduler payload mismatch | Done |
 | 9 | Add SessionTracker eviction | Done |
-| 10 | Slim down daemon.ts to thin orchestrator | Not started |
+| 10 | Slim down daemon.ts to thin orchestrator | Done (1314 → 496 lines) |
 
 Each step = one atomic commit. Steps 1-5 are pure refactors (no behavior change). Steps 6-9 are fixes/cleanup. Step 10 is the final assembly.
 
@@ -279,3 +279,4 @@ _Updated after each commit._
 - **Cleanup**: Removed remaining dead refs from daemon.ts (SandboxManager, ContainerFactory, SdkProcessSpawner, McpProxy). Replaced duplicate `createConnector` with import from `channel-factory.ts`. Deleted `tests/integration/ipc.test.ts`. Rewrote `host-tools-bridge.test.ts`. Added tests for AgentRunner, DaemonBootstrap, ChannelFactory.
 - **Step 8**: Fixed BUG-005 — `schedule.manage` create now computes `next_run_at` via `getNextCronTime()`. Update also recomputes `next_run_at` when cron expression changes. Fixed scheduler payload mismatch — `processSchedule()` now injects `personaId` from schedule row and maps `prompt` → `content` for AgentRunner compatibility.
 - **Step 9**: Added TTL-based eviction to `SessionTracker`. Entries track `lastUsedAt`, expire after configurable TTL (default 24h). Lazy eviction on `get`/`has`, bulk eviction via `evictStale()`. Fixes unbounded memory growth in long-running daemon.
+- **Step 10**: Slimmed `daemon.ts` from 1314 → 496 lines. Replaced 20+ nullable fields with single `ctx: DaemonContext | null`. `start()` calls `bootstrap()`, `handleQueueItem` delegates to `AgentRunner.run()`, `rebuildChannelRegistrations` replaced by `registerChannels()` import. Removed duplicate `RepositoryAuditStore` class. Added `messagePipeline` to `DaemonContext`. Reload uses `SkillLoader.loadFromPersonaConfig()` (no more duplicated skill directory resolution). Rewrote `daemon.test.ts` and `reload.test.ts` to mock `bootstrap()` instead of individual subsystems.

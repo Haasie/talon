@@ -1,66 +1,31 @@
 /**
- * TalondDaemon — central orchestrator for the talond autonomous agent daemon.
+ * TalondDaemon — thin lifecycle orchestrator for the talond daemon.
  *
- * Initialises all subsystems in dependency order on `start()`, tears them
- * down gracefully on `stop()`, and exposes a health snapshot at any time
- * via `health()`.
- *
- * Design principles:
- * - All subsystem instances are created inside `start()`, never in the
- *   constructor, so a single daemon object can be started/stopped in tests.
- * - Startup failures propagate as neverthrow Result errors; shutdown is
- *   best-effort (void return, errors are logged and swallowed).
- * - Channel start failures are non-fatal: the daemon continues without
- *   channels so the queue and scheduler still operate.
+ * Delegates setup to bootstrap(), queue processing to AgentRunner, and
+ * channel wiring to registerChannels(). This file handles only:
+ *   - State machine (stopped → starting → running → stopping → stopped)
+ *   - Starting/stopping services in dependency order
+ *   - Health snapshots
+ *   - Hot-reload (config diff + re-registration)
+ *   - IPC command dispatch
  */
 
 import { join } from 'node:path';
-import { access } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
-import { v4 as uuidv4 } from 'uuid';
 import { ok, err, type Result } from 'neverthrow';
 import type pino from 'pino';
-import type Database from 'better-sqlite3';
 
 import { loadConfig } from '../core/config/config-loader.js';
-import { createDatabase } from '../core/database/connection.js';
-import { runMigrations } from '../core/database/migrations/runner.js';
-
-import {
-  QueueRepository,
-  ThreadRepository,
-  ChannelRepository,
-  PersonaRepository,
-  ScheduleRepository,
-  AuditRepository,
-  MessageRepository,
-  RunRepository,
-  MemoryRepository,
-  ArtifactRepository,
-  BindingRepository,
-  ToolResultRepository,
-} from '../core/database/repositories/index.js';
-
-import { ChannelRegistry } from '../channels/channel-registry.js';
-import { ChannelRouter } from '../channels/channel-router.js';
-import type { InboundEvent } from '../channels/channel-types.js';
-import { createConnector } from './channel-factory.js';
-import { MessagePipeline } from '../pipeline/message-pipeline.js';
-import { QueueManager } from '../queue/queue-manager.js';
-import type { QueueItem } from '../queue/queue-types.js';
-import { Scheduler } from '../scheduler/scheduler.js';
 import { DaemonError } from '../core/errors/error-types.js';
-import { AuditLogger, type AuditEntry, type AuditStore } from '../core/logging/audit-logger.js';
-import { PersonaLoader } from '../personas/persona-loader.js';
 import { SkillLoader } from '../skills/skill-loader.js';
-import { SkillResolver } from '../skills/skill-resolver.js';
-import type { LoadedSkill } from '../skills/skill-types.js';
-import { ThreadWorkspace } from '../memory/thread-workspace.js';
-import { SessionTracker } from '../sandbox/session-tracker.js';
 import { McpRegistry } from '../mcp/mcp-registry.js';
 
-import { recoverFromCrash, writePidFile, removePidFile } from './lifecycle.js';
+import { bootstrap } from './daemon-bootstrap.js';
+import { AgentRunner } from './agent-runner.js';
+import { writePidFile, removePidFile } from './lifecycle.js';
 import { WatchdogNotifier } from './watchdog.js';
+import { registerChannels } from '../channels/channel-setup.js';
+
+import type { DaemonContext } from './daemon-context.js';
 import type { DaemonState, DaemonHealth } from './daemon-types.js';
 import { DaemonIpcServer } from '../ipc/daemon-ipc-server.js';
 import type { DaemonCommand, DaemonResponse } from '../ipc/daemon-ipc.js';
@@ -70,64 +35,18 @@ import type { TalondConfig } from '../core/config/config-types.js';
 // TalondDaemon
 // ---------------------------------------------------------------------------
 
-/**
- * Main daemon class.
- *
- * Usage:
- * ```ts
- * const daemon = new TalondDaemon(logger);
- * const result = await daemon.start('/etc/talond/config.yaml');
- * if (result.isErr()) process.exit(1);
- * ```
- */
 export class TalondDaemon {
   private _state: DaemonState = 'stopped';
   private startedAt: number | null = null;
 
-  // Subsystem references — populated during start(), cleared during stop().
-  private db: Database.Database | null = null;
-  private channelRegistry: ChannelRegistry | null = null;
-  private queueManager: QueueManager | null = null;
-  private scheduler: Scheduler | null = null;
+  private ctx: DaemonContext | null = null;
+  private agentRunner: AgentRunner | null = null;
   private ipcServer: DaemonIpcServer | null = null;
   private watchdog: WatchdogNotifier | null = null;
-  private dataDir: string = 'data';
-  private threadWorkspace: ThreadWorkspace | null = null;
-
-  // Repositories required across lifecycle methods.
-  private threadRepo: ThreadRepository | null = null;
-  private channelRepo: ChannelRepository | null = null;
-  private personaRepo: PersonaRepository | null = null;
-  private queueRepo: QueueRepository | null = null;
-  private runRepo: RunRepository | null = null;
-  private messageRepo: MessageRepository | null = null;
-  private bindingRepo: BindingRepository | null = null;
-
-  // Orchestration subsystems.
-  private auditLogger: AuditLogger | null = null;
-  private messagePipeline: MessagePipeline | null = null;
-  private personaLoader: PersonaLoader | null = null;
-  private skillLoader: SkillLoader | null = null;
-  private skillResolver: SkillResolver | null = null;
-  private loadedSkills: LoadedSkill[] = [];
-
-  // Sandbox and MCP integrations.
-  private sessionTracker: SessionTracker | null = null;
   private mcpRegistry: McpRegistry | null = null;
-
-  /** Path used to load the config at start-time; re-used by reload(). */
-  private configPath: string | null = null;
-
-  /** Active config snapshot; updated on successful reload(). */
-  private currentConfig: TalondConfig | null = null;
 
   constructor(private readonly logger: pino.Logger) {}
 
-  // ---------------------------------------------------------------------------
-  // State getter
-  // ---------------------------------------------------------------------------
-
-  /** Current daemon lifecycle state. */
   get state(): DaemonState {
     return this._state;
   }
@@ -136,28 +55,6 @@ export class TalondDaemon {
   // Start
   // ---------------------------------------------------------------------------
 
-  /**
-   * Initialises all subsystems and starts the daemon.
-   *
-   * Steps:
-   * 1. Load and validate YAML config
-   * 2. Open SQLite database
-   * 3. Run pending migrations
-   * 4. Create all repositories
-   * 5. Recover from any previous crash (reset in-flight queue items)
-   * 6. Initialise channel registry
-   * 7. Initialise queue manager
-   * 8. Initialise scheduler
-   * 9. Start channel connectors (non-fatal on failure)
-   * 10. Start queue processing loop
-   * 11. Start scheduler tick loop
-   * 12. Write PID file
-   * 13. Start IPC server
-   * 14. Mark state as 'running'
-   *
-   * @param configPath - Absolute or relative path to the YAML config file.
-   * @returns Ok(void) on success, Err(DaemonError) on unrecoverable failure.
-   */
   async start(configPath: string): Promise<Result<void, DaemonError>> {
     if (this._state !== 'stopped') {
       return err(
@@ -166,147 +63,19 @@ export class TalondDaemon {
     }
 
     this._state = 'starting';
-    this.configPath = configPath;
     this.logger.info({ configPath }, 'daemon: starting');
 
-    // ------------------------------------------------------------------
-    // 1. Load config
-    // ------------------------------------------------------------------
-    const configResult = loadConfig(configPath);
-    if (configResult.isErr()) {
+    // 1. Bootstrap — builds the full DaemonContext or fails.
+    const ctxResult = await bootstrap(configPath, this.logger);
+    if (ctxResult.isErr()) {
       this._state = 'error';
-      return err(
-        new DaemonError(`Failed to load config: ${configResult.error.message}`, configResult.error),
-      );
+      return err(ctxResult.error);
     }
-    const config = configResult.value;
-    this.dataDir = config.dataDir;
-    this.currentConfig = config;
-    this.logger.info({ logLevel: config.logLevel }, 'daemon: config loaded');
+    this.ctx = ctxResult.value;
 
-    // ------------------------------------------------------------------
-    // 2. Open database
-    // ------------------------------------------------------------------
-    const dbResult = createDatabase(config.storage.path);
-    if (dbResult.isErr()) {
-      this._state = 'error';
-      return err(
-        new DaemonError(`Failed to open database: ${dbResult.error.message}`, dbResult.error),
-      );
-    }
-    this.db = dbResult.value;
-
-    // ------------------------------------------------------------------
-    // 3. Run migrations
-    // ------------------------------------------------------------------
-    const migrationsDir = join(import.meta.dirname, '../core/database/migrations');
-    const migrationsResult = runMigrations(this.db, migrationsDir);
-    if (migrationsResult.isErr()) {
-      this._state = 'error';
-      this.db.close();
-      this.db = null;
-      return err(
-        new DaemonError(
-          `Failed to run migrations: ${migrationsResult.error.message}`,
-          migrationsResult.error,
-        ),
-      );
-    }
-    this.logger.info({ applied: migrationsResult.value }, 'daemon: migrations complete');
-
-    // ------------------------------------------------------------------
-    // 4. Create repositories
-    // ------------------------------------------------------------------
-    const queueRepo = new QueueRepository(this.db);
-    const threadRepo = new ThreadRepository(this.db);
-    const channelRepo = new ChannelRepository(this.db);
-    const personaRepo = new PersonaRepository(this.db);
-    const scheduleRepo = new ScheduleRepository(this.db);
-    const auditRepo = new AuditRepository(this.db);
-    const messageRepo = new MessageRepository(this.db);
-    const runRepo = new RunRepository(this.db);
-    new MemoryRepository(this.db);
-    new ArtifactRepository(this.db);
-    const bindingRepo = new BindingRepository(this.db);
-    new ToolResultRepository(this.db);
-
-    this.queueRepo = queueRepo;
-    this.threadRepo = threadRepo;
-    this.channelRepo = channelRepo;
-    this.personaRepo = personaRepo;
-    this.runRepo = runRepo;
-    this.messageRepo = messageRepo;
-    this.bindingRepo = bindingRepo;
-
-    const auditStore = new RepositoryAuditStore(auditRepo);
-    this.auditLogger = new AuditLogger(this.logger, auditStore);
-
-    this.threadWorkspace = new ThreadWorkspace(this.dataDir);
-    this.personaLoader = new PersonaLoader(personaRepo, this.logger);
-    this.skillLoader = new SkillLoader(this.logger);
-    this.skillResolver = new SkillResolver(this.logger);
-
-    const personaLoadResult = await this.personaLoader.loadFromConfig(config.personas);
-    if (personaLoadResult.isErr()) {
-      this._state = 'error';
-      this.db.close();
-      this.db = null;
-      return err(
-        new DaemonError(
-          `Failed to load personas: ${personaLoadResult.error.message}`,
-          personaLoadResult.error,
-        ),
-      );
-    }
-
-    const uniqueSkillNames = new Set<string>();
-    for (const persona of config.personas) {
-      for (const skill of persona.skills) {
-        uniqueSkillNames.add(skill);
-      }
-    }
-
-    const skillDirs: string[] = [];
-    for (const skillName of uniqueSkillNames) {
-      const candidates = [
-        join(process.cwd(), 'skills', skillName),
-        join(this.dataDir, 'skills', skillName),
-      ];
-      let foundPath: string | null = null;
-      for (const candidate of candidates) {
-        try {
-          await access(candidate, fsConstants.R_OK);
-          foundPath = candidate;
-          break;
-        } catch {
-          continue;
-        }
-      }
-      if (foundPath !== null) {
-        skillDirs.push(foundPath);
-      } else {
-        this.logger.warn({ skillName }, 'daemon: skill directory not found; skipping');
-      }
-    }
-
-    if (skillDirs.length > 0) {
-      const skillsResult = await this.skillLoader.loadMultiple(skillDirs);
-      if (skillsResult.isErr()) {
-        this._state = 'error';
-        this.db.close();
-        this.db = null;
-        return err(
-          new DaemonError(
-            `Failed to load skills: ${skillsResult.error.message}`,
-            skillsResult.error,
-          ),
-        );
-      }
-      this.loadedSkills = skillsResult.value;
-    }
-
+    // 2. Register and start MCP servers from loaded skills.
     this.mcpRegistry = new McpRegistry(this.logger);
-    for (const skill of this.loadedSkills) {
+    for (const skill of this.ctx.loadedSkills) {
       for (const server of skill.resolvedMcpServers) {
         try {
           this.mcpRegistry.register(server.name, server.config);
@@ -319,73 +88,36 @@ export class TalondDaemon {
       }
     }
     await this.mcpRegistry.startAll();
-    this.sessionTracker = new SessionTracker();
 
-    // ------------------------------------------------------------------
-    // 5. Crash recovery
-    // ------------------------------------------------------------------
-    recoverFromCrash(queueRepo, this.logger);
+    // 3. Create the agent runner.
+    this.agentRunner = new AgentRunner(this.ctx);
 
-    // ------------------------------------------------------------------
-    // 6. Initialise channel registry.
-    // ------------------------------------------------------------------
-    this.channelRegistry = new ChannelRegistry(this.logger);
-
-    // ------------------------------------------------------------------
-    // 7. Initialise queue manager
-    // ------------------------------------------------------------------
-    this.queueManager = new QueueManager(queueRepo, threadRepo, config.queue, this.logger);
-
-    // ------------------------------------------------------------------
-    // 8. Initialise scheduler
-    // ------------------------------------------------------------------
-    this.scheduler = new Scheduler(scheduleRepo, this.queueManager, config.scheduler, this.logger);
-
-    // ------------------------------------------------------------------
-    // 8b. Initialise message pipeline and register connectors.
-    // ------------------------------------------------------------------
-    const router = new ChannelRouter(bindingRepo, this.logger);
-    this.messagePipeline = new MessagePipeline(
-      messageRepo,
-      threadRepo,
-      channelRepo,
-      this.queueManager,
-      router,
-      this.auditLogger!,
-      this.logger,
-    );
-
-    this.rebuildChannelRegistrations(config);
-
-    // ------------------------------------------------------------------
-    // 9. Start channel connectors (non-fatal: log and continue)
-    // ------------------------------------------------------------------
-    await this.startChannelsBestEffort();
-
-    // ------------------------------------------------------------------
-    // 10. Start queue processing loop
-    // ------------------------------------------------------------------
-    this.queueManager.startProcessing((item) => this.handleQueueItem(item));
-
-    // ------------------------------------------------------------------
-    // 11. Start scheduler
-    // ------------------------------------------------------------------
-    this.scheduler.start();
-
-    // ------------------------------------------------------------------
-    // 12. Write PID file
-    // ------------------------------------------------------------------
+    // 4. Start channel connectors (non-fatal).
     try {
-      writePidFile(this.dataDir);
+      await this.ctx.channelRegistry.startAll();
+      this.logger.info('daemon: all channel connectors started');
     } catch (cause) {
-      // PID file failure is non-fatal; log and continue.
+      this.logger.error(
+        { cause },
+        'daemon: one or more channel connectors failed to start — continuing without them',
+      );
+    }
+
+    // 5. Start queue processing.
+    this.ctx.queueManager.startProcessing((item) => this.agentRunner!.run(item));
+
+    // 6. Start scheduler.
+    this.ctx.scheduler.start();
+
+    // 7. Write PID file (non-fatal).
+    try {
+      writePidFile(this.ctx.dataDir);
+    } catch (cause) {
       this.logger.warn({ cause }, 'daemon: failed to write PID file');
     }
 
-    // ------------------------------------------------------------------
-    // 13. Start IPC server
-    // ------------------------------------------------------------------
-    const ipcBase = join(this.dataDir, 'ipc/daemon');
+    // 8. Start IPC server.
+    const ipcBase = join(this.ctx.dataDir, 'ipc/daemon');
     this.ipcServer = new DaemonIpcServer({
       inputDir: join(ipcBase, 'input'),
       outputDir: join(ipcBase, 'output'),
@@ -396,22 +128,15 @@ export class TalondDaemon {
     this.ipcServer.start();
     this.logger.info('daemon: IPC server started');
 
-    // ------------------------------------------------------------------
-    // 14. Mark running
-    // ------------------------------------------------------------------
+    // 9. Mark running + start watchdog.
     this._state = 'running';
     this.startedAt = Date.now();
     this.logger.info('daemon: running');
 
-    // ------------------------------------------------------------------
-    // 14. Start watchdog notifier
-    //     Interval is set to 10 seconds by default; WatchdogSec in the
-    //     systemd unit file should be at least 2× this value (30 s).
-    // ------------------------------------------------------------------
     this.watchdog = new WatchdogNotifier({
       intervalMs: 10_000,
       logger: this.logger,
-      dataDir: this.dataDir,
+      dataDir: this.ctx.dataDir,
     });
     this.watchdog.start();
     this.watchdog.notifyReady();
@@ -423,20 +148,6 @@ export class TalondDaemon {
   // Stop
   // ---------------------------------------------------------------------------
 
-  /**
-   * Gracefully shuts down all subsystems.
-   *
-   * Shutdown order (reverse of startup):
-   * 1. Set state to 'stopping'
-   * 2. Stop channel connectors (no new inbound messages)
-   * 3. Stop scheduler (no new jobs enqueued)
-   * 4. Stop queue processing loop
-   * 5. Close database
-   * 6. Remove PID file
-   * 7. Set state to 'stopped'
-   *
-   * Errors during shutdown are logged but do not interrupt the sequence.
-   */
   async stop(): Promise<void> {
     if (this._state === 'stopped' || this._state === 'stopping') {
       return;
@@ -445,86 +156,54 @@ export class TalondDaemon {
     this._state = 'stopping';
     this.logger.info('daemon: stopping');
 
-    // 0. Notify watchdog that graceful shutdown is beginning
     if (this.watchdog !== null) {
       this.watchdog.notifyStopping();
       this.watchdog.stop();
       this.watchdog = null;
     }
 
-    // 1. Stop channel connectors
-    if (this.channelRegistry !== null) {
+    if (this.ctx !== null) {
       try {
-        await this.channelRegistry.stopAll();
+        await this.ctx.channelRegistry.stopAll();
       } catch (cause) {
         this.logger.error({ cause }, 'daemon: error stopping channel connectors');
       }
-      this.channelRegistry = null;
+
+      this.ctx.scheduler.stop();
+
+      if (this.mcpRegistry !== null) {
+        await this.mcpRegistry.stopAll();
+        this.mcpRegistry = null;
+      }
+
+      this.ctx.sessionTracker.clearAll();
+      this.ctx.queueManager.stopProcessing();
+      this.ctx.hostToolsBridge.stop();
     }
 
-    // 2. Stop scheduler
-    if (this.scheduler !== null) {
-      this.scheduler.stop();
-      this.scheduler = null;
-    }
-
-    if (this.mcpRegistry !== null) {
-      await this.mcpRegistry.stopAll();
-      this.mcpRegistry = null;
-    }
-
-    if (this.sessionTracker !== null) {
-      this.sessionTracker.clearAll();
-      this.sessionTracker = null;
-    }
-
-    // 3. Stop queue processing
-    if (this.queueManager !== null) {
-      this.queueManager.stopProcessing();
-      this.queueManager = null;
-    }
-
-    // 3b. Stop IPC server
     if (this.ipcServer !== null) {
       this.ipcServer.stop();
       this.ipcServer = null;
     }
 
-    // 4. Close database
-    if (this.db !== null) {
+    if (this.ctx !== null) {
       try {
-        this.db.close();
+        this.ctx.db.close();
       } catch (cause) {
         this.logger.error({ cause }, 'daemon: error closing database');
       }
-      this.db = null;
-    }
 
-    // 5. Remove PID file
-    try {
-      removePidFile(this.dataDir);
-    } catch (cause) {
-      this.logger.warn({ cause }, 'daemon: failed to remove PID file');
+      try {
+        removePidFile(this.ctx.dataDir);
+      } catch (cause) {
+        this.logger.warn({ cause }, 'daemon: failed to remove PID file');
+      }
     }
 
     this._state = 'stopped';
     this.startedAt = null;
-    this.configPath = null;
-    this.currentConfig = null;
-    this.threadWorkspace = null;
-    this.queueRepo = null;
-    this.threadRepo = null;
-    this.channelRepo = null;
-    this.personaRepo = null;
-    this.runRepo = null;
-    this.messageRepo = null;
-    this.bindingRepo = null;
-    this.auditLogger = null;
-    this.messagePipeline = null;
-    this.personaLoader = null;
-    this.skillLoader = null;
-    this.skillResolver = null;
-    this.loadedSkills = [];
+    this.ctx = null;
+    this.agentRunner = null;
     this.logger.info('daemon: stopped');
   }
 
@@ -532,30 +211,23 @@ export class TalondDaemon {
   // Health
   // ---------------------------------------------------------------------------
 
-  /**
-   * Returns a point-in-time health snapshot.
-   *
-   * Computed from in-memory state — no database queries are performed.
-   * Safe to call from any state, including 'stopped'.
-   */
   health(): DaemonHealth {
-    const queueStats =
-      this.queueManager !== null
-        ? this.queueManager.stats()
-        : { pending: 0, claimed: 0, processing: 0, deadLetter: 0 };
-
-    const activeChannels =
-      this.channelRegistry !== null ? this.channelRegistry.listAll().map((c) => c.name) : [];
-
-    const uptime =
-      this._state === 'running' && this.startedAt !== null ? Date.now() - this.startedAt : 0;
+    if (this.ctx === null) {
+      return {
+        state: this._state,
+        uptime: 0,
+        queueStats: { pending: 0, claimed: 0, processing: 0, deadLetter: 0 },
+        activeChannels: [],
+        schedulerRunning: false,
+      };
+    }
 
     return {
       state: this._state,
-      uptime,
-      queueStats,
-      activeChannels,
-      schedulerRunning: this.scheduler !== null,
+      uptime: this.startedAt !== null ? Date.now() - this.startedAt : 0,
+      queueStats: this.ctx.queueManager.stats(),
+      activeChannels: this.ctx.channelRegistry.listAll().map((c) => c.name),
+      schedulerRunning: true,
     };
   }
 
@@ -563,44 +235,19 @@ export class TalondDaemon {
   // Reload
   // ---------------------------------------------------------------------------
 
-  /**
-   * Hot-reloads the daemon configuration without restarting subsystems.
-   *
-   * What is applied immediately:
-   * - Log level changes (updates the pino logger level in-place)
-   *
-   * What is logged but NOT applied (requires restart):
-   * - Queue / scheduler config changes
-   * - Container image changes (logged as a warning)
-   *
-   * What is logged for future connector re-registration:
-   * - Channel additions / removals
-   * - Persona additions / changes / removals
-   *
-   * Active containers in flight are NOT affected; changes apply to new runs
-   * only.
-   *
-   * @param configPath - Path to reload the config from.
-   *                     Defaults to the path used at startup if omitted.
-   * @returns Ok(void) on success, Err(DaemonError) if config re-read fails.
-   */
   async reload(configPath?: string): Promise<Result<void, DaemonError>> {
-    if (this._state !== 'running') {
+    if (this._state !== 'running' || this.ctx === null) {
       return err(
         new DaemonError(`Cannot reload daemon in state '${this._state}' (expected 'running')`),
       );
     }
 
-    // Resolve the effective config path: argument > saved startup path.
-    const effectivePath = configPath ?? this.configPath;
+    const effectivePath = configPath ?? this.ctx.configPath;
     if (effectivePath === null) {
-      // This should not happen in normal usage (configPath is always set on start),
-      // but guard defensively.
       this.logger.info('daemon: reload requested but no configPath is known — skipping');
       return ok(undefined);
     }
 
-    // Re-read and validate the config file.
     const configResult = loadConfig(effectivePath);
     if (configResult.isErr()) {
       return err(
@@ -612,285 +259,68 @@ export class TalondDaemon {
     }
 
     const newConfig = configResult.value;
-    const oldConfig = this.currentConfig;
+    const oldConfig = this.ctx.config;
 
     this.logger.info({ configPath: effectivePath }, 'daemon: applying hot-reload');
 
-    // ------------------------------------------------------------------
-    // Log level — apply immediately to the live logger instance
-    // ------------------------------------------------------------------
-    if (oldConfig === null || newConfig.logLevel !== oldConfig.logLevel) {
+    // Log level — apply immediately.
+    if (newConfig.logLevel !== oldConfig.logLevel) {
       this.logger.info(
-        { from: oldConfig?.logLevel ?? 'unknown', to: newConfig.logLevel },
+        { from: oldConfig.logLevel, to: newConfig.logLevel },
         'daemon: log level changed — applying immediately',
       );
       this.logger.level = newConfig.logLevel;
     }
 
-    // ------------------------------------------------------------------
-    // Channel changes
-    // ------------------------------------------------------------------
-    if (oldConfig !== null) {
-      const oldChannelNames = new Set(oldConfig.channels.map((c) => c.name));
-      const newChannelNames = new Set(newConfig.channels.map((c) => c.name));
+    // Channel diff.
+    this.logChannelDiff(oldConfig, newConfig);
 
-      const added = newConfig.channels
-        .filter((c) => !oldChannelNames.has(c.name))
-        .map((c) => c.name);
+    // Persona diff.
+    this.logPersonaDiff(oldConfig, newConfig);
 
-      const removed = oldConfig.channels
-        .filter((c) => !newChannelNames.has(c.name))
-        .map((c) => c.name);
-
-      if (added.length > 0) {
-        this.logger.info({ added }, 'daemon: reload — new channels detected');
-      }
-      if (removed.length > 0) {
-        this.logger.info({ removed }, 'daemon: reload — channels removed');
-      }
+    // Queue/scheduler config — require restart.
+    if (JSON.stringify(oldConfig.queue) !== JSON.stringify(newConfig.queue)) {
+      this.logger.warn('daemon: reload — queue config changed; restart required to apply');
+    }
+    if (JSON.stringify(oldConfig.scheduler) !== JSON.stringify(newConfig.scheduler)) {
+      this.logger.warn('daemon: reload — scheduler config changed; restart required to apply');
     }
 
-    // ------------------------------------------------------------------
-    // Persona changes
-    // ------------------------------------------------------------------
-    if (oldConfig !== null) {
-      const oldPersonaNames = new Set(oldConfig.personas.map((p) => p.name));
-      const newPersonaNames = new Set(newConfig.personas.map((p) => p.name));
-
-      const addedPersonas = newConfig.personas
-        .filter((p) => !oldPersonaNames.has(p.name))
-        .map((p) => p.name);
-
-      const removedPersonas = oldConfig.personas
-        .filter((p) => !newPersonaNames.has(p.name))
-        .map((p) => p.name);
-
-      const changedPersonas = newConfig.personas
-        .filter((p) => {
-          if (!oldPersonaNames.has(p.name)) return false;
-          const old = oldConfig.personas.find((op) => op.name === p.name);
-          return JSON.stringify(old) !== JSON.stringify(p);
-        })
-        .map((p) => p.name);
-
-      if (addedPersonas.length > 0) {
-        this.logger.info({ added: addedPersonas }, 'daemon: reload — personas added');
-      }
-      if (removedPersonas.length > 0) {
-        this.logger.info({ removed: removedPersonas }, 'daemon: reload — personas removed');
-      }
-      if (changedPersonas.length > 0) {
-        this.logger.info({ changed: changedPersonas }, 'daemon: reload — personas changed');
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // Queue / scheduler config changes — require restart
-    // ------------------------------------------------------------------
-    if (oldConfig !== null) {
-      const queueChanged = JSON.stringify(oldConfig.queue) !== JSON.stringify(newConfig.queue);
-      if (queueChanged) {
-        this.logger.warn('daemon: reload — queue config changed; restart required to apply');
-      }
-
-      const schedulerChanged =
-        JSON.stringify(oldConfig.scheduler) !== JSON.stringify(newConfig.scheduler);
-      if (schedulerChanged) {
-        this.logger.warn('daemon: reload — scheduler config changed; restart required to apply');
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // Container image changes — warn operator
-    // ------------------------------------------------------------------
-    if (oldConfig !== null && oldConfig.sandbox.image !== newConfig.sandbox.image) {
+    // Container image change — warn.
+    if (oldConfig.sandbox.image !== newConfig.sandbox.image) {
       this.logger.warn(
         { from: oldConfig.sandbox.image, to: newConfig.sandbox.image },
         'daemon: reload — container image changed — manual rolling restart required',
       );
     }
 
-    const personaLoader = this.personaLoader;
-    const skillLoader = this.skillLoader;
-    if (personaLoader === null || skillLoader === null) {
-      return err(new DaemonError('daemon subsystems not initialized for reload'));
-    }
-
-    const personaReload = await personaLoader.loadFromConfig(newConfig.personas);
+    // Reload personas.
+    const personaReload = await this.ctx.personaLoader.loadFromConfig(newConfig.personas);
     if (personaReload.isErr()) {
       return err(new DaemonError(`Failed to reload personas: ${personaReload.error.message}`));
     }
 
-    const uniqueSkillNames = new Set<string>();
-    for (const persona of newConfig.personas) {
-      for (const skill of persona.skills) {
-        uniqueSkillNames.add(skill);
-      }
-    }
-
-    const skillDirs: string[] = [];
-    for (const skillName of uniqueSkillNames) {
-      const candidates = [
-        join(process.cwd(), 'skills', skillName),
-        join(this.dataDir, 'skills', skillName),
-      ];
-      let foundPath: string | null = null;
-      for (const candidate of candidates) {
-        try {
-          await access(candidate, fsConstants.R_OK);
-          foundPath = candidate;
-          break;
-        } catch {
-          continue;
-        }
-      }
-      if (foundPath !== null) {
-        skillDirs.push(foundPath);
-      } else {
-        this.logger.warn(
-          { skillName },
-          'daemon: skill directory not found during reload; skipping',
-        );
-      }
-    }
-
-    if (skillDirs.length > 0) {
-      const skillsResult = await skillLoader.loadMultiple(skillDirs);
-      if (skillsResult.isErr()) {
-        return err(new DaemonError(`Failed to reload skills: ${skillsResult.error.message}`));
-      }
-      this.loadedSkills = skillsResult.value;
-    } else {
-      this.loadedSkills = [];
-    }
-
-    await this.rebuildMcpRegistrations();
-    await this.reconfigureChannels(newConfig);
-
-    // Update the cached config snapshot so the next reload has an accurate baseline.
-    this.currentConfig = newConfig;
-
-    this.logger.info('daemon: hot-reload complete');
-    return ok(undefined);
-  }
-
-  private rebuildChannelRegistrations(config: TalondConfig): void {
-    const channelRegistry = this.channelRegistry;
-    if (channelRegistry === null) {
-      return;
-    }
-
-    for (const channelConfig of config.channels.filter((channel) => channel.enabled)) {
-      const connector = createConnector(
-        channelConfig.type,
-        channelConfig.name,
-        channelConfig.config,
-        this.logger,
-      );
-      if (connector === null) {
-        this.logger.warn(
-          { channelName: channelConfig.name, channelType: channelConfig.type },
-          'daemon: failed to construct channel connector; skipping',
-        );
-        continue;
-      }
-
-      // Ensure the channel exists in the database so the message pipeline
-      // can resolve it by name.
-      if (this.channelRepo !== null) {
-        const existing = this.channelRepo.findByName(channelConfig.name);
-        let channelId: string;
-        if (existing.isOk() && existing.value !== null) {
-          channelId = existing.value.id;
-        } else {
-          channelId = uuidv4();
-          this.channelRepo.insert({
-            id: channelId,
-            type: channelConfig.type,
-            name: channelConfig.name,
-            config: JSON.stringify(channelConfig.config),
-            credentials_ref: null,
-            enabled: 1,
-          });
-        }
-
-        // Create a default binding to the first persona if none exists.
-        if (this.bindingRepo !== null && this.personaRepo !== null && config.personas.length > 0) {
-          const defaultBinding = this.bindingRepo.findDefaultForChannel(channelId);
-          if (defaultBinding.isOk() && defaultBinding.value === null) {
-            const personaResult = this.personaRepo.findByName(config.personas[0].name);
-            if (personaResult.isOk() && personaResult.value !== null) {
-              this.bindingRepo.insert({
-                id: uuidv4(),
-                channel_id: channelId,
-                thread_id: null,
-                persona_id: personaResult.value.id,
-                is_default: 1,
-              });
-              this.logger.info(
-                { channelName: channelConfig.name, persona: config.personas[0].name },
-                'daemon: created default channel->persona binding',
-              );
-            }
-          }
-        }
-      }
-
-      connector.onMessage(async (event: InboundEvent) => {
-        if (this.messagePipeline === null) {
-          return;
-        }
-        const pipelineResult = await this.messagePipeline.handleInboundEvent(event);
-        if (pipelineResult.isErr()) {
-          this.logger.error(
-            { channelName: event.channelName, err: pipelineResult.error.message },
-            'daemon: inbound message pipeline failed',
-          );
-        }
-      });
-
-      channelRegistry.register(connector);
-    }
-  }
-
-  private async startChannelsBestEffort(): Promise<void> {
-    if (this.channelRegistry === null) {
-      return;
-    }
-
-    try {
-      await this.channelRegistry.startAll();
-      this.logger.info('daemon: all channel connectors started');
-    } catch (cause) {
-      this.logger.error(
-        { cause },
-        'daemon: one or more channel connectors failed to start — continuing without them',
+    // Reload skills.
+    const skillLoader = new SkillLoader(this.logger);
+    const loadedSkillsResult = await skillLoader.loadFromPersonaConfig(
+      newConfig.personas,
+      this.ctx.dataDir,
+    );
+    if (loadedSkillsResult.isErr()) {
+      return err(
+        new DaemonError(`Failed to reload skills: ${loadedSkillsResult.error.message}`),
       );
     }
-  }
+    // Update loadedSkills in-place on the context (mutable field for reload).
+    (this.ctx as unknown as { loadedSkills: DaemonContext['loadedSkills'] }).loadedSkills =
+      loadedSkillsResult.value;
 
-  private async reconfigureChannels(config: TalondConfig): Promise<void> {
-    const channelRegistry = this.channelRegistry;
-    if (channelRegistry === null) {
-      return;
-    }
-
-    await channelRegistry.stopAll();
-    for (const connector of channelRegistry.listAll()) {
-      channelRegistry.unregister(connector.name);
-    }
-
-    this.rebuildChannelRegistrations(config);
-    await this.startChannelsBestEffort();
-  }
-
-  private async rebuildMcpRegistrations(): Promise<void> {
+    // Rebuild MCP registrations.
     if (this.mcpRegistry !== null) {
       await this.mcpRegistry.stopAll();
     }
-
     this.mcpRegistry = new McpRegistry(this.logger);
-    for (const skill of this.loadedSkills) {
+    for (const skill of this.ctx.loadedSkills) {
       for (const server of skill.resolvedMcpServers) {
         try {
           this.mcpRegistry.register(server.name, server.config);
@@ -903,24 +333,43 @@ export class TalondDaemon {
       }
     }
     await this.mcpRegistry.startAll();
+
+    // Reconfigure channels: stop all → unregister → re-register → start.
+    await this.ctx.channelRegistry.stopAll();
+    for (const connector of this.ctx.channelRegistry.listAll()) {
+      this.ctx.channelRegistry.unregister(connector.name);
+    }
+    registerChannels(newConfig, this.ctx.channelRegistry, {
+      channelRepo: this.ctx.repos.channel,
+      bindingRepo: this.ctx.repos.binding,
+      personaRepo: this.ctx.repos.persona,
+      messagePipeline: this.ctx.messagePipeline,
+      logger: this.logger,
+    });
+    try {
+      await this.ctx.channelRegistry.startAll();
+      this.logger.info('daemon: all channel connectors started');
+    } catch (cause) {
+      this.logger.error(
+        { cause },
+        'daemon: one or more channel connectors failed to start — continuing without them',
+      );
+    }
+
+    // Rebuild AgentRunner so it picks up the new loadedSkills.
+    this.agentRunner = new AgentRunner(this.ctx);
+
+    // Update config snapshot.
+    (this.ctx as { config: TalondConfig }).config = newConfig;
+
+    this.logger.info('daemon: hot-reload complete');
+    return ok(undefined);
   }
 
   // ---------------------------------------------------------------------------
   // IPC command handler
   // ---------------------------------------------------------------------------
 
-  /**
-   * Handles a {@link DaemonCommand} received over IPC and returns a
-   * {@link DaemonResponse}.
-   *
-   * Dispatches on the command type:
-   *   - `status`   → calls `health()` and maps health data into the response
-   *   - `reload`   → calls `reload()` with optional config path from payload
-   *   - `shutdown` → calls `stop()` and returns success
-   *   - unknown    → returns an error response
-   *
-   * @param command - The validated command received from the IPC input dir.
-   */
   private async handleIpcCommand(command: DaemonCommand): Promise<DaemonResponse> {
     const { randomUUID } = await import('crypto');
     const responseId = randomUUID();
@@ -928,7 +377,7 @@ export class TalondDaemon {
     switch (command.command) {
       case 'status': {
         const healthData = this.health();
-        const runRepo = this.runRepo;
+        const runRepo = this.ctx?.repos.run ?? null;
         const tokenUsage24h =
           runRepo === null
             ? undefined
@@ -952,9 +401,9 @@ export class TalondDaemon {
               healthData.queueStats.pending +
               healthData.queueStats.claimed +
               healthData.queueStats.processing,
-            personaCount: this.currentConfig?.personas.length ?? 0,
+            personaCount: this.ctx?.config.personas.length ?? 0,
             channelCount:
-              this.currentConfig?.channels.filter((channel) => channel.enabled).length ?? 0,
+              this.ctx?.config.channels.filter((channel) => channel.enabled).length ?? 0,
             deadLetterCount: healthData.queueStats.deadLetter,
             ...(tokenUsage24h !== undefined ? { tokenUsage24h } : {}),
           },
@@ -962,9 +411,9 @@ export class TalondDaemon {
       }
 
       case 'reload': {
-        const configPath =
+        const reloadConfigPath =
           typeof command.payload?.configPath === 'string' ? command.payload.configPath : undefined;
-        const reloadResult = await this.reload(configPath);
+        const reloadResult = await this.reload(reloadConfigPath);
         if (reloadResult.isErr()) {
           return {
             id: responseId,
@@ -986,7 +435,6 @@ export class TalondDaemon {
       }
 
       case 'shutdown': {
-        // Fire-and-forget the actual stop so the response can be written first.
         setImmediate(() => {
           void this.stop();
         });
@@ -1010,305 +458,39 @@ export class TalondDaemon {
     }
   }
 
-  private async handleQueueItem(item: QueueItem): Promise<Result<void, Error>> {
-    const runRepo = this.runRepo;
-    const threadRepo = this.threadRepo;
-    const channelRepo = this.channelRepo;
-    const personaRepo = this.personaRepo;
-    const personaLoader = this.personaLoader;
-    const sessionTracker = this.sessionTracker;
-    const channelRegistry = this.channelRegistry;
-    const messageRepo = this.messageRepo;
-    const threadWorkspace = this.threadWorkspace;
-    const currentConfig = this.currentConfig;
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
 
-    if (
-      runRepo === null ||
-      threadRepo === null ||
-      channelRepo === null ||
-      personaRepo === null ||
-      personaLoader === null ||
-      sessionTracker === null ||
-      channelRegistry === null ||
-      messageRepo === null ||
-      threadWorkspace === null ||
-      currentConfig === null
-    ) {
-      return err(new Error('daemon dispatch dependencies are not initialized'));
-    }
+  private logChannelDiff(oldConfig: TalondConfig, newConfig: TalondConfig): void {
+    const oldNames = new Set(oldConfig.channels.map((c) => c.name));
+    const newNames = new Set(newConfig.channels.map((c) => c.name));
 
-    const personaId = typeof item.payload.personaId === 'string' ? item.payload.personaId : null;
-    if (personaId === null) {
-      return err(new Error(`queue item ${item.id} is missing payload.personaId`));
-    }
+    const added = newConfig.channels.filter((c) => !oldNames.has(c.name)).map((c) => c.name);
+    const removed = oldConfig.channels.filter((c) => !newNames.has(c.name)).map((c) => c.name);
 
-    const personaRowResult = personaRepo.findById(personaId);
-    if (personaRowResult.isErr() || personaRowResult.value === null) {
-      return err(new Error(`persona not found for id ${personaId}`));
-    }
+    if (added.length > 0) this.logger.info({ added }, 'daemon: reload — new channels detected');
+    if (removed.length > 0) this.logger.info({ removed }, 'daemon: reload — channels removed');
+  }
 
-    const personaName = personaRowResult.value.name;
-    const loadedPersonaResult = personaLoader.getByName(personaName);
-    if (loadedPersonaResult.isErr() || loadedPersonaResult.value === undefined) {
-      return err(new Error(`loaded persona not found for ${personaName}`));
-    }
-    const loadedPersona = loadedPersonaResult.value;
+  private logPersonaDiff(oldConfig: TalondConfig, newConfig: TalondConfig): void {
+    const oldNames = new Set(oldConfig.personas.map((p) => p.name));
+    const newNames = new Set(newConfig.personas.map((p) => p.name));
 
-    const runId = uuidv4();
-    const now = Date.now();
-    const runInsert = runRepo.insert({
-      id: runId,
-      thread_id: item.threadId,
-      persona_id: personaId,
-      sandbox_id: null,
-      session_id: sessionTracker.getSessionId(item.threadId) ?? null,
-      status: 'running',
-      parent_run_id: null,
-      queue_item_id: item.id,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      cost_usd: 0,
-      error: null,
-      started_at: now,
-      ended_at: null,
-    });
+    const added = newConfig.personas.filter((p) => !oldNames.has(p.name)).map((p) => p.name);
+    const removed = oldConfig.personas.filter((p) => !newNames.has(p.name)).map((p) => p.name);
+    const changed = newConfig.personas
+      .filter((p) => {
+        if (!oldNames.has(p.name)) return false;
+        const old = oldConfig.personas.find((op) => op.name === p.name);
+        return JSON.stringify(old) !== JSON.stringify(p);
+      })
+      .map((p) => p.name);
 
-    if (runInsert.isErr()) {
-      return err(new Error(`failed to create run record: ${runInsert.error.message}`));
-    }
-
-    const workspaceResult = threadWorkspace.ensureDirectories(item.threadId);
-    if (workspaceResult.isErr()) {
-      runRepo.updateStatus(runId, 'failed', {
-        ended_at: Date.now(),
-        error: workspaceResult.error.message,
-      });
-      return err(new Error(workspaceResult.error.message));
-    }
-
-    let typingInterval: ReturnType<typeof setInterval> | undefined;
-    try {
-      const content = typeof item.payload.content === 'string' ? item.payload.content : '';
-      const skillPrompt =
-        this.skillResolver === null
-          ? ''
-          : this.skillResolver.mergePromptFragments(
-              this.loadedSkills.filter((skill) =>
-                loadedPersona.config.skills.includes(skill.manifest.name),
-              ),
-            );
-
-      const model = loadedPersona.config.model;
-
-      const systemPrompt = [loadedPersona.systemPromptContent ?? '', skillPrompt]
-        .filter(Boolean)
-        .join('\n\n');
-
-      // ----------------------------------------------------------------
-      // Agent SDK mode: run Claude Code as a full autonomous agent with
-      // tools, hooks, MCP servers, session resumption, and permissions.
-      // ----------------------------------------------------------------
-
-      // Try in-memory tracker first, fall back to DB for daemon restart recovery.
-      let existingSessionId = sessionTracker.getSessionId(item.threadId);
-      if (!existingSessionId) {
-        const dbSessionResult = runRepo.getLatestSessionId(item.threadId);
-        if (dbSessionResult.isOk() && dbSessionResult.value) {
-          existingSessionId = dbSessionResult.value;
-          sessionTracker.setSessionId(item.threadId, existingSessionId);
-        }
-      }
-
-      this.logger.info(
-        {
-          runId,
-          personaId,
-          model,
-          threadId: item.threadId,
-          resumeSession: existingSessionId ?? null,
-        },
-        'agent-sdk: starting query',
-      );
-
-      const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-      // Collect MCP servers from skills assigned to this persona.
-      const personaSkills = this.loadedSkills.filter((skill) =>
-        loadedPersona.config.skills.includes(skill.manifest.name),
-      );
-      const mcpServers: Record<string, unknown> = {};
-      for (const skill of personaSkills) {
-        for (const mcpDef of skill.resolvedMcpServers) {
-          const cfg = mcpDef.config;
-          // Substitute env var placeholders in MCP env values.
-          const resolvedEnv: Record<string, string> = {};
-          if (cfg.env) {
-            for (const [key, val] of Object.entries(cfg.env)) {
-              const envVarMatch = /^\$\{(\w+)\}$/.exec(val);
-              resolvedEnv[key] = envVarMatch ? (process.env[envVarMatch[1] ?? ''] ?? '') : val;
-            }
-          }
-          mcpServers[mcpDef.name] = {
-            type: cfg.transport,
-            command: cfg.command,
-            args: cfg.args ?? [],
-            ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
-            ...(cfg.url ? { url: cfg.url } : {}),
-          };
-        }
-      }
-
-      // Build Agent SDK options from persona config.
-      const agentOptions: Record<string, unknown> = {
-        model,
-        systemPrompt,
-        permissionMode: 'bypassPermissions' as const,
-        allowDangerouslySkipPermissions: true,
-        cwd: workspaceResult.value,
-        maxTurns: 25,
-        allowedTools: loadedPersona.config.capabilities.allow,
-        disallowedTools: [],
-      };
-
-      // Attach MCP servers from skills.
-      if (Object.keys(mcpServers).length > 0) {
-        agentOptions.mcpServers = mcpServers;
-        this.logger.info(
-          { runId, mcpServers: Object.keys(mcpServers) },
-          'agent-sdk: attaching MCP servers from skills',
-        );
-      }
-
-      // Resume existing session for conversation continuity.
-      if (existingSessionId) {
-        agentOptions.resume = existingSessionId;
-      }
-
-      // Resolve channel connector early so we can send typing indicators.
-      const threadResult = threadRepo.findById(item.threadId);
-      const channelRow = threadResult.isOk() && threadResult.value
-        ? channelRepo.findById(threadResult.value.channel_id)
-        : null;
-      const connector = channelRow && channelRow.isOk() && channelRow.value
-        ? channelRegistry.get(channelRow.value.name)
-        : undefined;
-      const externalId = threadResult.isOk() && threadResult.value
-        ? threadResult.value.external_id
-        : undefined;
-
-      // Send typing indicator and keep it alive every 4s while the agent works.
-      if (connector?.sendTyping && externalId) {
-        connector.sendTyping(externalId);
-        typingInterval = setInterval(() => {
-          connector.sendTyping!(externalId);
-        }, 4000);
-      }
-
-      const agentQuery = query({
-        prompt: content,
-        options: agentOptions as Parameters<typeof query>[0]['options'],
-      });
-
-      let outputText = '';
-      let resultSessionId: string | undefined;
-      let totalCostUsd = 0;
-      let inputTokens = 0;
-      let outputTokens = 0;
-
-      for await (const message of agentQuery) {
-        if (message.type === 'assistant' && message.message?.content) {
-          for (const block of message.message.content) {
-            if ('text' in block && typeof (block as { text: string }).text === 'string') {
-              outputText += (block as { text: string }).text;
-            }
-          }
-        } else if (message.type === 'result') {
-          const result = message as {
-            subtype: string;
-            result?: string;
-            session_id?: string;
-            total_cost_usd?: number;
-            usage?: { input_tokens?: number; output_tokens?: number };
-            is_error?: boolean;
-          };
-          resultSessionId = result.session_id;
-          totalCostUsd = result.total_cost_usd ?? 0;
-          inputTokens = result.usage?.input_tokens ?? 0;
-          outputTokens = result.usage?.output_tokens ?? 0;
-
-          // Use the result text if we didn't capture streaming content.
-          if (!outputText && result.result) {
-            outputText = result.result;
-          }
-
-          if (result.is_error) {
-            this.logger.warn({ runId, result: result.result }, 'agent-sdk: run ended with error');
-          }
-        }
-      }
-
-      // Store session ID for future conversation resumption (memory + DB).
-      if (resultSessionId) {
-        sessionTracker.setSessionId(item.threadId, resultSessionId);
-        runRepo.updateSessionId(runId, resultSessionId);
-      }
-
-      // Stop typing indicator.
-      if (typingInterval) clearInterval(typingInterval);
-
-      this.logger.info(
-        { runId, inputTokens, outputTokens, totalCostUsd, sessionId: resultSessionId },
-        'agent-sdk: query completed',
-      );
-
-      if (connector !== undefined && externalId) {
-        const sendResult = await connector.send(externalId, {
-          body: outputText,
-        });
-        if (sendResult.isErr()) {
-          throw new Error(`channel send failed: ${sendResult.error.message}`);
-        }
-      }
-
-      messageRepo.insert({
-        id: uuidv4(),
-        thread_id: item.threadId,
-        direction: 'outbound',
-        content: JSON.stringify({ body: outputText }),
-        idempotency_key: `outbound:${runId}`,
-        provider_id: null,
-        run_id: runId,
-      });
-
-      runRepo.updateStatus(runId, 'completed', {
-        ended_at: Date.now(),
-      });
-      return ok(undefined);
-    } catch (cause) {
-      if (typingInterval) clearInterval(typingInterval);
-      const message = cause instanceof Error ? cause.message : String(cause);
-      runRepo.updateStatus(runId, 'failed', { ended_at: Date.now(), error: message });
-      return err(new Error(message));
-    }
+    if (added.length > 0) this.logger.info({ added: added }, 'daemon: reload — personas added');
+    if (removed.length > 0)
+      this.logger.info({ removed: removed }, 'daemon: reload — personas removed');
+    if (changed.length > 0)
+      this.logger.info({ changed: changed }, 'daemon: reload — personas changed');
   }
 }
-
-class RepositoryAuditStore implements AuditStore {
-  constructor(private readonly auditRepo: AuditRepository) {}
-
-  append(entry: AuditEntry): void {
-    this.auditRepo.insert({
-      id: uuidv4(),
-      run_id: entry.runId ?? null,
-      thread_id: entry.threadId ?? null,
-      persona_id: entry.personaId ?? null,
-      action: entry.action,
-      tool: entry.tool ?? null,
-      request_id: entry.requestId ?? null,
-      details: JSON.stringify(entry.details),
-    });
-  }
-}
-

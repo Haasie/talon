@@ -1,7 +1,8 @@
 /**
  * Unit tests for TalondDaemon hot-reload behaviour.
  *
- * All subsystems are mocked so tests run without touching the disk.
+ * Bootstrap is mocked to produce a DaemonContext. The reload path
+ * calls loadConfig directly (not bootstrap), so we mock that too.
  * Focus is on config-diff detection and correct log output.
  */
 
@@ -13,16 +14,12 @@ import pino from 'pino';
 // Module-level mocks
 // ---------------------------------------------------------------------------
 
+vi.mock('../../../src/daemon/daemon-bootstrap.js', () => ({
+  bootstrap: vi.fn(),
+}));
+
 vi.mock('../../../src/core/config/config-loader.js', () => ({
   loadConfig: vi.fn(),
-}));
-
-vi.mock('../../../src/core/database/connection.js', () => ({
-  createDatabase: vi.fn(),
-}));
-
-vi.mock('../../../src/core/database/migrations/runner.js', () => ({
-  runMigrations: vi.fn(),
 }));
 
 vi.mock('../../../src/daemon/lifecycle.js', () => ({
@@ -31,13 +28,13 @@ vi.mock('../../../src/daemon/lifecycle.js', () => ({
   removePidFile: vi.fn(),
 }));
 
-// Mock watchdog to avoid touching the filesystem during these tests
-vi.mock('../../../src/daemon/watchdog.js', () => ({
-  WatchdogNotifier: vi.fn().mockImplementation(() => ({
-    start: vi.fn(),
-    stop: vi.fn(),
-    notifyReady: vi.fn(),
-    notifyStopping: vi.fn(),
+vi.mock('../../../src/channels/channel-setup.js', () => ({
+  registerChannels: vi.fn(),
+}));
+
+vi.mock('../../../src/skills/skill-loader.js', () => ({
+  SkillLoader: vi.fn().mockImplementation(() => ({
+    loadFromPersonaConfig: vi.fn().mockResolvedValue(ok([])),
   })),
 }));
 
@@ -46,10 +43,10 @@ vi.mock('../../../src/daemon/watchdog.js', () => ({
 // ---------------------------------------------------------------------------
 
 import { TalondDaemon } from '../../../src/daemon/daemon.js';
+import { bootstrap } from '../../../src/daemon/daemon-bootstrap.js';
 import { loadConfig } from '../../../src/core/config/config-loader.js';
-import { createDatabase } from '../../../src/core/database/connection.js';
-import { runMigrations } from '../../../src/core/database/migrations/runner.js';
 import { ConfigError } from '../../../src/core/errors/index.js';
+import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -85,27 +82,57 @@ function makeConfig(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
-function makeMockDb() {
-  const mockStatement = {
-    run: vi.fn().mockReturnValue({ changes: 0, lastInsertRowid: 0 }),
-    get: vi.fn().mockReturnValue(undefined),
-    all: vi.fn().mockReturnValue([]),
-  };
+function makeMockContext(configOverrides: Record<string, unknown> = {}): DaemonContext {
+  const config = makeConfig(configOverrides);
   return {
-    prepare: vi.fn().mockReturnValue(mockStatement),
-    pragma: vi.fn().mockReturnValue(0),
-    exec: vi.fn(),
-    close: vi.fn(),
+    db: { close: vi.fn() } as any,
+    config: config as any,
+    configPath: '/config.yaml',
+    dataDir: '/tmp/test-data',
+    repos: {
+      queue: {} as any,
+      thread: {} as any,
+      channel: {} as any,
+      persona: {} as any,
+      schedule: {} as any,
+      audit: {} as any,
+      message: {} as any,
+      run: { aggregateByPeriod: vi.fn().mockReturnValue(ok({ total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 })) } as any,
+      binding: {} as any,
+      memory: {} as any,
+    },
+    channelRegistry: {
+      startAll: vi.fn().mockResolvedValue(undefined),
+      stopAll: vi.fn().mockResolvedValue(undefined),
+      listAll: vi.fn().mockReturnValue([]),
+      register: vi.fn(),
+      unregister: vi.fn(),
+      get: vi.fn(),
+    } as any,
+    queueManager: {
+      startProcessing: vi.fn(),
+      stopProcessing: vi.fn(),
+      stats: vi.fn().mockReturnValue({ pending: 0, claimed: 0, processing: 0, deadLetter: 0 }),
+    } as any,
+    scheduler: { start: vi.fn(), stop: vi.fn() } as any,
+    personaLoader: {
+      loadFromConfig: vi.fn().mockResolvedValue(ok(undefined)),
+    } as any,
+    sessionTracker: { clearAll: vi.fn(), getSessionId: vi.fn(), setSessionId: vi.fn() } as any,
+    threadWorkspace: {} as any,
+    auditLogger: {} as any,
+    skillResolver: {} as any,
+    loadedSkills: [],
+    messagePipeline: {} as any,
+    hostToolsBridge: { path: '/tmp/host-tools.sock', stop: vi.fn() } as any,
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() } as any,
   };
 }
 
-function setupSuccessfulStartMocks(configOverrides: Record<string, unknown> = {}) {
-  const config = makeConfig(configOverrides);
-  const db = makeMockDb();
-  vi.mocked(loadConfig).mockReturnValue(ok(config as Parameters<typeof loadConfig>[0]));
-  vi.mocked(createDatabase).mockReturnValue(ok(db as unknown as import('better-sqlite3').Database));
-  vi.mocked(runMigrations).mockReturnValue(ok(1));
-  return { config, db };
+function setupSuccessfulStart(configOverrides: Record<string, unknown> = {}) {
+  const ctx = makeMockContext(configOverrides);
+  vi.mocked(bootstrap).mockResolvedValue(ok(ctx));
+  return ctx;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +178,11 @@ describe('TalondDaemon.reload()', () => {
 
   describe('config path resolution', () => {
     it('uses the provided configPath when given', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulStart();
       await daemon.start('/original.yaml');
 
       const newConfig = makeConfig();
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await daemon.reload('/updated.yaml');
 
@@ -163,24 +190,24 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('falls back to the startup configPath when no argument given', async () => {
-      setupSuccessfulStartMocks();
+      const ctx = setupSuccessfulStart();
       await daemon.start('/startup.yaml');
 
       const newConfig = makeConfig();
-      // loadConfig is called once for start(), reset count before reload
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
-      await daemon.reload(); // no argument
+      await daemon.reload();
 
-      expect(loadConfig).toHaveBeenCalledWith('/startup.yaml');
+      // configPath comes from the DaemonContext, which was set to '/config.yaml'
+      expect(loadConfig).toHaveBeenCalledWith('/config.yaml');
     });
 
     it('returns Ok when configPath is omitted and startup path is known', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulStart();
       await daemon.start('/config.yaml');
 
       const newConfig = makeConfig();
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       const result = await daemon.reload();
 
@@ -194,7 +221,7 @@ describe('TalondDaemon.reload()', () => {
 
   describe('config load failure', () => {
     it('returns Err(DaemonError) when config re-read fails', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulStart();
       await daemon.start('/config.yaml');
 
       vi.mocked(loadConfig).mockReturnValue(err(new ConfigError('file not found')));
@@ -206,7 +233,7 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('error wraps the underlying ConfigError message', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulStart();
       await daemon.start('/config.yaml');
 
       vi.mocked(loadConfig).mockReturnValue(err(new ConfigError('YAML syntax error')));
@@ -217,7 +244,7 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('does not change daemon state on config load failure', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulStart();
       await daemon.start('/config.yaml');
 
       vi.mocked(loadConfig).mockReturnValue(err(new ConfigError('fail')));
@@ -233,13 +260,13 @@ describe('TalondDaemon.reload()', () => {
 
   describe('log level changes', () => {
     it('updates logger level when logLevel changes', async () => {
-      setupSuccessfulStartMocks({ logLevel: 'info' });
+      setupSuccessfulStart({ logLevel: 'info' });
       const logger = pino({ level: 'silent' });
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
 
       const newConfig = makeConfig({ logLevel: 'debug' });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -249,25 +276,18 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('does not change logger level when logLevel is unchanged', async () => {
-      setupSuccessfulStartMocks({ logLevel: 'info' });
+      setupSuccessfulStart({ logLevel: 'info' });
       const logger = pino({ level: 'silent' });
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
 
-      // logger.level is 'silent' (the pino creation level) — daemon does not
-      // apply the config log level during start, only on reload.
-      // Record current level before reload.
       const levelBeforeReload = logger.level;
 
       const newConfig = makeConfig({ logLevel: 'info' });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
-      // The new config logLevel ('info') differs from the logger's actual level
-      // ('silent'), but the daemon compares newConfig.logLevel against
-      // currentConfig.logLevel (both are 'info' here), so it does NOT update
-      // the logger. Level should remain unchanged.
       expect(logger.level).toBe(levelBeforeReload);
 
       await localDaemon.stop();
@@ -280,7 +300,7 @@ describe('TalondDaemon.reload()', () => {
 
   describe('channel diff logging', () => {
     it('logs added channels', async () => {
-      setupSuccessfulStartMocks({ channels: [] });
+      setupSuccessfulStart({ channels: [] });
       const logger = pino({ level: 'silent' });
       const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
@@ -289,11 +309,10 @@ describe('TalondDaemon.reload()', () => {
       const newConfig = makeConfig({
         channels: [{ type: 'telegram', name: 'my-telegram', config: {}, enabled: true }],
       });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
-      // Check that a log message about added channels was emitted
       const calls = logSpy.mock.calls;
       const addedLog = calls.find(
         (args) =>
@@ -310,7 +329,7 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('logs removed channels', async () => {
-      setupSuccessfulStartMocks({
+      setupSuccessfulStart({
         channels: [{ type: 'telegram', name: 'old-channel', config: {}, enabled: true }],
       });
       const logger = pino({ level: 'silent' });
@@ -319,7 +338,7 @@ describe('TalondDaemon.reload()', () => {
       await localDaemon.start('/config.yaml');
 
       const newConfig = makeConfig({ channels: [] });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -340,14 +359,14 @@ describe('TalondDaemon.reload()', () => {
 
     it('does not log channel changes when channels are identical', async () => {
       const channels = [{ type: 'telegram', name: 'stable', config: {}, enabled: true }];
-      setupSuccessfulStartMocks({ channels });
+      setupSuccessfulStart({ channels });
       const logger = pino({ level: 'silent' });
       const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
 
       const newConfig = makeConfig({ channels });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -372,7 +391,7 @@ describe('TalondDaemon.reload()', () => {
 
   describe('persona diff logging', () => {
     it('logs added personas', async () => {
-      setupSuccessfulStartMocks({ personas: [] });
+      setupSuccessfulStart({ personas: [] });
       const logger = pino({ level: 'silent' });
       const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
@@ -381,7 +400,7 @@ describe('TalondDaemon.reload()', () => {
       const newConfig = makeConfig({
         personas: [{ name: 'new-bot', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] }],
       });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -401,7 +420,7 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('logs removed personas', async () => {
-      setupSuccessfulStartMocks({
+      setupSuccessfulStart({
         personas: [{ name: 'old-bot', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] }],
       });
       const logger = pino({ level: 'silent' });
@@ -410,7 +429,7 @@ describe('TalondDaemon.reload()', () => {
       await localDaemon.start('/config.yaml');
 
       const newConfig = makeConfig({ personas: [] });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -431,7 +450,7 @@ describe('TalondDaemon.reload()', () => {
 
     it('logs changed personas', async () => {
       const persona = { name: 'agent', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] };
-      setupSuccessfulStartMocks({ personas: [persona] });
+      setupSuccessfulStart({ personas: [persona] });
       const logger = pino({ level: 'silent' });
       const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
@@ -440,7 +459,7 @@ describe('TalondDaemon.reload()', () => {
       const newConfig = makeConfig({
         personas: [{ ...persona, model: 'claude-opus-4-6' }],
       });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -466,14 +485,14 @@ describe('TalondDaemon.reload()', () => {
 
   describe('queue / scheduler config changes', () => {
     it('logs a warning when queue config changes', async () => {
-      setupSuccessfulStartMocks({ queue: { maxAttempts: 3, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 } });
+      setupSuccessfulStart({ queue: { maxAttempts: 3, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 } });
       const logger = pino({ level: 'silent' });
       const warnSpy = vi.spyOn(logger, 'warn');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
 
       const newConfig = makeConfig({ queue: { maxAttempts: 5, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 } });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -488,14 +507,14 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('logs a warning when scheduler config changes', async () => {
-      setupSuccessfulStartMocks({ scheduler: { tickIntervalMs: 5000 } });
+      setupSuccessfulStart({ scheduler: { tickIntervalMs: 5000 } });
       const logger = pino({ level: 'silent' });
       const warnSpy = vi.spyOn(logger, 'warn');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
 
       const newConfig = makeConfig({ scheduler: { tickIntervalMs: 10000 } });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -516,7 +535,7 @@ describe('TalondDaemon.reload()', () => {
 
   describe('container image changes', () => {
     it('logs a warning when the sandbox image changes', async () => {
-      setupSuccessfulStartMocks({
+      setupSuccessfulStart({
         sandbox: {
           runtime: 'docker',
           image: 'talon-sandbox:v1',
@@ -543,7 +562,7 @@ describe('TalondDaemon.reload()', () => {
           resourceLimits: { memoryMb: 1024, cpus: 1, pidsLimit: 256 },
         },
       });
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await localDaemon.reload('/config.yaml');
 
@@ -571,11 +590,11 @@ describe('TalondDaemon.reload()', () => {
 
   describe('state invariants', () => {
     it('daemon remains in running state after successful reload', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulStart();
       await daemon.start('/config.yaml');
 
       const newConfig = makeConfig();
-      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+      vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
       await daemon.reload('/config.yaml');
 
@@ -583,12 +602,12 @@ describe('TalondDaemon.reload()', () => {
     });
 
     it('successive reloads are all successful', async () => {
-      setupSuccessfulStartMocks();
+      setupSuccessfulStart();
       await daemon.start('/config.yaml');
 
       for (let i = 0; i < 3; i++) {
         const newConfig = makeConfig({ logLevel: i % 2 === 0 ? 'info' : 'debug' });
-        vi.mocked(loadConfig).mockReturnValue(ok(newConfig as Parameters<typeof loadConfig>[0]));
+        vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
 
         const result = await daemon.reload('/config.yaml');
         expect(result.isOk()).toBe(true);

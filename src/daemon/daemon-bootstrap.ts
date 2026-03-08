@@ -202,6 +202,7 @@ export async function bootstrap(
     auditLogger,
     skillResolver,
     loadedSkills: loadedSkills.value,
+    messagePipeline,
     // Placeholder — replaced immediately below.
     hostToolsBridge: null as unknown as HostToolsBridge,
     logger,

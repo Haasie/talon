@@ -116,6 +116,7 @@ describe('HostToolsBridge', () => {
       auditLogger: {} as any,
       skillResolver: {} as any,
       loadedSkills: [],
+      messagePipeline: {} as any,
       hostToolsBridge: {} as any,
       logger: mockLogger as any,
     };
