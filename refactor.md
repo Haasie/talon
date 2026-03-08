@@ -1,0 +1,197 @@
+# Talon Daemon Refactor
+
+> Branch: `refactor`
+> Started: 2026-03-08
+
+## Way of Working
+
+- **Ivo makes all decisions.** Claude and GPT-5.4 do the coding.
+- **Commit often and atomically** — one logical change per commit.
+- **This file is the living document** — update it after every significant change so context survives compression.
+- **Ivo is building a mental model** — explain the "why" not just the "what". Don't skip steps.
+- **GPT-5.4 via OpenCode** handles batch/mechanical refactors across many files. Claude handles analysis, design, and targeted changes.
+
+---
+
+## Findings Summary
+
+### Combined Audit (Claude Opus + GPT-5.4)
+
+**~40% of src/ is dead code** — remnants of a Docker sandbox architecture that was deferred (TASK-037) when the project pivoted to Agent SDK direct execution.
+
+### Dead Code Inventory
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| `src/sandbox/sandbox-manager.ts` | Dead | `getOrSpawn()` never invoked, containers never created |
+| `src/sandbox/sdk-process-spawner.ts` | Dead | `spawn()` never called |
+| `src/sandbox/container-factory.ts` | Dead | Docker container creation never triggered |
+| `src/sandbox/container-health.ts` | Dead | Health monitor instantiated but unused |
+| `src/sandbox/sandbox-types.ts` | Dead | Container state machine never exercised |
+| `src/sandbox/session-tracker.ts` | **Keep** | Used by daemon for Agent SDK session resumption |
+| `src/ipc/ipc-channel.ts` | Dead | Bidirectional IPC for container communication |
+| `src/ipc/ipc-reader.ts` | Dead | File-based IPC reader |
+| `src/ipc/ipc-writer.ts` | Dead | File-based IPC writer |
+| `src/ipc/daemon-ipc-server.ts` | **Evaluate** | Used for `talonctl` commands (status/reload/shutdown) — may still be needed |
+| `src/tools/tool-registry.ts` | Dead | Exported but never instantiated |
+| `src/tools/host-tools/schedule-manage.ts` | Dead | Never wired to Agent SDK (BUG-004) |
+| `src/tools/host-tools/channel-send.ts` | Dead | Never wired |
+| `src/tools/host-tools/memory-access.ts` | Dead | Never wired |
+| `src/tools/host-tools/http-proxy.ts` | Dead | Never wired |
+| `src/tools/host-tools/db-query.ts` | Dead | Never wired (but has good SQL injection protection) |
+| `src/collaboration/supervisor.ts` | Dead | Never imported anywhere |
+| `src/collaboration/worker-manager.ts` | Dead | Never imported anywhere |
+| `src/mcp/mcp-proxy.ts` | Dead | `handleToolCall()` never called — MCP servers bypass proxy, go directly to Agent SDK |
+| `src/mcp/mcp-registry.ts` | Dead | Started in daemon but the registered servers are never queried |
+
+### Bugs Found During Audit
+
+| ID | Description |
+|----|-------------|
+| BUG-004 | `schedule.manage` host tool is dead code — agent can't create schedules. Needs MCP exposure. |
+| BUG-005 | `schedule.manage` create action sets `next_run_at: null` — schedules never fire. |
+| — | `SessionTracker` never evicts old entries — memory leak for long-running daemon. |
+| — | Lines 244-247: `MemoryRepository`, `ArtifactRepository`, `ToolResultRepository` instantiated but never stored or used. |
+
+### The Core Problem: `daemon.ts` (1373 lines)
+
+`TalondDaemon` is a god object doing everything:
+
+1. **Bootstrap** (lines 177-446): Config loading, DB setup, migrations, 12 repository instantiations, persona/skill loading, MCP registration, sandbox/container factory init, crash recovery, channel wiring, queue/scheduler init, PID file, IPC server, watchdog.
+
+2. **Lifecycle** (lines 466-562): Graceful shutdown in reverse order, 20+ null field resets.
+
+3. **Health** (lines 574-593): Point-in-time snapshot.
+
+4. **Hot reload** (lines 620-808): Re-read config, diff channels/personas, reload skills — with **duplicated** skill directory resolution logic (identical to bootstrap).
+
+5. **IPC command dispatch** (lines 958-1045): status/reload/shutdown handlers.
+
+6. **Channel wiring** (lines 810-940): Connector creation, DB seeding, binding setup, message handler registration, MCP re-registration — with **duplicated** MCP registration logic.
+
+7. **Queue item handling** (lines 1047-1333): The 287-line `handleQueueItem` — persona lookup, run creation, workspace setup, prompt assembly, session recovery, MCP env var substitution, Agent SDK options, typing indicators, streaming response parsing, session persistence, channel delivery, message recording, run status.
+
+8. **Connector factory** (lines 1353-1373): Hardcoded switch statement for channel types.
+
+**20+ nullable fields** (lines 101-138) require defensive null checks everywhere. The 12-field null guard at line 1061-1074 is the worst symptom.
+
+---
+
+## Proposed Architecture
+
+Split `daemon.ts` into 5 focused modules:
+
+```
+src/daemon/
+├── daemon.ts                  (~150 lines) Thin lifecycle orchestrator
+├── daemon-bootstrap.ts        (~200 lines) Startup sequence → produces DaemonContext
+├── daemon-context.ts          (~50 lines)  Immutable shared state container
+├── agent-runner.ts            (~200 lines) Agent SDK execution per queue item
+├── channel-factory.ts         (~50 lines)  Self-registering connector factory
+└── skill-resolver-service.ts  (~100 lines) Skill + MCP resolution (deduplicates)
+```
+
+### 1. `DaemonContext` — Kill the nullables
+
+```typescript
+/** Populated once during bootstrap, immutable after. Passed by reference to all subsystems. */
+interface DaemonContext {
+  readonly db: Database.Database;
+  readonly config: TalondConfig;
+  readonly repos: {
+    readonly queue: QueueRepository;
+    readonly thread: ThreadRepository;
+    readonly channel: ChannelRepository;
+    readonly persona: PersonaRepository;
+    readonly schedule: ScheduleRepository;
+    readonly message: MessageRepository;
+    readonly run: RunRepository;
+    readonly binding: BindingRepository;
+    readonly audit: AuditRepository;
+  };
+  readonly channelRegistry: ChannelRegistry;
+  readonly queueManager: QueueManager;
+  readonly scheduler: Scheduler;
+  readonly personaLoader: PersonaLoader;
+  readonly sessionTracker: SessionTracker;
+  readonly threadWorkspace: ThreadWorkspace;
+  readonly auditLogger: AuditLogger;
+  readonly skillService: SkillResolverService;
+  readonly logger: pino.Logger;
+}
+```
+
+No more null checks. `start()` builds a `DaemonContext` or fails entirely.
+
+### 2. `DaemonBootstrap` — Extract the 250-line `start()` sequence
+
+```typescript
+class DaemonBootstrap {
+  static async bootstrap(configPath: string, logger: pino.Logger): Promise<Result<DaemonContext, DaemonError>>
+}
+```
+
+### 3. `AgentRunner` — Extract the 287-line `handleQueueItem`
+
+```typescript
+class AgentRunner {
+  constructor(private readonly ctx: DaemonContext) {}
+  async run(item: QueueItem): Promise<Result<void, Error>>
+}
+```
+
+### 4. `ChannelFactory` — Replace the hardcoded switch
+
+```typescript
+// Each connector registers itself
+registerChannelType('telegram', (config, name, logger) => new TelegramConnector(...));
+```
+
+### 5. `SkillResolverService` — Deduplicate skill/MCP logic
+
+Used by both bootstrap and reload. Handles skill directory discovery, loading, MCP env var substitution, prompt fragment merging.
+
+### What to remove (dead code)
+
+| Module | Action |
+|--------|--------|
+| `src/sandbox/*` (except `session-tracker.ts`) | Remove — dead Docker path |
+| `src/ipc/ipc-channel.ts`, `ipc-reader.ts`, `ipc-writer.ts` | Remove — container IPC |
+| `src/ipc/daemon-ipc-server.ts` | Keep for now — `talonctl` uses it |
+| `src/tools/tool-registry.ts` | Remove |
+| `src/tools/host-tools/*` | Don't remove — wire as MCP servers instead |
+| `src/collaboration/*` | Remove |
+| `src/mcp/mcp-proxy.ts` | Remove |
+| `src/mcp/mcp-registry.ts` | Evaluate — may be useful if host-tools become MCP |
+
+### Key insight: host-tools should become MCP servers
+
+The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.proxy`, `db.query`) were designed for the IPC architecture. They're fully implemented but never wired. Instead of deleting them, they should be exposed as MCP servers that the Agent SDK can call. This:
+- Fixes BUG-004 (schedule.manage unreachable)
+- Works identically in both host and future Docker modes
+- Leverages existing implementation
+
+---
+
+## Execution Plan
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 1 | Create `DaemonContext` interface | Not started |
+| 2 | Extract `DaemonBootstrap` | Not started |
+| 3 | Extract `AgentRunner` | Not started |
+| 4 | Extract `SkillResolverService` (dedup) | Not started |
+| 5 | Extract `ChannelFactory` | Not started |
+| 6 | Remove confirmed dead code | Not started |
+| 7 | Wire host-tools as MCP servers | Not started |
+| 8 | Fix BUG-005 (next_run_at null) | Not started |
+| 9 | Add SessionTracker eviction | Not started |
+| 10 | Slim down daemon.ts to thin orchestrator | Not started |
+
+Each step = one atomic commit. Steps 1-5 are pure refactors (no behavior change). Steps 6-9 are fixes/cleanup. Step 10 is the final assembly.
+
+---
+
+## Progress Log
+
+_Updated after each commit._

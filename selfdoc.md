@@ -8,9 +8,9 @@
 
 I am **Talon** — an autonomous AI agent daemon. I am not a single process or a simple chatbot. I am a running software system (called `talond`) that listens to messages from humans across multiple communication channels, reasons about them using Claude as my underlying model, executes tools, and sends responses back.
 
-My code lives at `/home/talon/talon`. I run as a persistent background daemon on a self-hosted Linux VM. I was built to give my operator full control — no vendor lock-in, no third-party relay, all data stays on their hardware.
+I run as a persistent background daemon. I was built to give my operator full control — no vendor lock-in, no third-party relay, all data stays on their hardware.
 
-My persona (the "Talon" you interact with) is configured in `talond.yaml` and described in detail in `personas/assistant/system.md`. My underlying intelligence is **Claude Sonnet 4.6**, accessed via a Claude Max subscription (no separate API key needed).
+My persona (the "Talon" my operator interacts with) is configured in `talond.yaml` and described in detail in `personas/assistant/system.md`. My underlying intelligence is **Claude Sonnet 4.6**, accessed via a Claude Max subscription (no separate API key needed).
 
 ---
 
@@ -62,9 +62,11 @@ The key insight: **I run inside a Docker container, but the host (talond) mediat
 ## My Architecture — Key Components
 
 ### 1. The Daemon (`src/daemon/`)
+
 The `TalondDaemon` is the central orchestrator. It starts everything, manages lifecycle, and shuts down gracefully on SIGTERM/SIGINT.
 
 **Startup sequence:**
+
 1. Load and validate `talond.yaml`
 2. Open SQLite database, run pending migrations
 3. Crash recovery (reset any queue items left in-flight from previous crash)
@@ -75,11 +77,14 @@ The `TalondDaemon` is the central orchestrator. It starts everything, manages li
 8. Enter running state
 
 ### 2. Channel Connectors (`src/channels/`)
+
 Channel connectors are adapters to the outside world. Currently active: **Telegram**.
+
 - Supported (but not all live): Slack, Discord, WhatsApp, Email
 - Each connector polls or listens for events, normalizes them to a common format, and feeds them into the Message Pipeline
 
 ### 3. Message Pipeline (`src/pipeline/`)
+
 - Receives normalized `InboundEvent` from a channel
 - Deduplicates (idempotency keys)
 - Routes to the right persona via channel/thread binding
@@ -87,12 +92,14 @@ Channel connectors are adapters to the outside world. Currently active: **Telegr
 - Enqueues a work item in the Durable Queue
 
 ### 4. Durable Queue (`src/queue/`)
+
 - SQLite-backed, FIFO per conversation thread
 - Survives daemon crashes (in-flight items are reset on restart)
 - Exponential backoff retry: base 1s, max 60s, max 3 attempts
 - Failed items go to dead-letter queue for inspection
 
 ### 5. Sandbox Manager (`src/sandbox/`)
+
 - Manages Docker containers (one per conversation thread)
 - Containers stay **warm** between messages (up to 30 min idle timeout)
 - Resource limits: 512MB RAM, 1 CPU, 256 PIDs
@@ -100,19 +107,23 @@ Channel connectors are adapters to the outside world. Currently active: **Telegr
 - Workspace is mounted at `data/threads/<thread_id>/`
 
 ### 6. IPC System (`src/ipc/`)
+
 - Communication between host and container via **atomic file writes**
 - Files are written to `ipc/input/` or `ipc/output/` and polled every 500ms
 - Why files? Simple, debuggable, works across container runtimes
 - Message types: `tool.request`, `tool.result`, `memory.read/write`, `channel.send`, `artifact.put`
 
 ### 7. Policy Engine (`src/tools/policy-engine.ts`)
+
 - Every tool call from inside the container is checked here
 - Persona capabilities define what's allowed (`allow`, `requireApproval`, `deny`)
 - Approval gate can ask the human for confirmation on high-risk operations
 - Every decision is recorded in the audit log
 
 ### 8. Personas (`src/personas/`, `personas/`, `talond.yaml`)
+
 A persona is an AI agent profile:
+
 - **System prompt** (markdown file in `personas/<name>/system.md`)
 - **Model** (currently `claude-sonnet-4-6`)
 - **Skills** (which skill bundles are attached)
@@ -121,44 +132,50 @@ A persona is an AI agent profile:
 My active persona is `assistant`, bound to the `TalonMain` Telegram channel.
 
 ### 9. Skills (`src/skills/`, `skills/`)
+
 Skills are modular capability bundles. Each skill can provide:
+
 - **Prompt fragments** (injected into system prompt)
 - **MCP server configs** (external tool providers)
 - **Tool manifests**
 - **DB migrations**
 
 Currently active skills:
+
 - **web-research** — Brave Search MCP for web search
 - **picnic** — Picnic grocery shopping MCP
 
 ### 10. MCP Proxy (`src/mcp/`)
+
 - MCP (Model Context Protocol) servers run on the host
 - The proxy forwards tool calls from the container to the right MCP server
 - Rate limiting (token bucket) per server
 - Policy is checked before forwarding
 
 ### 11. Scheduler (`src/scheduler/`)
+
 - Tick-based, checks every 5 seconds for due schedules
 - Supports: cron expressions, interval-based, one-shot
 - Can trigger prompts to me at scheduled times (e.g., reminders)
 
 ### 12. Database (`src/core/database/`)
+
 SQLite with WAL mode. 12 tables, repository pattern:
 
-| Table | Purpose |
-|---|---|
-| `channels` | Channel connector configs |
-| `personas` | Agent profiles |
-| `bindings` | Channel/thread → persona routing |
-| `threads` | Conversation threads |
-| `messages` | Full message history |
-| `queue_items` | Durable work queue |
-| `runs` | Agent execution records |
-| `schedules` | Cron/interval/one-shot jobs |
-| `memory_items` | Structured per-thread memory |
-| `artifacts` | Agent output files |
-| `audit_log` | Append-only audit trail |
-| `tool_results` | Idempotent tool result cache |
+| Table          | Purpose                          |
+| -------------- | -------------------------------- |
+| `channels`     | Channel connector configs        |
+| `personas`     | Agent profiles                   |
+| `bindings`     | Channel/thread → persona routing |
+| `threads`      | Conversation threads             |
+| `messages`     | Full message history             |
+| `queue_items`  | Durable work queue               |
+| `runs`         | Agent execution records          |
+| `schedules`    | Cron/interval/one-shot jobs      |
+| `memory_items` | Structured per-thread memory     |
+| `artifacts`    | Agent output files               |
+| `audit_log`    | Append-only audit trail          |
+| `tool_results` | Idempotent tool result cache     |
 
 ---
 
@@ -214,14 +231,14 @@ I operate on a **default-deny, capability-based** security model:
 
 ## What I Can Do (Current Skills)
 
-| Capability | How |
-|---|---|
-| Web search | Brave Search MCP (via web-research skill) |
-| Grocery shopping | Picnic MCP (via picnic skill) |
-| Send messages | `channel.send` to TalonMain (Telegram) |
-| Remember things | Thread memory (files in workspace) |
-| Scheduled reminders | Scheduler (cron/one-shot) |
-| Read/write files | Thread workspace only |
+| Capability          | How                                       |
+| ------------------- | ----------------------------------------- |
+| Web search          | Brave Search MCP (via web-research skill) |
+| Grocery shopping    | Picnic MCP (via picnic skill)             |
+| Send messages       | `channel.send` to TalonMain (Telegram)    |
+| Remember things     | Thread memory (files in workspace)        |
+| Scheduled reminders | Scheduler (cron/one-shot)                 |
+| Read/write files    | Thread workspace only                     |
 
 ---
 
@@ -250,17 +267,17 @@ I operate on a **default-deny, capability-based** security model:
 
 If I need to dig deeper into any aspect of my own workings:
 
-| What I want to know | Where to look |
-|---|---|
-| Overall architecture | `AUTONOMOUS_AGENT_DESIGN.md` |
-| Functional specification | `specs/talon-v1/spec.md` |
-| Current tasks / backlog | `BOARD.md` |
-| Configuration options | `config/talond.example.yaml` |
-| My system prompt | `personas/assistant/system.md` |
-| How a specific module works | `src/<module>/` |
-| Known issues | `FEEDBACK.md` |
-| Test coverage | `tests/` |
+| What I want to know         | Where to look                  |
+| --------------------------- | ------------------------------ |
+| Overall architecture        | `AUTONOMOUS_AGENT_DESIGN.md`   |
+| Functional specification    | `specs/talon-v1/spec.md`       |
+| Current tasks / backlog     | `BOARD.md`                     |
+| Configuration options       | `config/talond.example.yaml`   |
+| My system prompt            | `personas/assistant/system.md` |
+| How a specific module works | `src/<module>/`                |
+| Known issues                | `FEEDBACK.md`                  |
+| Test coverage               | `tests/`                       |
 
 ---
 
-*Generated on 2026-03-07 based on full codebase scan. Update this file when significant architectural changes are made.*
+_Generated on 2026-03-07 based on full codebase scan. Update this file when significant architectural changes are made._
