@@ -7,7 +7,7 @@
  */
 
 import { unlinkSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import net from 'node:net';
 import type { DaemonContext } from '../daemon/daemon-context.js';
 import type { ToolCallResult } from './tool-types.js';
@@ -52,7 +52,7 @@ export class HostToolsBridge {
   private dbHandler: DbQueryHandler;
 
   constructor(private readonly ctx: DaemonContext) {
-    this.socketPath = join(ctx.dataDir, 'host-tools.sock');
+    this.socketPath = resolve(join(ctx.dataDir, 'host-tools.sock'));
 
     this.scheduleHandler = new ScheduleManageHandler({
       scheduleRepository: ctx.repos.schedule,
