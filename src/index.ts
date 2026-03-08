@@ -33,13 +33,17 @@ function parseEnvFilePath(argv: string[]): string {
   return process.env.TALOND_ENV_FILE ?? '.env';
 }
 
-function loadEnvFile(path: string): { loaded: boolean; path: string } {
+function loadEnvFile(path: string): { loaded: boolean; path: string; error?: string } {
   const resolved = resolve(path);
   if (!existsSync(resolved)) {
     return { loaded: false, path: resolved };
   }
-  process.loadEnvFile(resolved);
-  return { loaded: true, path: resolved };
+  try {
+    process.loadEnvFile(resolved);
+    return { loaded: true, path: resolved };
+  } catch (cause) {
+    return { loaded: false, path: resolved, error: cause instanceof Error ? cause.message : String(cause) };
+  }
 }
 
 async function main(): Promise<void> {
@@ -52,6 +56,8 @@ async function main(): Promise<void> {
 
   if (envFile.loaded) {
     logger.info({ envFile: envFile.path }, 'loaded .env file');
+  } else if (envFile.error) {
+    logger.warn({ envFile: envFile.path, error: envFile.error }, 'failed to load .env file');
   }
 
   const configPath = parseConfigPath(process.argv.slice(2));
