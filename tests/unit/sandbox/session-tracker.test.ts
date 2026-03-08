@@ -2,15 +2,16 @@
  * Unit tests for SessionTracker.
  *
  * Tests cover all CRUD operations on the in-memory session map:
- *  - getSessionId (hit / miss)
+ *  - getSessionId (hit / miss / expired)
  *  - setSessionId (insert / overwrite)
  *  - clearSession (existing / non-existent)
  *  - clearAll
  *  - size
- *  - hasSession
+ *  - hasSession (including expiry)
+ *  - evictStale (TTL-based eviction)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { SessionTracker } from '../../../src/sandbox/session-tracker.js';
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,11 @@ describe('SessionTracker', () => {
 
   beforeEach(() => {
     tracker = new SessionTracker();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // -------------------------------------------------------------------------
@@ -53,6 +59,23 @@ describe('SessionTracker', () => {
     it('returns undefined for a different thread', () => {
       tracker.setSessionId('thread-1', 'ses-abc');
       expect(tracker.getSessionId('thread-2')).toBeUndefined();
+    });
+
+    it('returns undefined for an expired session', () => {
+      tracker.setSessionId('thread-1', 'ses-abc');
+      // Advance past the default 24h TTL.
+      vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+      expect(tracker.getSessionId('thread-1')).toBeUndefined();
+    });
+
+    it('refreshes lastUsedAt on read, keeping the session alive', () => {
+      tracker.setSessionId('thread-1', 'ses-abc');
+      // Advance 23 hours — still within TTL.
+      vi.advanceTimersByTime(23 * 60 * 60 * 1000);
+      expect(tracker.getSessionId('thread-1')).toBe('ses-abc');
+      // Advance another 23 hours — session was touched, so still alive.
+      vi.advanceTimersByTime(23 * 60 * 60 * 1000);
+      expect(tracker.getSessionId('thread-1')).toBe('ses-abc');
     });
   });
 
@@ -197,6 +220,67 @@ describe('SessionTracker', () => {
       tracker.clearAll();
       expect(tracker.hasSession('t-1')).toBe(false);
       expect(tracker.hasSession('t-2')).toBe(false);
+    });
+
+    it('returns false for an expired session', () => {
+      tracker.setSessionId('thread-1', 'ses-abc');
+      vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+      expect(tracker.hasSession('thread-1')).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // evictStale
+  // -------------------------------------------------------------------------
+
+  describe('evictStale()', () => {
+    it('returns 0 when no entries are stale', () => {
+      tracker.setSessionId('t-1', 'ses-1');
+      tracker.setSessionId('t-2', 'ses-2');
+      expect(tracker.evictStale()).toBe(0);
+      expect(tracker.size()).toBe(2);
+    });
+
+    it('evicts entries older than TTL', () => {
+      tracker.setSessionId('t-1', 'ses-1');
+      tracker.setSessionId('t-2', 'ses-2');
+      vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+      expect(tracker.evictStale()).toBe(2);
+      expect(tracker.size()).toBe(0);
+    });
+
+    it('only evicts stale entries, keeps fresh ones', () => {
+      tracker.setSessionId('t-old', 'ses-old');
+      vi.advanceTimersByTime(23 * 60 * 60 * 1000);
+      tracker.setSessionId('t-new', 'ses-new');
+      vi.advanceTimersByTime(2 * 60 * 60 * 1000); // t-old is now 25h, t-new is 2h
+      expect(tracker.evictStale()).toBe(1);
+      expect(tracker.hasSession('t-old')).toBe(false);
+      expect(tracker.hasSession('t-new')).toBe(true);
+    });
+
+    it('returns 0 on an empty tracker', () => {
+      expect(tracker.evictStale()).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Custom TTL
+  // -------------------------------------------------------------------------
+
+  describe('custom TTL', () => {
+    it('respects a shorter TTL', () => {
+      const shortTracker = new SessionTracker(5000); // 5 seconds
+      shortTracker.setSessionId('t-1', 'ses-1');
+      vi.advanceTimersByTime(6000);
+      expect(shortTracker.getSessionId('t-1')).toBeUndefined();
+    });
+
+    it('keeps entries alive within custom TTL', () => {
+      const shortTracker = new SessionTracker(5000);
+      shortTracker.setSessionId('t-1', 'ses-1');
+      vi.advanceTimersByTime(4000);
+      expect(shortTracker.getSessionId('t-1')).toBe('ses-1');
     });
   });
 });

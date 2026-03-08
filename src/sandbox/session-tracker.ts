@@ -7,15 +7,29 @@
  * re-sending the full message history.
  *
  * SessionTracker is a lightweight in-memory store that maps threadId ->
- * sessionId.  It is intentionally simple: no TTL, no serialisation.  If the
- * daemon restarts, sessions are forgotten and agents start fresh (the
+ * sessionId. Entries are evicted after a configurable TTL (default 24h) to
+ * prevent unbounded memory growth in long-running daemon processes.
+ *
+ * If the daemon restarts, sessions are forgotten and agents start fresh (the
  * conversation history can be reconstructed from the DB if needed by a future
  * enhancement).
  */
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Default session TTL: 24 hours in milliseconds. */
+const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
 // SessionTracker
 // ---------------------------------------------------------------------------
+
+interface SessionEntry {
+  sessionId: string;
+  lastUsedAt: number;
+}
 
 /**
  * In-memory store for SDK session IDs keyed by thread ID.
@@ -24,19 +38,35 @@
  * concurrent access to this map so no locking is required.
  */
 export class SessionTracker {
-  private readonly sessions: Map<string, string> = new Map();
+  private readonly sessions: Map<string, SessionEntry> = new Map();
+  private readonly ttlMs: number;
+
+  constructor(ttlMs: number = DEFAULT_TTL_MS) {
+    this.ttlMs = ttlMs;
+  }
 
   /**
    * Retrieve the session ID for a thread, if one has been recorded.
    *
    * Returns `undefined` when no session has been started for the thread (first
-   * message) or after `clearSession()` has been called.
+   * message), after `clearSession()` has been called, or if the entry has
+   * expired.
    *
    * @param threadId - The thread identifier.
    * @returns The stored session ID, or `undefined`.
    */
   getSessionId(threadId: string): string | undefined {
-    return this.sessions.get(threadId);
+    const entry = this.sessions.get(threadId);
+    if (!entry) return undefined;
+
+    if (this.isExpired(entry)) {
+      this.sessions.delete(threadId);
+      return undefined;
+    }
+
+    // Touch: update lastUsedAt on read.
+    entry.lastUsedAt = Date.now();
+    return entry.sessionId;
   }
 
   /**
@@ -49,7 +79,7 @@ export class SessionTracker {
    * @param sessionId - The SDK session ID returned by the completed run.
    */
   setSessionId(threadId: string, sessionId: string): void {
-    this.sessions.set(threadId, sessionId);
+    this.sessions.set(threadId, { sessionId, lastUsedAt: Date.now() });
   }
 
   /**
@@ -75,7 +105,7 @@ export class SessionTracker {
   }
 
   /**
-   * Return the number of active sessions.
+   * Return the number of active (non-evicted) sessions.
    *
    * Primarily useful for health checks and metrics.
    */
@@ -87,9 +117,38 @@ export class SessionTracker {
    * Check whether a session ID is stored for the given thread.
    *
    * @param threadId - The thread to check.
-   * @returns `true` if a session ID is present.
+   * @returns `true` if a non-expired session ID is present.
    */
   hasSession(threadId: string): boolean {
-    return this.sessions.has(threadId);
+    const entry = this.sessions.get(threadId);
+    if (!entry) return false;
+
+    if (this.isExpired(entry)) {
+      this.sessions.delete(threadId);
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Evict all sessions that have not been used within the TTL window.
+   *
+   * Returns the number of entries evicted. Call this periodically (e.g. on
+   * scheduler ticks) to bound memory usage.
+   */
+  evictStale(): number {
+    let evicted = 0;
+    for (const [threadId, entry] of this.sessions) {
+      if (this.isExpired(entry)) {
+        this.sessions.delete(threadId);
+        evicted++;
+      }
+    }
+    return evicted;
+  }
+
+  private isExpired(entry: SessionEntry): boolean {
+    return Date.now() - entry.lastUsedAt > this.ttlMs;
   }
 }

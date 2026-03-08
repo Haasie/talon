@@ -184,8 +184,8 @@ The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.prox
 | 5 | Extract `ChannelFactory` | Done (`channel-factory.ts`) |
 | 6 | Remove confirmed dead code | Done |
 | 7 | Wire host-tools as MCP servers | Done |
-| 8 | Fix BUG-005 (next_run_at null) | Not started |
-| 9 | Add SessionTracker eviction | Not started |
+| 8 | Fix BUG-005 (next_run_at null) + scheduler payload mismatch | Done |
+| 9 | Add SessionTracker eviction | Done |
 | 10 | Slim down daemon.ts to thin orchestrator | Not started |
 
 Each step = one atomic commit. Steps 1-5 are pure refactors (no behavior change). Steps 6-9 are fixes/cleanup. Step 10 is the final assembly.
@@ -275,3 +275,6 @@ _Updated after each commit._
 - **Step 3**: Extracted `AgentRunner` (`agent-runner.ts`) — 287-line `handleQueueItem` → standalone class taking `DaemonContext`. Eliminated 12-field null guard, removed dead `sandboxManager`/`sdkProcessSpawner` refs.
 - **Step 6**: Removed dead code — 14 source files, 10 test files. Deleted: `src/collaboration/` (entire), sandbox Docker scaffolding (5 files), container IPC (3 files), `mcp-proxy`, `tool-registry`, `approval-gate`, `capability-resolver`, `policy-engine`. Updated barrel files. Kept: `session-tracker`, `daemon-ipc-*`, `mcp-registry`, `host-tools/`, `tool-types`.
 - **Step 7**: Wired host-tools as MCP servers via Unix socket bridge. Created `host-tools-bridge.ts` (daemon-side socket server dispatching to handlers), `host-tools-mcp-server.ts` (standalone stdio MCP server for Agent SDK). Added `MemoryRepository` to `DaemonRepos`, `HostToolsBridge` to `DaemonContext`. AgentRunner injects host-tools MCP server into every `query()` call with context env vars. Fixes BUG-004 (schedule.manage now reachable).
+- **Cleanup**: Removed remaining dead refs from daemon.ts (SandboxManager, ContainerFactory, SdkProcessSpawner, McpProxy). Replaced duplicate `createConnector` with import from `channel-factory.ts`. Deleted `tests/integration/ipc.test.ts`. Rewrote `host-tools-bridge.test.ts`. Added tests for AgentRunner, DaemonBootstrap, ChannelFactory.
+- **Step 8**: Fixed BUG-005 — `schedule.manage` create now computes `next_run_at` via `getNextCronTime()`. Update also recomputes `next_run_at` when cron expression changes. Fixed scheduler payload mismatch — `processSchedule()` now injects `personaId` from schedule row and maps `prompt` → `content` for AgentRunner compatibility.
+- **Step 9**: Added TTL-based eviction to `SessionTracker`. Entries track `lastUsedAt`, expire after configurable TTL (default 24h). Lazy eviction on `get`/`has`, bulk eviction via `evictStale()`. Fixes unbounded memory growth in long-running daemon.
