@@ -80,6 +80,8 @@ _Nothing currently in progress._
 | BUG-001 | 359 tests failing (pre-existing, not from recent changes) — likely test setup/teardown issues in repository tests | Low |
 | BUG-002 | `SdkProcessSpawner` is dead code now that Agent SDK runs on host — should be removed or repurposed for Docker mode | Low |
 | BUG-003 | `zod` peer dep conflict: Agent SDK wants zod@4, project uses zod@3 (installed with `--legacy-peer-deps`) | Medium |
+| BUG-004 | `schedule.manage` host tool is dead code in Agent SDK mode — never instantiated or wired in `daemon.ts`. Agent has no way to create schedules. Needs exposing as an MCP server so it works in both host and Docker modes. | High |
+| BUG-005 | `schedule.manage` create action sets `next_run_at: null` — scheduler's `findDue` query requires `next_run_at IS NOT NULL`, so created schedules never fire. Must compute `next_run_at` from cron expression on insert. | High |
 
 ---
 
