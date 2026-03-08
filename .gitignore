@@ -41,5 +41,5 @@ logs/
 # VM-specific runtime configs
 .envrc
 talond.yaml
-personas/
-skills/
+/personas/
+/skills/

@@ -20,8 +20,9 @@
  * database; migration paths are collected and returned for external use.
  */
 
-import { readFile, readdir } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { readFile, readdir, access } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { ok, err, type Result } from 'neverthrow';
 import type pino from 'pino';
@@ -206,6 +207,58 @@ export class SkillLoader {
     }
 
     return ok(loaded);
+  }
+
+  /**
+   * Resolves skill directories from persona configs and loads them.
+   *
+   * Deduplicates skill names across personas, scans candidate directories
+   * (`skills/` in cwd and dataDir), and loads all found skills.
+   * Unknown skill names are logged as warnings and skipped.
+   *
+   * @param personas - Persona configs containing skill name references.
+   * @param dataDir  - Runtime data directory (e.g. 'data').
+   * @returns `Ok(LoadedSkill[])` on success, `Err(SkillError)` on first failure.
+   */
+  async loadFromPersonaConfig(
+    personas: { skills: string[] }[],
+    dataDir: string,
+  ): Promise<Result<LoadedSkill[], SkillError>> {
+    const uniqueSkillNames = new Set<string>();
+    for (const persona of personas) {
+      for (const skill of persona.skills) {
+        uniqueSkillNames.add(skill);
+      }
+    }
+
+    const skillDirs: string[] = [];
+    for (const skillName of uniqueSkillNames) {
+      const candidates = [
+        join(process.cwd(), 'skills', skillName),
+        join(dataDir, 'skills', skillName),
+      ];
+      let foundPath: string | null = null;
+      for (const candidate of candidates) {
+        try {
+          await access(candidate, fsConstants.R_OK);
+          foundPath = candidate;
+          break;
+        } catch {
+          continue;
+        }
+      }
+      if (foundPath !== null) {
+        skillDirs.push(foundPath);
+      } else {
+        this.logger.warn({ skillName }, 'skill directory not found; skipping');
+      }
+    }
+
+    if (skillDirs.length === 0) {
+      return ok([]);
+    }
+
+    return this.loadMultiple(skillDirs);
   }
 
   // -------------------------------------------------------------------------

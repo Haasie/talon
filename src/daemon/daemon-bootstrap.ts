@@ -9,8 +9,6 @@
  */
 
 import { join } from 'node:path';
-import { access } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
 import { ok, err, type Result } from 'neverthrow';
 import type pino from 'pino';
@@ -139,10 +137,15 @@ export async function bootstrap(
   // 8. Load skills
   const skillLoader = new SkillLoader(logger);
   const skillResolver = new SkillResolver(logger);
-  const loadedSkills = await loadSkillsFromConfig(config.personas, dataDir, skillLoader, logger);
+  const loadedSkills = await skillLoader.loadFromPersonaConfig(config.personas, dataDir);
   if (loadedSkills.isErr()) {
     db.close();
-    return err(loadedSkills.error);
+    return err(
+      new DaemonError(
+        `Failed to load skills: ${loadedSkills.error.message}`,
+        loadedSkills.error,
+      ),
+    );
   }
 
   // 9. Session tracker
@@ -193,63 +196,6 @@ export async function bootstrap(
     loadedSkills: loadedSkills.value,
     logger,
   });
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Discovers and loads skill directories referenced by personas.
- * Extracted to deduplicate logic shared between bootstrap and reload.
- */
-async function loadSkillsFromConfig(
-  personas: { skills: string[] }[],
-  dataDir: string,
-  skillLoader: SkillLoader,
-  logger: pino.Logger,
-): Promise<Result<import('../skills/skill-types.js').LoadedSkill[], DaemonError>> {
-  const uniqueSkillNames = new Set<string>();
-  for (const persona of personas) {
-    for (const skill of persona.skills) {
-      uniqueSkillNames.add(skill);
-    }
-  }
-
-  const skillDirs: string[] = [];
-  for (const skillName of uniqueSkillNames) {
-    const candidates = [
-      join(process.cwd(), 'skills', skillName),
-      join(dataDir, 'skills', skillName),
-    ];
-    let foundPath: string | null = null;
-    for (const candidate of candidates) {
-      try {
-        await access(candidate, fsConstants.R_OK);
-        foundPath = candidate;
-        break;
-      } catch {
-        continue;
-      }
-    }
-    if (foundPath !== null) {
-      skillDirs.push(foundPath);
-    } else {
-      logger.warn({ skillName }, 'bootstrap: skill directory not found; skipping');
-    }
-  }
-
-  if (skillDirs.length === 0) {
-    return ok([]);
-  }
-
-  const skillsResult = await skillLoader.loadMultiple(skillDirs);
-  if (skillsResult.isErr()) {
-    return err(
-      new DaemonError(`Failed to load skills: ${skillsResult.error.message}`, skillsResult.error),
-    );
-  }
-  return ok(skillsResult.value);
 }
 
 /**

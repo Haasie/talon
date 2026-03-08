@@ -180,7 +180,7 @@ The 5 host tools (`schedule.manage`, `channel.send`, `memory.access`, `http.prox
 | 1 | Create `DaemonContext` interface | Done (`daemon-context.ts`) |
 | 2 | Extract `DaemonBootstrap` | Done (`daemon-bootstrap.ts`) |
 | 3 | Extract `AgentRunner` | Not started |
-| 4 | Extract `SkillResolverService` (dedup) | Not started |
+| 4 | Extract `SkillResolverService` (dedup) | Done (moved to `SkillLoader.loadFromPersonaConfig()`) |
 | 5 | Extract `ChannelFactory` | Done (`channel-factory.ts`) |
 | 6 | Remove confirmed dead code | Not started |
 | 7 | Wire host-tools as MCP servers | Not started |
