@@ -192,6 +192,74 @@ Each step = one atomic commit. Steps 1-5 are pure refactors (no behavior change)
 
 ---
 
+## Testing Strategy
+
+### Current State
+
+- **92 test files** — 88 unit, 4 integration
+- **BUG-001**: 359 pre-existing test failures (noted in BOARD.md)
+- Tests are slow — **do not run tests without asking Ivo first**
+
+### Tests for Dead Code (will be removed with code)
+
+These test files correspond to dead code. They should be removed alongside their source modules:
+
+| Test file | Tests for |
+|-----------|-----------|
+| `unit/sandbox/container-factory.test.ts` | Dead: Docker container creation |
+| `unit/sandbox/sandbox-manager.test.ts` | Dead: container lifecycle |
+| `unit/sandbox/sdk-process-spawner.test.ts` | Dead: SDK process in Docker |
+| `unit/ipc/ipc-channel.test.ts` | Dead: bidirectional container IPC |
+| `unit/ipc/ipc-reader.test.ts` | Dead: file-based IPC reader |
+| `unit/ipc/ipc-writer.test.ts` | Dead: file-based IPC writer |
+| `unit/collaboration/supervisor.test.ts` | Dead: never imported |
+| `unit/collaboration/worker-manager.test.ts` | Dead: never imported |
+| `unit/mcp/mcp-proxy.test.ts` | Dead: MCP proxy bypassed |
+| `unit/tools/tool-registry.test.ts` | Dead: never instantiated |
+
+### Tests to Keep and Update
+
+These test files cover code being refactored (not deleted). They need updating to match the new module structure:
+
+| Test file | Update needed |
+|-----------|---------------|
+| `unit/daemon/daemon.test.ts` | Major rewrite — split to match new modules |
+| `unit/daemon/reload.test.ts` | Update for `SkillResolverService` dedup |
+| `unit/sandbox/session-tracker.test.ts` | Keep as-is (module survives refactor) |
+| `unit/tools/host-tools/*.test.ts` (5 files) | Keep — add MCP server wrapper tests |
+| `unit/mcp/mcp-registry.test.ts` | Evaluate — depends on whether we keep it |
+
+### New Tests Needed
+
+#### Unit tests for new modules
+
+| Module | Tests to write |
+|--------|---------------|
+| `daemon-context.ts` | Type-level only (interface), no runtime tests needed |
+| `daemon-bootstrap.ts` | Test bootstrap produces valid `DaemonContext` or fails cleanly |
+| `agent-runner.ts` | Test persona resolution, prompt assembly, session management, error handling |
+| `channel-factory.ts` | Test registration and creation of connectors |
+| `skill-resolver-service.ts` | Test skill loading, MCP env var substitution, prompt merging |
+
+#### Integration tests (the important part)
+
+These verify the pieces actually wire together — specifically to prevent dead code from creeping back in:
+
+| Test | What it proves |
+|------|---------------|
+| Bootstrap → AgentRunner wiring | Queue items actually reach the agent runner |
+| Bootstrap → Scheduler → Queue | Scheduled tasks fire and reach the queue |
+| MCP servers reachable by agent | Host-tool MCP servers are callable (once wired) |
+| Channel → Pipeline → Queue → Runner → Channel | Full message round-trip without Docker/IPC |
+| Reload preserves sessions | Hot reload doesn't drop active `SessionTracker` state |
+| Channel factory completeness | Every channel type in config schema has a registered factory |
+
+### Test execution note
+
+Tests are slow. Ivo runs them manually. When proposing changes, describe what to test and which test files are affected rather than running them.
+
+---
+
 ## Progress Log
 
 _Updated after each commit._
