@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { ok, err, type Result } from 'neverthrow';
 
@@ -142,6 +143,19 @@ export class AgentRunner {
           };
         }
       }
+
+      // Add built-in host-tools MCP server (schedule, channel, memory, http, db).
+      mcpServers['host-tools'] = {
+        type: 'stdio',
+        command: 'node',
+        args: [join(import.meta.dirname, '../../dist/tools/host-tools-mcp-server.js')],
+        env: {
+          TALOND_SOCKET: this.ctx.hostToolsBridge.path,
+          TALOND_RUN_ID: runId,
+          TALOND_THREAD_ID: item.threadId,
+          TALOND_PERSONA_ID: personaId,
+        },
+      };
 
       // Build Agent SDK options from persona config.
       const agentOptions: Record<string, unknown> = {

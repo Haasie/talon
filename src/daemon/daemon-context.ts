@@ -22,6 +22,7 @@ import type {
   MessageRepository,
   RunRepository,
   BindingRepository,
+  MemoryRepository,
 } from '../core/database/repositories/index.js';
 import type { ChannelRegistry } from '../channels/channel-registry.js';
 import type { QueueManager } from '../queue/queue-manager.js';
@@ -32,6 +33,7 @@ import type { ThreadWorkspace } from '../memory/thread-workspace.js';
 import type { AuditLogger } from '../core/logging/audit-logger.js';
 import type { LoadedSkill } from '../skills/skill-types.js';
 import type { SkillResolver } from '../skills/skill-resolver.js';
+import type { HostToolsBridge } from '../tools/host-tools-bridge.js';
 
 // ---------------------------------------------------------------------------
 // Repository bundle
@@ -48,6 +50,7 @@ export interface DaemonRepos {
   readonly message: MessageRepository;
   readonly run: RunRepository;
   readonly binding: BindingRepository;
+  readonly memory: MemoryRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,5 +78,6 @@ export interface DaemonContext {
   readonly auditLogger: AuditLogger;
   readonly skillResolver: SkillResolver;
   readonly loadedSkills: LoadedSkill[];
+  readonly hostToolsBridge: HostToolsBridge;
   readonly logger: pino.Logger;
 }

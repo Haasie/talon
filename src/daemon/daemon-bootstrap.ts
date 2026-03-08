@@ -26,6 +26,7 @@ import {
   MessageRepository,
   RunRepository,
   BindingRepository,
+  MemoryRepository,
 } from '../core/database/repositories/index.js';
 
 import { ChannelRegistry } from '../channels/channel-registry.js';
@@ -43,6 +44,7 @@ import { SkillResolver } from '../skills/skill-resolver.js';
 import { ThreadWorkspace } from '../memory/thread-workspace.js';
 import { SessionTracker } from '../sandbox/session-tracker.js';
 
+import { HostToolsBridge } from '../tools/host-tools-bridge.js';
 import { recoverFromCrash } from './lifecycle.js';
 import type { DaemonContext } from './daemon-context.js';
 
@@ -111,6 +113,7 @@ export async function bootstrap(
     message: new MessageRepository(db),
     run: new RunRepository(db),
     binding: new BindingRepository(db),
+    memory: new MemoryRepository(db),
   };
 
   // 5. Audit logger
@@ -182,9 +185,9 @@ export async function bootstrap(
     logger,
   });
 
-  logger.info('bootstrap: context ready');
-
-  return ok({
+  // 15. Host tools bridge (needs a partial context to construct)
+  // We build the context object first, then create the bridge and attach it.
+  const ctx: DaemonContext = {
     db,
     config,
     configPath,
@@ -199,6 +202,15 @@ export async function bootstrap(
     auditLogger,
     skillResolver,
     loadedSkills: loadedSkills.value,
+    // Placeholder — replaced immediately below.
+    hostToolsBridge: null as unknown as HostToolsBridge,
     logger,
-  });
+  };
+
+  const hostToolsBridge = new HostToolsBridge(ctx);
+  (ctx as { hostToolsBridge: HostToolsBridge }).hostToolsBridge = hostToolsBridge;
+
+  logger.info('bootstrap: context ready');
+
+  return ok(ctx);
 }
