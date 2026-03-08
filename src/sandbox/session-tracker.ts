@@ -105,11 +105,13 @@ export class SessionTracker {
   }
 
   /**
-   * Return the number of active (non-evicted) sessions.
+   * Return the number of active (non-expired) sessions.
    *
+   * Evicts stale entries first so the count reflects only live sessions.
    * Primarily useful for health checks and metrics.
    */
   size(): number {
+    this.evictStale();
     return this.sessions.size;
   }
 

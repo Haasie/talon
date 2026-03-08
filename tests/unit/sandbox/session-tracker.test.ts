@@ -192,6 +192,15 @@ describe('SessionTracker', () => {
       tracker.setSessionId('t-1', 'ses-v2');
       expect(tracker.size()).toBe(1);
     });
+
+    it('excludes expired entries from count', () => {
+      tracker.setSessionId('t-1', 'ses-1');
+      tracker.setSessionId('t-2', 'ses-2');
+      vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+      tracker.setSessionId('t-3', 'ses-3');
+      // t-1 and t-2 are expired, only t-3 is live.
+      expect(tracker.size()).toBe(1);
+    });
   });
 
   // -------------------------------------------------------------------------
