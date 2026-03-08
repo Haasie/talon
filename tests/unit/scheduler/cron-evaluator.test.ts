@@ -65,7 +65,7 @@ describe('getNextCronTime', () => {
     // Pin "now" to a known time: 2026-01-01 08:00:00 UTC
     const after = new Date('2026-01-01T08:00:00.000Z');
     // "0 9 * * *" fires daily at 09:00 UTC
-    const result = getNextCronTime('0 9 * * *', after);
+    const result = getNextCronTime('0 9 * * *', after, { tz: 'UTC' });
     expect(result.isOk()).toBe(true);
     const next = new Date(result._unsafeUnwrap());
     expect(next.getUTCHours()).toBe(9);
@@ -77,7 +77,7 @@ describe('getNextCronTime', () => {
   it('advances to the next day when the daily time has already passed', () => {
     // Pin "now" to 10:00 UTC — the 09:00 slot has already passed today
     const after = new Date('2026-01-01T10:00:00.000Z');
-    const result = getNextCronTime('0 9 * * *', after);
+    const result = getNextCronTime('0 9 * * *', after, { tz: 'UTC' });
     expect(result.isOk()).toBe(true);
     const next = new Date(result._unsafeUnwrap());
     // Should be 2026-01-02T09:00:00 UTC
@@ -88,7 +88,7 @@ describe('getNextCronTime', () => {
   it('returns a timestamp consistent with every-5-minutes interval', () => {
     // Pin to the start of an hour so we can predict the next slot
     const after = new Date('2026-01-01T12:00:00.000Z');
-    const result = getNextCronTime('*/5 * * * *', after);
+    const result = getNextCronTime('*/5 * * * *', after, { tz: 'UTC' });
     expect(result.isOk()).toBe(true);
     const next = new Date(result._unsafeUnwrap());
     // The next slot after 12:00 is 12:05

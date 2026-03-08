@@ -105,7 +105,13 @@ describe('HostToolsBridge', () => {
         message: {} as any,
         run: {} as any,
         binding: {} as any,
-        memory: {} as any,
+        memory: {
+          findById: vi.fn().mockReturnValue(ok(null)),
+          findByThread: vi.fn().mockReturnValue(ok([])),
+          insert: vi.fn().mockReturnValue(ok({})),
+          update: vi.fn().mockReturnValue(ok(null)),
+          delete: vi.fn().mockReturnValue(ok(undefined)),
+        } as any,
       },
       channelRegistry: mockChannelRegistry,
       queueManager: {} as any,
@@ -233,7 +239,7 @@ describe('HostToolsBridge', () => {
       expect(response.error).toBe('Invalid JSON');
     });
 
-    it('returns error for memory.access (not yet wired)', async () => {
+    it('dispatches memory.access to the memory handler', async () => {
       bridge = new HostToolsBridge(mockCtx);
       bridge.start();
       await waitForSocket(bridge.path);
@@ -250,8 +256,8 @@ describe('HostToolsBridge', () => {
         },
       });
 
-      expect((response.result as any)?.status).toBe('error');
-      expect((response.result as any)?.error).toContain('not yet wired');
+      expect((response.result as any)?.status).toBe('success');
+      expect((response.result as any)?.result).toHaveProperty('items');
     });
   });
 });

@@ -19,13 +19,18 @@ import { ScheduleError } from '../core/errors/index.js';
  *
  * @param expression - Standard 5-field cron expression (e.g. "0 9 * * *").
  * @param after      - Point in time to compute "next" relative to. Defaults to `new Date()`.
+ * @param options    - Optional settings. `tz` sets the timezone for evaluation (default: system local).
  * @returns Ok(epochMs) on success, or a ScheduleError if the expression is invalid.
  */
-export function getNextCronTime(expression: string, after?: Date): Result<number, ScheduleError> {
+export function getNextCronTime(
+  expression: string,
+  after?: Date,
+  options?: { tz?: string },
+): Result<number, ScheduleError> {
   try {
     const interval = parseExpression(expression, {
       currentDate: after ?? new Date(),
-      utc: true,
+      tz: options?.tz,
     });
     return ok(interval.next().getTime());
   } catch (cause) {

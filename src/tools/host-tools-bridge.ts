@@ -16,6 +16,7 @@ import { ScheduleManageHandler, type ScheduleManageArgs } from './host-tools/sch
 import { ChannelSendHandler, type ChannelSendArgs } from './host-tools/channel-send.js';
 import { HttpProxyHandler, type HttpProxyArgs } from './host-tools/http-proxy.js';
 import { DbQueryHandler, type DbQueryArgs } from './host-tools/db-query.js';
+import { MemoryAccessHandler, type MemoryAccessArgs } from './host-tools/memory-access.js';
 
 /** NDJSON request shape from MCP server. */
 interface BridgeRequest {
@@ -50,6 +51,7 @@ export class HostToolsBridge {
   private channelHandler: ChannelSendHandler;
   private httpHandler: HttpProxyHandler;
   private dbHandler: DbQueryHandler;
+  private memoryHandler: MemoryAccessHandler;
 
   constructor(private readonly ctx: DaemonContext) {
     this.socketPath = resolve(join(ctx.dataDir, 'host-tools.sock'));
@@ -71,6 +73,11 @@ export class HostToolsBridge {
 
     this.dbHandler = new DbQueryHandler({
       db: ctx.db,
+      logger: ctx.logger,
+    });
+
+    this.memoryHandler = new MemoryAccessHandler({
+      memoryRepository: ctx.repos.memory,
       logger: ctx.logger,
     });
   }
@@ -210,13 +217,7 @@ export class HostToolsBridge {
         return this.channelHandler.execute(args as unknown as ChannelSendArgs, context);
 
       case 'memory.access':
-        // MemoryRepository is not yet wired in DaemonContext
-        return {
-          requestId: context.requestId ?? 'unknown',
-          tool: 'memory.access',
-          status: 'error',
-          error: 'memory.access not yet wired',
-        };
+        return this.memoryHandler.execute(args as unknown as MemoryAccessArgs, context);
 
       case 'net.http':
         return this.httpHandler.execute(args as unknown as HttpProxyArgs, context);
