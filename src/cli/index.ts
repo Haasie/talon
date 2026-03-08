@@ -25,12 +25,12 @@ import { addSkillCommand } from './commands/add-skill.js';
 import { queuePurgeCommand } from './commands/queue-purge.js';
 
 // Load .env before anything else so ${VAR} substitution works in config.
-const envPath = resolve(process.env.TALOND_ENV_FILE ?? '.env');
+const envPath = resolve(process.env.TALOND_ENV_FILE || '.env');
 if (existsSync(envPath)) {
   try {
     process.loadEnvFile(envPath);
-  } catch {
-    // Silently ignore parse errors — CLI should not crash on malformed .env.
+  } catch (cause) {
+    process.stderr.write(`warning: failed to parse ${envPath}: ${cause instanceof Error ? cause.message : String(cause)}\n`);
   }
 }
 

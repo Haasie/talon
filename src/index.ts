@@ -30,7 +30,7 @@ function parseEnvFilePath(argv: string[]): string {
       return value;
     }
   }
-  return process.env.TALOND_ENV_FILE ?? '.env';
+  return process.env.TALOND_ENV_FILE || '.env';
 }
 
 function loadEnvFile(path: string): { loaded: boolean; path: string; error?: string } {
