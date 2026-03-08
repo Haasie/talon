@@ -318,7 +318,12 @@ export class AgentRunner {
         'agent-sdk: query completed',
       );
 
-      if (connector !== undefined && externalId) {
+      if (item.type === 'schedule') {
+        this.ctx.logger.info(
+          { runId, outputLength: outputText.length },
+          'agent-sdk: skipping outbound reply for schedule item (agent already sent via channel_send)',
+        );
+      } else if (connector !== undefined && externalId) {
         const sendResult = await connector.send(externalId, {
           body: outputText,
         });
