@@ -4,34 +4,78 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createConnection } from 'node:net';
-import { unlink, writeFile, mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { HostToolsBridge } from '../../../src/tools/host-tools-bridge.js';
 import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
 import type { ScheduleRepository } from '../../../src/core/database/repositories/schedule-repository.js';
 import type { ChannelRegistry } from '../../../src/channels/channel-registry.js';
-import { ok, err } from 'neverthrow';
+import { ok } from 'neverthrow';
+
+/** Helper: send an NDJSON request to the bridge and wait for the response. */
+function sendRequest(
+  socketPath: string,
+  request: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const client = createConnection(socketPath, () => {
+      client.write(JSON.stringify(request) + '\n');
+    });
+
+    let data = '';
+    client.on('data', (chunk) => {
+      data += chunk.toString();
+      const idx = data.indexOf('\n');
+      if (idx !== -1) {
+        const line = data.slice(0, idx);
+        client.end();
+        resolve(JSON.parse(line));
+      }
+    });
+
+    client.on('error', reject);
+    setTimeout(() => {
+      client.end();
+      reject(new Error('Timeout waiting for response'));
+    }, 5000);
+  });
+}
+
+/** Helper: wait for the bridge socket to be ready. */
+function waitForSocket(socketPath: string, maxMs = 2000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + maxMs;
+    const check = () => {
+      const client = createConnection(socketPath, () => {
+        client.end();
+        resolve();
+      });
+      client.on('error', () => {
+        if (Date.now() > deadline) {
+          reject(new Error('Socket not ready'));
+        } else {
+          setTimeout(check, 50);
+        }
+      });
+    };
+    check();
+  });
+}
 
 describe('HostToolsBridge', () => {
   let bridge: HostToolsBridge;
   let mockCtx: DaemonContext;
   let tempDir: string;
-  let socketPath: string;
 
   beforeEach(async () => {
     tempDir = join('/tmp', `host-tools-bridge-test-${randomUUID()}`);
     await mkdir(tempDir, { recursive: true });
-    socketPath = join(tempDir, 'test.sock');
 
     const mockScheduleRepo = {
       insert: vi.fn().mockReturnValue(ok({})),
       update: vi.fn().mockReturnValue(ok({})),
       disable: vi.fn().mockReturnValue(ok(undefined)),
-      enable: vi.fn().mockReturnValue(ok(undefined)),
-      findByPersona: vi.fn().mockReturnValue(ok([])),
-      findDue: vi.fn().mockReturnValue(ok([])),
-      updateNextRun: vi.fn().mockReturnValue(ok(null)),
     } as unknown as ScheduleRepository;
 
     const mockChannelRegistry = {
@@ -61,6 +105,7 @@ describe('HostToolsBridge', () => {
         message: {} as any,
         run: {} as any,
         binding: {} as any,
+        memory: {} as any,
       },
       channelRegistry: mockChannelRegistry,
       queueManager: {} as any,
@@ -71,6 +116,7 @@ describe('HostToolsBridge', () => {
       auditLogger: {} as any,
       skillResolver: {} as any,
       loadedSkills: [],
+      hostToolsBridge: {} as any,
       logger: mockLogger as any,
     };
   });
@@ -79,156 +125,132 @@ describe('HostToolsBridge', () => {
     if (bridge) {
       bridge.stop();
     }
-    await unlink(socketPath).catch(() => {});
-    await unlink(tempDir).catch(() => {});
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   });
 
   describe('start/stop', () => {
-    it('starts and creates socket file', async () => {
+    it('starts and creates socket, reports correct path', async () => {
       bridge = new HostToolsBridge(mockCtx);
-      bridge.start();
+      expect(bridge.path).toBe(join(tempDir, 'host-tools.sock'));
 
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
-      });
+      bridge.start();
+      await waitForSocket(bridge.path);
 
       expect(mockCtx.logger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ socketPath }),
-        expect.any(String),
+        expect.objectContaining({ socketPath: bridge.path }),
+        'host-tools-bridge: starting',
       );
     });
 
-    it('stops and removes socket file', async () => {
+    it('stops cleanly', async () => {
       bridge = new HostToolsBridge(mockCtx);
       bridge.start();
-
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
-      });
+      await waitForSocket(bridge.path);
 
       bridge.stop();
+      // Give the close callback time to fire.
+      await new Promise((r) => setTimeout(r, 100));
 
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
-      });
-
-      expect(mockCtx.logger.info).toHaveBeenCalledWith(
-        expect.any(String),
-        'host-tools-bridge: stopped',
-      );
+      expect(mockCtx.logger.info).toHaveBeenCalledWith('host-tools-bridge: stopped');
     });
   });
 
   describe('dispatch', () => {
-    it('dispatches schedule.manage create call and returns success', async () => {
+    it('dispatches schedule.manage create and returns success', async () => {
       bridge = new HostToolsBridge(mockCtx);
       bridge.start();
+      await waitForSocket(bridge.path);
 
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
-      });
-
-      const client = createConnection(socketPath, () => {
-        const request = {
-          id: randomUUID(),
-          tool: 'schedule_manage',
-          args: {
-            action: 'create',
-            cronExpr: '0 9 * * *',
-            label: 'Test schedule',
-          },
-          context: {
-            runId: 'run-001',
-            threadId: 'thread-001',
-            personaId: 'persona-001',
-            requestId: 'req-001',
-          },
-        };
-
-        client.write(JSON.stringify(request) + '\n');
-      });
-
-      const response = await new Promise<any>((resolve) => {
-        let data = '';
-        client.on('data', (chunk) => {
-          data += chunk.toString();
-          const lines = data.split('\n').filter((l) => l.trim());
-          if (lines.length > 0) {
-            resolve(JSON.parse(lines[0]));
-            client.end();
-          }
-        });
+      const response = await sendRequest(bridge.path, {
+        id: randomUUID(),
+        tool: 'schedule_manage',
+        args: {
+          action: 'create',
+          cronExpr: '0 9 * * *',
+          label: 'Test schedule',
+        },
+        context: {
+          runId: 'run-001',
+          threadId: 'thread-001',
+          personaId: 'persona-001',
+          requestId: 'req-001',
+        },
       });
 
       expect(response.result).toBeDefined();
-      expect(response.result?.status).toBe('success');
+      expect((response.result as any)?.status).toBe('success');
     });
 
     it('returns error for unknown tool', async () => {
       bridge = new HostToolsBridge(mockCtx);
       bridge.start();
+      await waitForSocket(bridge.path);
 
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
+      const response = await sendRequest(bridge.path, {
+        id: randomUUID(),
+        tool: 'unknown_tool',
+        args: {},
+        context: {
+          runId: 'run-001',
+          threadId: 'thread-001',
+          personaId: 'persona-001',
+          requestId: 'req-001',
+        },
       });
 
-      const client = createConnection(socketPath, () => {
-        const request = {
-          id: randomUUID(),
-          tool: 'unknown_tool',
-          args: {},
-          context: {
-            runId: 'run-001',
-            threadId: 'thread-001',
-            personaId: 'persona-001',
-            requestId: 'req-001',
-          },
-        };
-
-        client.write(JSON.stringify(request) + '\n');
-      });
-
-      const response = await new Promise<any>((resolve) => {
-        let data = '';
-        client.on('data', (chunk) => {
-          data += chunk.toString();
-          const lines = data.split('\n').filter((l) => l.trim());
-          if (lines.length > 0) {
-            resolve(JSON.parse(lines[0]));
-            client.end();
-          }
-        });
-      });
-
-      expect(response.result?.status).toBe('error');
-      expect(response.result?.error).toContain('Unknown tool');
+      expect((response.result as any)?.status).toBe('error');
+      expect((response.result as any)?.error).toContain('Unknown tool');
     });
 
     it('returns error for malformed JSON', async () => {
       bridge = new HostToolsBridge(mockCtx);
       bridge.start();
+      await waitForSocket(bridge.path);
 
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
-      });
+      const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const client = createConnection(bridge.path, () => {
+          client.write('not valid json\n');
+        });
 
-      const client = createConnection(socketPath, () => {
-        client.write('not valid json\n');
-      });
-
-      const response = await new Promise<any>((resolve) => {
         let data = '';
         client.on('data', (chunk) => {
           data += chunk.toString();
-          const lines = data.split('\n').filter((l) => l.trim());
-          if (lines.length > 0) {
-            resolve(JSON.parse(lines[0]));
+          const idx = data.indexOf('\n');
+          if (idx !== -1) {
             client.end();
+            resolve(JSON.parse(data.slice(0, idx)));
           }
         });
+
+        client.on('error', reject);
+        setTimeout(() => {
+          client.end();
+          reject(new Error('Timeout'));
+        }, 5000);
       });
 
       expect(response.error).toBe('Invalid JSON');
+    });
+
+    it('returns error for memory.access (not yet wired)', async () => {
+      bridge = new HostToolsBridge(mockCtx);
+      bridge.start();
+      await waitForSocket(bridge.path);
+
+      const response = await sendRequest(bridge.path, {
+        id: randomUUID(),
+        tool: 'memory_access',
+        args: { operation: 'list' },
+        context: {
+          runId: 'run-001',
+          threadId: 'thread-001',
+          personaId: 'persona-001',
+          requestId: 'req-001',
+        },
+      });
+
+      expect((response.result as any)?.status).toBe('error');
+      expect((response.result as any)?.error).toContain('not yet wired');
     });
   });
 });

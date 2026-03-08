@@ -43,17 +43,8 @@ import {
 
 import { ChannelRegistry } from '../channels/channel-registry.js';
 import { ChannelRouter } from '../channels/channel-router.js';
-import type { ChannelConnector, InboundEvent } from '../channels/channel-types.js';
-import { TelegramConnector } from '../channels/connectors/telegram/telegram-connector.js';
-import type { TelegramConfig } from '../channels/connectors/telegram/telegram-types.js';
-import { SlackConnector } from '../channels/connectors/slack/slack-connector.js';
-import type { SlackConfig } from '../channels/connectors/slack/slack-types.js';
-import { DiscordConnector } from '../channels/connectors/discord/discord-connector.js';
-import type { DiscordConfig } from '../channels/connectors/discord/discord-types.js';
-import { WhatsAppConnector } from '../channels/connectors/whatsapp/whatsapp-connector.js';
-import type { WhatsAppConfig } from '../channels/connectors/whatsapp/whatsapp-types.js';
-import { EmailConnector } from '../channels/connectors/email/email-connector.js';
-import type { EmailConfig } from '../channels/connectors/email/email-types.js';
+import type { InboundEvent } from '../channels/channel-types.js';
+import { createConnector } from './channel-factory.js';
 import { MessagePipeline } from '../pipeline/message-pipeline.js';
 import { QueueManager } from '../queue/queue-manager.js';
 import type { QueueItem } from '../queue/queue-types.js';
@@ -65,12 +56,8 @@ import { SkillLoader } from '../skills/skill-loader.js';
 import { SkillResolver } from '../skills/skill-resolver.js';
 import type { LoadedSkill } from '../skills/skill-types.js';
 import { ThreadWorkspace } from '../memory/thread-workspace.js';
-import { SandboxManager } from '../sandbox/sandbox-manager.js';
-import { ContainerFactory } from '../sandbox/container-factory.js';
-import { SdkProcessSpawner } from '../sandbox/sdk-process-spawner.js';
 import { SessionTracker } from '../sandbox/session-tracker.js';
 import { McpRegistry } from '../mcp/mcp-registry.js';
-import { McpProxy } from '../mcp/mcp-proxy.js';
 
 import { recoverFromCrash, writePidFile, removePidFile } from './lifecycle.js';
 import { WatchdogNotifier } from './watchdog.js';
@@ -125,11 +112,8 @@ export class TalondDaemon {
   private loadedSkills: LoadedSkill[] = [];
 
   // Sandbox and MCP integrations.
-  private sandboxManager: SandboxManager | null = null;
-  private sdkProcessSpawner: SdkProcessSpawner | null = null;
   private sessionTracker: SessionTracker | null = null;
   private mcpRegistry: McpRegistry | null = null;
-  private mcpProxy: McpProxy | null = null;
 
   /** Path used to load the config at start-time; re-used by reload(). */
   private configPath: string | null = null;
@@ -335,16 +319,6 @@ export class TalondDaemon {
       }
     }
     await this.mcpRegistry.startAll();
-    this.mcpProxy = new McpProxy(this.mcpRegistry, this.logger);
-
-    const containerFactory = new ContainerFactory();
-    this.sandboxManager = new SandboxManager(
-      containerFactory,
-      config.sandbox,
-      this.dataDir,
-      this.logger,
-    );
-    this.sdkProcessSpawner = new SdkProcessSpawner(containerFactory.getDocker(), this.logger);
     this.sessionTracker = new SessionTracker();
 
     // ------------------------------------------------------------------
@@ -497,18 +471,11 @@ export class TalondDaemon {
     if (this.mcpRegistry !== null) {
       await this.mcpRegistry.stopAll();
       this.mcpRegistry = null;
-      this.mcpProxy = null;
     }
 
     if (this.sessionTracker !== null) {
       this.sessionTracker.clearAll();
       this.sessionTracker = null;
-    }
-
-    if (this.sandboxManager !== null) {
-      await this.sandboxManager.shutdownAll();
-      this.sandboxManager = null;
-      this.sdkProcessSpawner = null;
     }
 
     // 3. Stop queue processing
@@ -936,7 +903,6 @@ export class TalondDaemon {
       }
     }
     await this.mcpRegistry.startAll();
-    this.mcpProxy = new McpProxy(this.mcpRegistry, this.logger);
   }
 
   // ---------------------------------------------------------------------------
@@ -981,7 +947,7 @@ export class TalondDaemon {
           success: true,
           data: {
             uptimeMs: healthData.uptime,
-            activeContainers: this.sandboxManager?.activeCount() ?? 0,
+            activeContainers: 0,
             queueDepth:
               healthData.queueStats.pending +
               healthData.queueStats.claimed +
@@ -1050,8 +1016,6 @@ export class TalondDaemon {
     const channelRepo = this.channelRepo;
     const personaRepo = this.personaRepo;
     const personaLoader = this.personaLoader;
-    const sandboxManager = this.sandboxManager;
-    const sdkProcessSpawner = this.sdkProcessSpawner;
     const sessionTracker = this.sessionTracker;
     const channelRegistry = this.channelRegistry;
     const messageRepo = this.messageRepo;
@@ -1064,8 +1028,6 @@ export class TalondDaemon {
       channelRepo === null ||
       personaRepo === null ||
       personaLoader === null ||
-      sandboxManager === null ||
-      sdkProcessSpawner === null ||
       sessionTracker === null ||
       channelRegistry === null ||
       messageRepo === null ||
@@ -1350,24 +1312,3 @@ class RepositoryAuditStore implements AuditStore {
   }
 }
 
-function createConnector(
-  type: string,
-  name: string,
-  config: Record<string, unknown>,
-  logger: pino.Logger,
-): ChannelConnector | null {
-  switch (type) {
-    case 'telegram':
-      return new TelegramConnector(config as unknown as TelegramConfig, name, logger);
-    case 'slack':
-      return new SlackConnector(config as unknown as SlackConfig, name, logger);
-    case 'discord':
-      return new DiscordConnector(config as unknown as DiscordConfig, name, logger);
-    case 'whatsapp':
-      return new WhatsAppConnector(config as unknown as WhatsAppConfig, name, logger);
-    case 'email':
-      return new EmailConnector(config as unknown as EmailConfig, name, logger);
-    default:
-      return null;
-  }
-}
