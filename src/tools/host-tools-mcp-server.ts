@@ -8,10 +8,14 @@
  * Unix domain socket and proxies tool calls from the agent to the daemon.
  *
  * Environment variables:
- *   TALOND_SOCKET   - Path to the Unix socket (required)
- *   TALOND_RUN_ID   - Current run ID (required)
- *   TALOND_THREAD_ID - Current thread ID (required)
- *   TALOND_PERSONA_ID - Current persona ID (required)
+ *   TALOND_SOCKET       - Path to the Unix socket (required)
+ *   TALOND_RUN_ID       - Current run ID (required)
+ *   TALOND_THREAD_ID    - Current thread ID (required)
+ *   TALOND_PERSONA_ID   - Current persona ID (required)
+ *   TALOND_ALLOWED_TOOLS - Comma-separated list of MCP tool names the persona
+ *                          may use (e.g. "channel_send,memory_access"). When set,
+ *                          only these tools are listed and callable. When unset or
+ *                          empty, NO host tools are exposed (secure default).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -319,11 +323,41 @@ function getEnvRequired(name: string): string {
   return value;
 }
 
+/** Parse TALOND_ALLOWED_TOOLS into a Set of MCP tool names. */
+function parseAllowedTools(): Set<string> | null {
+  const raw = process.env.TALOND_ALLOWED_TOOLS;
+  if (raw === undefined || raw === '') {
+    return null; // No tools allowed (secure default)
+  }
+  if (raw === '*') {
+    return null; // Sentinel: all tools allowed (bypass filtering)
+  }
+  const names = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return new Set(names);
+}
+
 async function main(): Promise<void> {
   const socketPath = getEnvRequired('TALOND_SOCKET');
   const runId = getEnvRequired('TALOND_RUN_ID');
   const threadId = getEnvRequired('TALOND_THREAD_ID');
   const personaId = getEnvRequired('TALOND_PERSONA_ID');
+
+  // Determine which tools this persona may use.
+  const allowedToolsEnv = process.env.TALOND_ALLOWED_TOOLS;
+  const allowedSet = parseAllowedTools();
+  // Filter: if allowedSet is null AND env was '*', expose all; if null AND env
+  // was empty/missing, expose none.
+  const exposeAll = allowedToolsEnv === '*';
+  const filteredTools =
+    exposeAll || allowedSet === null
+      ? exposeAll
+        ? TOOLS
+        : [] // No env var → expose nothing
+      : TOOLS.filter((t) => allowedSet.has(t.name));
+  const allowedToolNames = new Set(filteredTools.map((t) => t.name));
 
   console.error('[host-tools-mcp] Starting with socket:', socketPath);
   console.error(
@@ -331,6 +365,10 @@ async function main(): Promise<void> {
     runId,
     threadId,
     personaId,
+  );
+  console.error(
+    '[host-tools-mcp] Allowed tools: %s',
+    filteredTools.length > 0 ? filteredTools.map((t) => t.name).join(', ') : '(none)',
   );
 
   const client = new SocketClient(socketPath);
@@ -349,12 +387,27 @@ async function main(): Promise<void> {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
-      tools: TOOLS,
+      tools: filteredTools,
     };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+
+    // Enforce tool restrictions: reject calls to tools not in the allowed set.
+    if (!allowedToolNames.has(name)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              error: `Tool "${name}" is not allowed for this persona`,
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
 
     const handlerName = TOOL_NAME_MAP[name];
     if (!handlerName) {

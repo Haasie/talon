@@ -17,6 +17,8 @@ import { ChannelSendHandler, type ChannelSendArgs } from './host-tools/channel-s
 import { HttpProxyHandler, type HttpProxyArgs } from './host-tools/http-proxy.js';
 import { DbQueryHandler, type DbQueryArgs } from './host-tools/db-query.js';
 import { MemoryAccessHandler, type MemoryAccessArgs } from './host-tools/memory-access.js';
+import { isToolAllowed } from './tool-filter.js';
+import type { ResolvedCapabilities } from '../personas/persona-types.js';
 
 /** NDJSON request shape from MCP server. */
 interface BridgeRequest {
@@ -178,6 +180,30 @@ export class HostToolsBridge {
 
     const normalizedTool = TOOL_NAME_MAP[tool] || tool;
 
+    // Defense-in-depth: enforce persona capabilities at the bridge level.
+    // Even if the MCP server somehow exposes a disallowed tool, the bridge
+    // will reject it here.
+    const capabilitiesResult = this.resolvePersonaCapabilities(context.personaId);
+    if (capabilitiesResult !== null) {
+      if (!isToolAllowed(normalizedTool, capabilitiesResult)) {
+        const errorResponse: BridgeResponse = {
+          id,
+          result: {
+            requestId: context.requestId ?? 'unknown',
+            tool: normalizedTool,
+            status: 'error',
+            error: `Tool "${normalizedTool}" is not allowed for persona "${context.personaId}"`,
+          },
+        };
+        this.sendResponse(socket, errorResponse);
+        this.ctx.logger.warn(
+          { personaId: context.personaId, tool: normalizedTool },
+          'host-tools-bridge: rejected disallowed tool call',
+        );
+        return;
+      }
+    }
+
     const timeoutHandle = setTimeout(() => {
       const errorResponse: BridgeResponse = {
         id,
@@ -203,6 +229,37 @@ export class HostToolsBridge {
 
   private sendResponse(socket: net.Socket, response: BridgeResponse): void {
     socket.write(JSON.stringify(response) + '\n');
+  }
+
+  /**
+   * Resolves persona capabilities by looking up the persona name from the
+   * database and then fetching the loaded persona from the PersonaLoader cache.
+   *
+   * Returns null if the persona cannot be found (graceful degradation — the
+   * bridge will still process the request, since the MCP server already
+   * enforces the filter at listing time).
+   */
+  private resolvePersonaCapabilities(personaId: string): ResolvedCapabilities | null {
+    const personaRowResult = this.ctx.repos.persona.findById(personaId);
+    if (personaRowResult.isErr() || personaRowResult.value === null) {
+      this.ctx.logger.debug(
+        { personaId },
+        'host-tools-bridge: persona not found in DB, skipping capability check',
+      );
+      return null;
+    }
+
+    const personaName = personaRowResult.value.name;
+    const loadedResult = this.ctx.personaLoader.getByName(personaName);
+    if (loadedResult.isErr() || loadedResult.value === undefined) {
+      this.ctx.logger.debug(
+        { personaId, personaName },
+        'host-tools-bridge: loaded persona not found, skipping capability check',
+      );
+      return null;
+    }
+
+    return loadedResult.value.resolvedCapabilities;
   }
 
   private async dispatch(
