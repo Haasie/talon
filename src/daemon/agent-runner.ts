@@ -150,6 +150,7 @@ export class AgentRunner {
         command: 'node',
         args: [join(import.meta.dirname, '../../dist/tools/host-tools-mcp-server.js')],
         env: {
+          ...process.env,
           TALOND_SOCKET: this.ctx.hostToolsBridge.path,
           TALOND_RUN_ID: runId,
           TALOND_THREAD_ID: item.threadId,
