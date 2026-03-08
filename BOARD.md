@@ -38,6 +38,7 @@ _Nothing currently in progress._
 | TASK-039 | Systemd service unit | Create a systemd service file for `talond` so it auto-starts on boot, restarts on crash, and manages env vars via an EnvironmentFile. |
 | TASK-040 | Per-persona tool restrictions | Map persona `capabilities.allow` / `capabilities.requireApproval` to Agent SDK `allowedTools` / `disallowedTools` / `canUseTool`. Currently all tools are allowed via `bypassPermissions`. |
 | TASK-057 | Extract AgentRunner from daemon.ts | `daemon.ts` is 1373 lines. Extract `handleQueueItem` into an `AgentRunner` class owning: Agent SDK query, MCP wiring, typing indicators, session management, output parsing. Also extract `DaemonBootstrap` for the `start()` init sequence. Daemon becomes a thin lifecycle orchestrator. Prepares cleanly for Docker sandbox mode (just swap `spawnClaudeCodeProcess` in the runner). |
+| TASK-059 | Native .env file loading | Add `dotenv` to load a `.env` file at daemon startup so env vars do not require external tooling like direnv or manual exports. Load before config parsing so `${VAR}` substitution in `talond.yaml` and skill MCP configs works automatically. |
 
 ---
 
@@ -85,6 +86,6 @@ _Nothing currently in progress._
 ## 📝 Notes
 
 - **Auth**: Running on Claude Max subscription via `claude login` on VM. No API key needed.
-- **VM**: 10.0.80.200, user `talon`, Debian 13, Node.js 22, Claude Code 2.1.71
+- **VM**: 10.0.1.95, user `talon`, Debian 13, Node.js 22, Claude Code 2.1.71
 - **Security**: Telegram bot restricted to chat ID `74575531` via `allowedChatIds`
 - **Architecture decision**: Agent SDK runs on host (not in Docker) for v1. Docker isolation deferred to TASK-037 for defense-in-depth against prompt injection from untrusted input.
