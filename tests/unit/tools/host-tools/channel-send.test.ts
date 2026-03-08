@@ -22,6 +22,12 @@ import type { ChannelConnector } from '../../../../src/channels/channel-types.js
 // Helpers
 // ---------------------------------------------------------------------------
 
+function makeThreadRepo() {
+  return {
+    findById: vi.fn().mockReturnValue(ok({ id: 'thread-001', external_id: 'ext-001', channel_id: 'chan-001' })),
+  } as any;
+}
+
 function makeLogger() {
   return {
     info: vi.fn(),
@@ -102,7 +108,7 @@ describe('ChannelSendHandler — success', () => {
   it('sends a message and returns success result', async () => {
     const connector = makeConnector(ok(undefined));
     const registry = makeRegistry(connector);
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const result = await handler.execute(makeArgs(), makeContext());
 
@@ -115,22 +121,22 @@ describe('ChannelSendHandler — success', () => {
   it('calls connector.send with thread-scoped externalThreadId', async () => {
     const connector = makeConnector(ok(undefined));
     const registry = makeRegistry(connector);
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     await handler.execute(makeArgs(), makeContext({ threadId: 'thread-xyz' }));
 
-    expect(connector.send).toHaveBeenCalledWith('thread-xyz', expect.objectContaining({ body: 'Hello from persona!' }));
+    expect(connector.send).toHaveBeenCalledWith('ext-001', expect.objectContaining({ body: 'Hello from persona!' }));
   });
 
   it('passes replyTo in the output metadata', async () => {
     const connector = makeConnector(ok(undefined));
     const registry = makeRegistry(connector);
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     await handler.execute(makeArgs({ replyTo: 'msg-123' }), makeContext());
 
     expect(connector.send).toHaveBeenCalledWith(
-      'thread-001',
+      'ext-001',
       expect.objectContaining({ metadata: { replyTo: 'msg-123' } }),
     );
   });
@@ -138,7 +144,7 @@ describe('ChannelSendHandler — success', () => {
   it('uses unknown as requestId when context.requestId is not provided', async () => {
     const connector = makeConnector(ok(undefined));
     const registry = makeRegistry(connector);
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const context = makeContext();
     delete (context as Partial<ToolExecutionContext>).requestId;
@@ -155,7 +161,7 @@ describe('ChannelSendHandler — success', () => {
 describe('ChannelSendHandler — arg validation', () => {
   it('returns error when channelId is missing', async () => {
     const registry = makeRegistry();
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const result = await handler.execute(makeArgs({ channelId: '' }), makeContext());
 
@@ -165,7 +171,7 @@ describe('ChannelSendHandler — arg validation', () => {
 
   it('returns error when channelId is whitespace', async () => {
     const registry = makeRegistry();
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const result = await handler.execute(makeArgs({ channelId: '   ' }), makeContext());
 
@@ -175,7 +181,7 @@ describe('ChannelSendHandler — arg validation', () => {
 
   it('returns error when content is missing', async () => {
     const registry = makeRegistry();
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const result = await handler.execute(makeArgs({ content: '' }), makeContext());
 
@@ -185,7 +191,7 @@ describe('ChannelSendHandler — arg validation', () => {
 
   it('returns error when content is whitespace', async () => {
     const registry = makeRegistry();
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const result = await handler.execute(makeArgs({ content: '   ' }), makeContext());
 
@@ -201,7 +207,7 @@ describe('ChannelSendHandler — arg validation', () => {
 describe('ChannelSendHandler — channel not found', () => {
   it('returns error when channel is not in registry', async () => {
     const registry = makeRegistry(undefined);
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const result = await handler.execute(makeArgs({ channelId: 'unknown-channel' }), makeContext());
 
@@ -219,7 +225,7 @@ describe('ChannelSendHandler — connector send failure', () => {
     const channelErr = new ChannelError('Telegram API timeout');
     const connector = makeConnector(err(channelErr));
     const registry = makeRegistry(connector);
-    const handler = new ChannelSendHandler({ channelRegistry: registry, logger: makeLogger() });
+    const handler = new ChannelSendHandler({ channelRegistry: registry, threadRepository: makeThreadRepo(), logger: makeLogger() });
 
     const result = await handler.execute(makeArgs(), makeContext());
 

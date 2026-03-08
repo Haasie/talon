@@ -9,6 +9,7 @@
 import type pino from 'pino';
 import type { ToolManifest, ToolCallResult } from '../tool-types.js';
 import type { ChannelRegistry } from '../../channels/channel-registry.js';
+import type { ThreadRepository } from '../../core/database/repositories/thread-repository.js';
 import { ToolError } from '../../core/errors/error-types.js';
 
 /** Manifest for the channel.send host tool. */
@@ -53,6 +54,7 @@ export class ChannelSendHandler {
   constructor(
     private readonly deps: {
       channelRegistry: ChannelRegistry;
+      threadRepository: ThreadRepository;
       logger: pino.Logger;
     },
   ) {}
@@ -100,7 +102,13 @@ export class ChannelSendHandler {
       ...(replyTo ? { metadata: { replyTo } } : {}),
     };
 
-    const externalThreadId = context.threadId;
+    // Resolve the thread's external_id (e.g. Telegram chat_id) from the DB.
+    const threadResult = this.deps.threadRepository.findById(context.threadId);
+    const externalThreadId =
+      threadResult.isOk() && threadResult.value
+        ? threadResult.value.external_id
+        : context.threadId;
+
     const result = await connector.send(externalThreadId, output);
 
     if (result.isErr()) {
