@@ -124,7 +124,7 @@ function makeMockContext(configOverrides: Record<string, unknown> = {}): DaemonC
     skillResolver: {} as any,
     loadedSkills: [],
     messagePipeline: {} as any,
-    hostToolsBridge: { path: '/tmp/host-tools.sock', stop: vi.fn() } as any,
+    hostToolsBridge: { path: '/tmp/host-tools.sock', start: vi.fn(), stop: vi.fn() } as any,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() } as any,
   };
 }

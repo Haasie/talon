@@ -89,8 +89,9 @@ export class TalondDaemon {
     }
     await this.mcpRegistry.startAll();
 
-    // 3. Create the agent runner.
+    // 3. Create the agent runner and start the host-tools bridge.
     this.agentRunner = new AgentRunner(this.ctx);
+    this.ctx.hostToolsBridge.start();
 
     // 4. Start channel connectors (non-fatal).
     try {

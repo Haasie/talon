@@ -136,7 +136,7 @@ function makeMockContext(overrides: Partial<DaemonContext> = {}): DaemonContext 
     skillResolver: {} as any,
     loadedSkills: [],
     messagePipeline: {} as any,
-    hostToolsBridge: { path: '/tmp/host-tools.sock', stop: vi.fn() } as any,
+    hostToolsBridge: { path: '/tmp/host-tools.sock', start: vi.fn(), stop: vi.fn() } as any,
     logger: mockLogger as any,
     ...overrides,
   };
