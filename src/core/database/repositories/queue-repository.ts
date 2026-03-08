@@ -277,14 +277,19 @@ export class QueueRepository extends BaseRepository {
     }
     try {
       const placeholders = statuses.map(() => '?').join(', ');
-      // Detach runs from queue items before deleting (FK constraint).
-      this.db.prepare(
-        `UPDATE runs SET queue_item_id = NULL WHERE queue_item_id IN (SELECT id FROM queue_items WHERE status IN (${placeholders}))`,
-      ).run(...statuses);
-      const result = this.db.prepare(
-        `DELETE FROM queue_items WHERE status IN (${placeholders})`,
-      ).run(...statuses);
-      return ok(result.changes);
+      const purgeTransaction = this.db.transaction(() => {
+        // Detach runs from queue items before deleting (FK constraint).
+        this.db.prepare(
+          `UPDATE runs SET queue_item_id = NULL WHERE queue_item_id IN (SELECT id FROM queue_items WHERE status IN (${placeholders}))`,
+        ).run(...statuses);
+        // Delete messages referencing these queue items' runs.
+        // (messages.run_id -> runs.id, but runs are kept — only queue_item_id is nulled)
+        const result = this.db.prepare(
+          `DELETE FROM queue_items WHERE status IN (${placeholders})`,
+        ).run(...statuses);
+        return result.changes;
+      });
+      return ok(purgeTransaction());
     } catch (cause) {
       return err(new DbError(`Failed to purge queue items: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
