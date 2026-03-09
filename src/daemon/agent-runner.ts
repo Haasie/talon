@@ -127,10 +127,8 @@ export class AgentRunner {
       // tools, hooks, MCP servers, session resumption, and permissions.
       // ----------------------------------------------------------------
 
-      // Session resume disabled: the Agent SDK hangs or takes excessively long
-      // when resuming sessions with MCP servers attached. Revisit when the SDK
-      // stabilizes session resume + MCP interaction.
-      const existingSessionId: string | undefined = undefined;
+      // Look up existing session for this thread to enable conversation memory.
+      const existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
 
       this.ctx.logger.info(
         {
