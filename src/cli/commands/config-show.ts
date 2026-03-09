@@ -38,8 +38,8 @@ const MASK = '***MASKED***';
 // Core logic (importable)
 // ---------------------------------------------------------------------------
 
-/** Pattern to match ${VAR_NAME} placeholders. */
-const ENV_VAR_PATTERN = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
+/** Pattern to match ${VAR_NAME} placeholders — aligned with config-loader's \w+ pattern. */
+const ENV_VAR_PATTERN = /\$\{(\w+)\}/g;
 
 /**
  * Reads the config file, substitutes env vars, and optionally masks secrets.

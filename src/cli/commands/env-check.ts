@@ -26,8 +26,8 @@ export interface EnvVar {
 // Core logic (importable)
 // ---------------------------------------------------------------------------
 
-/** Pattern to match ${VAR_NAME} placeholders in config. */
-const ENV_VAR_PATTERN = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
+/** Pattern to match ${VAR_NAME} placeholders — aligned with config-loader's \w+ pattern. */
+const ENV_VAR_PATTERN = /\$\{(\w+)\}/g;
 
 /**
  * Scans the config file for ${ENV_VAR} placeholders and checks
