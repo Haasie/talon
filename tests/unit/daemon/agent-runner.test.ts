@@ -312,6 +312,86 @@ describe('AgentRunner', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Session restore from DB (BUG-008)
+  // -------------------------------------------------------------------------
+
+  describe('session restore from DB on restart', () => {
+    it('falls back to DB session when in-memory tracker has none', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue(undefined);
+      vi.mocked(ctx.repos.run.getLatestSessionId).mockReturnValue(ok('session-from-db'));
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      // Should have passed the DB session to the agent SDK
+      const queryCall = mockQuery.mock.calls[0]![0] as { options: { resume?: string } };
+      expect(queryCall.options.resume).toBe('session-from-db');
+    });
+
+    it('does not eagerly seed tracker from DB (waits for successful run)', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue(undefined);
+      vi.mocked(ctx.repos.run.getLatestSessionId).mockReturnValue(ok('session-from-db'));
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      // The tracker should be seeded with the *result* session_id (session-abc-123),
+      // not the DB-restored one (session-from-db), because the SDK returns a new
+      // session_id after a successful resumed run.
+      expect(ctx.sessionTracker.setSessionId).toHaveBeenCalledWith(
+        'thread-001',
+        'session-abc-123',
+      );
+    });
+
+    it('does not query DB when in-memory session exists', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue('session-in-memory');
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      expect(ctx.repos.run.getLatestSessionId).not.toHaveBeenCalled();
+    });
+
+    it('records DB session_id in run insert', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue(undefined);
+      vi.mocked(ctx.repos.run.getLatestSessionId).mockReturnValue(ok('session-from-db'));
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      expect(ctx.repos.run.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ session_id: 'session-from-db' }),
+      );
+    });
+
+    it('starts fresh when neither in-memory nor DB session exists', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue(undefined);
+      vi.mocked(ctx.repos.run.getLatestSessionId).mockReturnValue(ok(null));
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as { options: { resume?: string } };
+      expect(queryCall.options.resume).toBeUndefined();
+    });
+
+    it('starts fresh when DB lookup fails (does not crash)', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue(undefined);
+      vi.mocked(ctx.repos.run.getLatestSessionId).mockReturnValue(
+        err(new Error('DB read error') as any),
+      );
+      const item = makeQueueItem();
+
+      const result = await runner.run(item);
+
+      expect(result.isOk()).toBe(true);
+      const queryCall = mockQuery.mock.calls[0]![0] as { options: { resume?: string } };
+      expect(queryCall.options.resume).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Agent error handling
   // -------------------------------------------------------------------------
 

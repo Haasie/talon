@@ -47,6 +47,21 @@ export class AgentRunner {
     }
     const loadedPersona = loadedPersonaResult.value;
 
+    // Resolve session ID: check in-memory tracker first, fall back to DB.
+    // We do NOT seed the tracker here — only after a successful run (line ~335)
+    // to avoid stranding a thread on a stale/expired session ID.
+    let resolvedSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
+    if (!resolvedSessionId) {
+      const dbSessionResult = this.ctx.repos.run.getLatestSessionId(item.threadId);
+      if (dbSessionResult.isOk() && dbSessionResult.value) {
+        resolvedSessionId = dbSessionResult.value;
+        this.ctx.logger.info(
+          { threadId: item.threadId, sessionId: resolvedSessionId },
+          'agent-sdk: restored session from DB after restart',
+        );
+      }
+    }
+
     const runId = uuidv4();
     const now = Date.now();
     const runInsert = this.ctx.repos.run.insert({
@@ -54,7 +69,7 @@ export class AgentRunner {
       thread_id: item.threadId,
       persona_id: personaId,
       sandbox_id: null,
-      session_id: this.ctx.sessionTracker.getSessionId(item.threadId) ?? null,
+      session_id: resolvedSessionId ?? null,
       status: 'running',
       parent_run_id: null,
       queue_item_id: item.id,
@@ -127,8 +142,8 @@ export class AgentRunner {
       // tools, hooks, MCP servers, session resumption, and permissions.
       // ----------------------------------------------------------------
 
-      // Look up existing session for this thread to enable conversation memory.
-      const existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
+      // Use the session ID resolved earlier (in-memory or DB fallback).
+      const existingSessionId = resolvedSessionId;
 
       this.ctx.logger.info(
         {

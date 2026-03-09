@@ -38,6 +38,8 @@
 | FIX-016 | Re-enable session resume for conversation memory | `cc3449c` |
 | TASK-060 | GPT-5.4 code review fixes (all 10 items) | PR #4 |
 | TASK-062 | Terminal channel connector + talonctl chat CLI | PR #5 |
+| BUG-007 | Compound PK (thread_id, id) for memory_items | PR #6 |
+| BUG-008 | Session resume across daemon restarts | PR #7 |
 
 ---
 
@@ -53,7 +55,6 @@ _Nothing currently in progress._
 |----|-------|-------------|
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
 | TASK-038 | talonctl as single source of truth | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. All config mutations (channels, personas, MCP, skills, bindings) should go through CLI. The setup skill should only call CLI commands, never write YAML. Needs: `add-channel`, `add-persona`, `add-mcp`, `add-skill`, `bind`, `env-check`. |
-| TASK-062 | Terminal channel connector | WebSocket-based channel for remote CLI access. Design: `docs/plans/2026-03-09-terminal-channel-design.md`. Server: TerminalConnector (WS server, token auth, persistent threads per clientId, persona override). Client: `talonctl chat --host --persona`. Rendered markdown output via marked-terminal. |
 
 ---
 
@@ -96,7 +97,7 @@ _Nothing currently in progress._
 | BUG-002 | `SdkProcessSpawner` is dead code now that Agent SDK runs on host — should be removed or repurposed for Docker mode | Low |
 | BUG-003 | `zod` peer dep conflict: Agent SDK `@0.2.71` requires `zod@^4.0.0`, project uses `zod@3.25.76`. Upgrade zod to v4 — `@anthropic-ai/sdk` and `@modelcontextprotocol/sdk` both support v4 in their peer ranges. | Medium |
 | BUG-007 | ~~Memory key (`id`) globally unique, collides across threads.~~ Fixed: compound PK `(thread_id, id)` via migration 002, all repo methods scope by thread_id. | Resolved |
-| BUG-008 | Session resume lost on daemon restart. `SessionTracker` is in-memory only — all conversation context is forgotten after restart. The `session_id` is already persisted in the `runs` table; fix: on first message in a thread, look up the most recent `session_id` from `runs` and seed `SessionTracker`. Affects all channels. | High |
+| BUG-008 | ~~Session resume lost on daemon restart.~~ Fixed: `AgentRunner` falls back to `getLatestSessionId()` from `runs` table when in-memory tracker is empty, then seeds the tracker. | Resolved |
 | BUG-004 | ~~`schedule.manage` host tool dead code~~ — Fixed: wired via host-tools MCP bridge + Unix socket. All 5 tools work (schedule, channel, memory, http, db). | Resolved |
 | BUG-005 | ~~`schedule.manage` sets `next_run_at: null`~~ — Fixed: computes `next_run_at` from cron expression on create/update. | Resolved |
 | BUG-006 | ~~Agent SDK session resume hangs when MCP servers are attached.~~ Re-enabled and working. | Resolved |
