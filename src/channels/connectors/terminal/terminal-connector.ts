@@ -118,23 +118,24 @@ export class TerminalConnector implements ChannelConnector {
   // Outbound
   // -------------------------------------------------------------------------
 
-  async send(externalThreadId: string, output: AgentOutput): Promise<Result<void, ChannelError>> {
+  send(externalThreadId: string, output: AgentOutput): Promise<Result<void, ChannelError>> {
     const ws = this.clients.get(externalThreadId);
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return err(new ChannelError(`terminal client "${externalThreadId}" is not connected`));
+      return Promise.resolve(err(new ChannelError(`terminal client "${externalThreadId}" is not connected`)));
     }
 
     const msg: ServerMessage = { type: 'response', body: this.format(output.body) };
     ws.send(JSON.stringify(msg));
-    return ok(undefined);
+    return Promise.resolve(ok(undefined));
   }
 
-  async sendTyping(externalThreadId: string): Promise<void> {
+  sendTyping(externalThreadId: string): Promise<void> {
     const ws = this.clients.get(externalThreadId);
     if (ws && ws.readyState === WebSocket.OPEN) {
       const msg: ServerMessage = { type: 'typing' };
       ws.send(JSON.stringify(msg));
     }
+    return Promise.resolve();
   }
 
   format(markdown: string): string {
@@ -149,10 +150,10 @@ export class TerminalConnector implements ChannelConnector {
   private handleConnection(ws: WebSocket): void {
     this.logger.debug({ channelName: this.name }, 'terminal: new connection');
 
-    ws.once('message', (data) => {
+    ws.once('message', (data: Buffer) => {
       let msg: ClientMessage;
       try {
-        msg = JSON.parse(data.toString()) as ClientMessage;
+        msg = JSON.parse(String(data)) as ClientMessage;
       } catch {
         this.sendError(ws, 'invalid JSON');
         ws.close();
@@ -186,8 +187,8 @@ export class TerminalConnector implements ChannelConnector {
       );
 
       // Listen for subsequent messages.
-      ws.on('message', (msgData) => {
-        this.handleMessage(ws, clientId, msgData.toString());
+      ws.on('message', (msgData: Buffer) => {
+        this.handleMessage(ws, clientId, String(msgData));
       });
 
       ws.on('close', () => {

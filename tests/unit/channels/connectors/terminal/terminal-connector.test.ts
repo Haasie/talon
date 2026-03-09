@@ -202,7 +202,7 @@ describe('TerminalConnector', () => {
     it('calls handler with correctly normalised InboundEvent', async () => {
       const received: InboundEvent[] = [];
       connector = new TerminalConnector(defaultConfig(), 'test-terminal', silentLogger());
-      connector.onMessage(async (event) => received.push(event));
+      connector.onMessage(async (event) => { received.push(event); });
       await connector.start();
 
       const ws = await connectClient(connector.port);
@@ -225,7 +225,7 @@ describe('TerminalConnector', () => {
     it('ignores messages from unauthenticated clients', async () => {
       const received: InboundEvent[] = [];
       connector = new TerminalConnector(defaultConfig(), 'test-terminal', silentLogger());
-      connector.onMessage(async (event) => received.push(event));
+      connector.onMessage(async (event) => { received.push(event); });
       await connector.start();
 
       const ws = await connectClient(connector.port);
@@ -244,7 +244,7 @@ describe('TerminalConnector', () => {
     it('uses clientId as externalThreadId for persistent threads', async () => {
       const received: InboundEvent[] = [];
       connector = new TerminalConnector(defaultConfig(), 'test-terminal', silentLogger());
-      connector.onMessage(async (event) => received.push(event));
+      connector.onMessage(async (event) => { received.push(event); });
       await connector.start();
 
       // First connection.
