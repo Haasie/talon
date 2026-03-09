@@ -2,7 +2,7 @@
 
 **Resilient, secure, extensible autonomous agent daemon.**
 
-[![Tests](https://img.shields.io/badge/tests-2211%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-2425%20passing-brightgreen)](#testing)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-blue)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-blue)](https://www.typescriptlang.org)
@@ -223,7 +223,12 @@ channels:
     type: telegram
     enabled: true
     config:
-      token: ${TELEGRAM_BOT_TOKEN}
+      botToken: ${TELEGRAM_BOT_TOKEN}
+
+bindings:
+  - persona: assistant
+    channel: my-telegram
+    isDefault: true
 
 schedules: []
 
@@ -254,6 +259,7 @@ dataDir: data
 | `ipc`                  | IPC polling settings and daemon IPC directory                                 |
 | `scheduler`            | Scheduler tick interval                                                       |
 | `auth`                 | `subscription` or `api_key` authentication mode                               |
+| `bindings`             | Channel-to-persona routing with default persona per channel                   |
 | `logLevel` / `dataDir` | Runtime logging level and data root                                           |
 
 ### Environment Variable Substitution
@@ -264,7 +270,8 @@ Credential fields support `${ENV_VAR}` syntax so you never hardcode secrets:
 channels:
   - name: my-telegram
     type: telegram
-    token: ${TELEGRAM_BOT_TOKEN}
+    config:
+      botToken: ${TELEGRAM_BOT_TOKEN}
 ```
 
 ---
@@ -281,10 +288,12 @@ Long-polling connector using the Telegram Bot API.
 channels:
   - name: my-telegram
     type: telegram
-    token: ${TELEGRAM_BOT_TOKEN}
-    allowed_user_ids:
-      - 123456789
-    polling: true
+    enabled: true
+    config:
+      botToken: ${TELEGRAM_BOT_TOKEN}
+      pollingTimeoutSec: 30
+      allowedChatIds:
+        - 123456789
 ```
 
 - **Inbound**: Long polling via `getUpdates`
@@ -300,9 +309,11 @@ Event-driven connector for Slack's Events API or Socket Mode.
 channels:
   - name: my-slack
     type: slack
-    bot_token: ${SLACK_BOT_TOKEN}
-    app_token: ${SLACK_APP_TOKEN}
-    signing_secret: ${SLACK_SIGNING_SECRET}
+    enabled: true
+    config:
+      botToken: ${SLACK_BOT_TOKEN}
+      appToken: ${SLACK_APP_TOKEN}
+      signingSecret: ${SLACK_SIGNING_SECRET}
 ```
 
 - **Inbound**: Events API webhooks or Socket Mode
@@ -319,10 +330,12 @@ Push-based connector using the Discord Gateway and REST API.
 channels:
   - name: my-discord
     type: discord
-    token: ${DISCORD_BOT_TOKEN}
-    application_id: '123456789'
-    allowed_channel_ids:
-      - '987654321'
+    enabled: true
+    config:
+      botToken: ${DISCORD_BOT_TOKEN}
+      applicationId: '123456789'
+      allowedChannelIds:
+        - '987654321'
 ```
 
 - **Inbound**: Gateway `MESSAGE_CREATE` events
@@ -339,10 +352,11 @@ Webhook-based connector using the WhatsApp Cloud API.
 channels:
   - name: my-whatsapp
     type: whatsapp
-    phone_number_id: '123456789'
-    access_token: ${WHATSAPP_ACCESS_TOKEN}
-    verify_token: ${WHATSAPP_VERIFY_TOKEN}
-    webhook_path: /webhook/whatsapp
+    enabled: true
+    config:
+      phoneNumberId: '123456789'
+      accessToken: ${WHATSAPP_ACCESS_TOKEN}
+      verifyToken: ${WHATSAPP_VERIFY_TOKEN}
 ```
 
 - **Inbound**: Webhook events via `feedWebhook()`
@@ -358,20 +372,19 @@ Dual-mode connector with IMAP polling and SMTP outbound.
 channels:
   - name: my-email
     type: email
-    imap:
-      host: mail.example.com
-      port: 993
-      user: agent@example.com
-      password: ${EMAIL_PASSWORD}
-    smtp:
-      host: mail.example.com
-      port: 587
-      user: agent@example.com
-      password: ${EMAIL_PASSWORD}
-    from_address: agent@example.com
-    allowed_senders:
-      - you@example.com
-    polling_interval_ms: 30000
+    enabled: true
+    config:
+      imapHost: imap.gmail.com
+      imapPort: 993
+      imapUser: agent@example.com
+      imapPass: ${EMAIL_PASSWORD}
+      imapSecure: true
+      smtpHost: smtp.gmail.com
+      smtpPort: 587
+      smtpUser: agent@example.com
+      smtpPass: ${EMAIL_PASSWORD}
+      smtpSecure: false
+      fromAddress: 'Talon <agent@example.com>'
 ```
 
 - **Inbound**: IMAP polling (or webhook via `feedInbound()`)
@@ -566,6 +579,44 @@ npx talonctl setup --config talond.yaml --data-dir data
 npx talonctl add-channel --name work-slack --type slack
 npx talonctl add-persona --name researcher
 npx talonctl add-skill --name web-search --persona researcher
+```
+
+### Channel & Persona Management
+
+| Command                                           | Description                                              |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| `talonctl list-channels`                          | List all configured channels                             |
+| `talonctl list-personas`                          | List all configured personas                             |
+| `talonctl list-skills`                            | List all configured skills across personas               |
+| `talonctl bind --persona <p> --channel <c>`       | Bind a persona to a channel (first binding becomes default) |
+| `talonctl unbind --persona <p> --channel <c>`     | Remove a persona-channel binding                         |
+| `talonctl remove-channel --name <n>`              | Remove a channel and its bindings                        |
+| `talonctl remove-persona --name <n>`              | Remove a persona, its directory, and bindings            |
+| `talonctl add-mcp --name <n> --command <cmd>`     | Add an MCP server to a persona                           |
+| `talonctl env-check`                              | Audit config for `${ENV_VAR}` placeholders and report missing env vars |
+| `talonctl config-show`                            | Display resolved config with secrets masked              |
+
+```bash
+# List what's configured
+npx talonctl list-channels
+npx talonctl list-personas
+npx talonctl list-skills
+
+# Bind a persona to a channel
+npx talonctl bind --persona assistant --channel my-telegram
+
+# Remove a channel (cascades to bindings)
+npx talonctl remove-channel --name old-slack
+
+# Add an MCP server to a persona
+npx talonctl add-mcp --name web-search --persona assistant \
+  --command npx --args @anthropic-ai/mcp-web-search --transport stdio
+
+# Check for missing environment variables
+npx talonctl env-check
+
+# Show resolved config (secrets masked)
+npx talonctl config-show
 ```
 
 ### Database and Operations
