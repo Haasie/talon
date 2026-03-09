@@ -97,7 +97,7 @@ function makeMockContext(): DaemonContext {
     channelRegistry: {
       get: vi.fn().mockReturnValue({
         send: vi.fn().mockResolvedValue(ok(undefined)),
-        sendTyping: vi.fn(),
+        sendTyping: vi.fn().mockResolvedValue(undefined),
       }),
       listAll: vi.fn().mockReturnValue([
         { name: 'test-channel' },
