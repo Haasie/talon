@@ -8,6 +8,7 @@
  */
 
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../core/config/config-loader.js';
@@ -57,6 +58,13 @@ export async function backupCommand(options: {
   const backupPath =
     options.backupPath ?? path.join(dataDir, 'backups', `talond-${timestamp}.sqlite`);
 
+  // Validate backup path ends with .sqlite extension.
+  if (!backupPath.endsWith('.sqlite')) {
+    console.error(`Error: Backup path must end with .sqlite extension.`);
+    process.exit(1);
+    return;
+  }
+
   console.log(`Source database: ${dbPath}`);
   console.log(`Backup path:     ${backupPath}`);
 
@@ -94,8 +102,24 @@ export async function backupCommand(options: {
   }
 
   if (backupSucceeded) {
+    // Verify the backup file was actually created.
+    if (!existsSync(backupPath)) {
+      console.error(`Error: Backup file "${backupPath}" was not created. VACUUM INTO may have failed silently.`);
+      process.exit(1);
+      return;
+    }
+
+    const stat = await fs.stat(backupPath);
+    if (stat.size === 0) {
+      console.error(`Error: Backup file "${backupPath}" is empty.`);
+      process.exit(1);
+      return;
+    }
+
     const completedAt = new Date().toISOString();
     displayBackupResult({ backupPath, completedAt });
+    const sizeMb = (stat.size / (1024 * 1024)).toFixed(2);
+    console.log(`Backup size:       ${sizeMb} MB`);
   }
 }
 
