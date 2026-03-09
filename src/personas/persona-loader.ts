@@ -9,7 +9,8 @@
  *   5. Maintain an in-process cache for fast name-based lookups.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { ok, err, type Result } from 'neverthrow';
 import type pino from 'pino';
@@ -98,26 +99,33 @@ export class PersonaLoader {
       systemPromptContent = readResult.value;
     }
 
-    // 2. Resolve effective capabilities (persona-level only at load time;
+    // 2. Read personality folder if present (sibling to system prompt file).
+    let personalityContent: string | undefined;
+    if (config.systemPromptFile) {
+      personalityContent = await this.readPersonalityFolder(config.systemPromptFile, config.name);
+    }
+
+    // 3. Resolve effective capabilities (persona-level only at load time;
     //    skill-level merging happens at runtime when skills are attached).
     const resolvedCapabilities: ResolvedCapabilities = mergeCapabilities(config.capabilities);
 
-    // 3. Validate labels — emit warnings but never block loading.
+    // 4. Validate labels — emit warnings but never block loading.
     const { warnings } = validateCapabilityLabels(resolvedCapabilities);
     for (const warning of warnings) {
       this.logger.warn({ persona: config.name }, warning);
     }
 
-    // 4. Upsert to the database.
+    // 5. Upsert to the database.
     const upsertResult = this.upsertPersona(config);
     if (upsertResult.isErr()) {
       return err(upsertResult.error);
     }
 
-    // 5. Build the loaded persona and cache it.
+    // 6. Build the loaded persona and cache it.
     const loadedPersona: LoadedPersona = {
       config,
       systemPromptContent,
+      personalityContent,
       resolvedCapabilities,
     };
 
@@ -149,6 +157,43 @@ export class PersonaLoader {
         ),
       );
     }
+  }
+
+  /**
+   * Reads all `.md` files from the `personality/` folder adjacent to the system
+   * prompt file. Files are sorted alphabetically and concatenated with double
+   * newlines. Returns `undefined` if the folder doesn't exist or is empty.
+   */
+  private async readPersonalityFolder(
+    systemPromptFile: string,
+    personaName: string,
+  ): Promise<string | undefined> {
+    const personaDir = dirname(systemPromptFile);
+    const personalityDir = join(personaDir, 'personality');
+
+    let entries: string[];
+    try {
+      entries = await readdir(personalityDir);
+    } catch {
+      // Folder doesn't exist — that's fine.
+      return undefined;
+    }
+
+    const mdFiles = entries.filter((f) => f.endsWith('.md')).sort();
+    if (mdFiles.length === 0) return undefined;
+
+    const contents: string[] = [];
+    for (const file of mdFiles) {
+      const content = await readFile(join(personalityDir, file), 'utf-8');
+      contents.push(content.trim());
+    }
+
+    this.logger.debug(
+      { persona: personaName, files: mdFiles.length },
+      'personality files loaded',
+    );
+
+    return contents.join('\n\n');
   }
 
   /**

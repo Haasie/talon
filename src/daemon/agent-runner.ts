@@ -133,7 +133,12 @@ export class AgentRunner {
         .filter(Boolean)
         .join('\n');
 
-      const systemPrompt = [loadedPersona.systemPromptContent ?? '', skillPrompt, channelContext]
+      const systemPrompt = [
+        loadedPersona.systemPromptContent ?? '',
+        loadedPersona.personalityContent ?? '',
+        skillPrompt,
+        channelContext,
+      ]
         .filter(Boolean)
         .join('\n\n');
 

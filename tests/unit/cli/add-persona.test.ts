@@ -120,6 +120,17 @@ describe('addPersona()', () => {
     expect(content).toBe('# Custom content\n');
   });
 
+  it('creates a personality directory with example file', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    await addPersona({ name: 'alfred', configPath: p, personasDir });
+
+    const personalityDir = join(personasDir, 'alfred', 'personality');
+    const example = readFileSync(join(personalityDir, '01-tone.md'), 'utf-8');
+    expect(example).toContain('Tone');
+  });
+
   it('creates personas array if missing from config', async () => {
     const p = writeYaml('logLevel: info\n');
     const personasDir = join(tmpDir, 'personas');

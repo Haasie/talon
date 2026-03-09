@@ -48,6 +48,12 @@ export interface LoadedPersona {
    * and the file was read successfully. `undefined` otherwise.
    */
   systemPromptContent?: string;
+  /**
+   * Concatenated content of all `personality/*.md` files (sorted alphabetically).
+   * Injected into the system prompt after `systemPromptContent` and before skill fragments.
+   * `undefined` if the personality folder doesn't exist or is empty.
+   */
+  personalityContent?: string;
   /** Effective capability policy after merging persona + skill grants. */
   resolvedCapabilities: ResolvedCapabilities;
 }
