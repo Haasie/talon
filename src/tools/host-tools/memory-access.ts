@@ -5,6 +5,9 @@
  * mediates all memory operations to ensure isolation between threads and
  * enforce size limits.
  *
+ * Thread isolation is enforced at the schema level: the primary key is
+ * (thread_id, id), so all lookups are inherently scoped to the thread.
+ *
  * Gated by `memory.read:thread` (read ops) and `memory.write:thread` (write ops).
  */
 
@@ -39,7 +42,8 @@ const VALID_OPERATIONS = new Set(['read', 'write', 'delete', 'list']);
  * Handler class for the memory.access host tool.
  *
  * Dispatches to MemoryRepository for the underlying SQLite operations.
- * All memory items are scoped to the thread in the execution context.
+ * All memory items are scoped to the thread in the execution context
+ * via the compound primary key (thread_id, id).
  *
  * Note: The memory.access tool uses a simplified key/value model on top
  * of the MemoryItemRow schema. The `key` maps to the row `id`, and the
@@ -109,7 +113,7 @@ export class MemoryAccessHandler {
     }
   }
 
-  /** Handle the 'read' operation — look up a memory item by key. */
+  /** Handle the 'read' operation — look up a memory item by (threadId, key). */
   private handleRead(
     args: MemoryAccessArgs,
     context: ToolExecutionContext,
@@ -123,7 +127,7 @@ export class MemoryAccessHandler {
       return { requestId, tool: 'memory.access', status: 'error', error: error.message };
     }
 
-    const result = this.deps.memoryRepository.findById(key);
+    const result = this.deps.memoryRepository.findById(context.threadId, key);
     if (result.isErr()) {
       const msg = `memory.access: read failed — ${result.error.message}`;
       this.deps.logger.error({ requestId, key, err: result.error }, msg);
@@ -131,15 +135,6 @@ export class MemoryAccessHandler {
     }
 
     const item = result.value;
-
-    // Ensure the item belongs to the current thread (security check)
-    if (item && item.thread_id !== context.threadId) {
-      const error = new ToolError(
-        `memory.access: key "${key}" does not belong to thread "${context.threadId}"`,
-      );
-      this.deps.logger.warn({ requestId, key, threadId: context.threadId }, error.message);
-      return { requestId, tool: 'memory.access', status: 'error', error: error.message };
-    }
 
     this.deps.logger.debug({ requestId, key, found: item !== null }, 'memory.access: read complete');
 
@@ -151,7 +146,7 @@ export class MemoryAccessHandler {
     };
   }
 
-  /** Handle the 'write' operation — upsert a memory item. */
+  /** Handle the 'write' operation — upsert a memory item scoped to thread. */
   private handleWrite(
     args: MemoryAccessArgs,
     context: ToolExecutionContext,
@@ -169,29 +164,24 @@ export class MemoryAccessHandler {
     const contentStr = typeof value === 'string' ? value : JSON.stringify(value);
     const memType = resolveMemoryType(namespace);
 
-    // Check if item already exists (to decide insert vs. update)
-    const existing = this.deps.memoryRepository.findById(itemKey);
+    // Check if item already exists in this thread (to decide insert vs. update)
+    const existing = this.deps.memoryRepository.findById(context.threadId, itemKey);
     if (existing.isErr()) {
       const msg = `memory.access: write pre-check failed — ${existing.error.message}`;
       this.deps.logger.error({ requestId, key: itemKey, err: existing.error }, msg);
       return { requestId, tool: 'memory.access', status: 'error', error: msg };
     }
 
-    if (existing.value && existing.value.thread_id === context.threadId) {
-      // Update existing item
-      const updateResult = this.deps.memoryRepository.update(itemKey, { content: contentStr });
+    if (existing.value) {
+      // Update existing item in this thread
+      const updateResult = this.deps.memoryRepository.update(context.threadId, itemKey, { content: contentStr });
       if (updateResult.isErr()) {
         const msg = `memory.access: write (update) failed — ${updateResult.error.message}`;
         this.deps.logger.error({ requestId, key: itemKey, err: updateResult.error }, msg);
         return { requestId, tool: 'memory.access', status: 'error', error: msg };
       }
-    } else if (existing.value) {
-      // Key exists but belongs to a different thread — reject to prevent overwrite.
-      const msg = `memory.access: key "${itemKey}" already exists in another thread. Use a unique key.`;
-      this.deps.logger.warn({ requestId, key: itemKey, threadId: context.threadId }, msg);
-      return { requestId, tool: 'memory.access', status: 'error', error: msg };
     } else {
-      // Insert new item
+      // Insert new item scoped to this thread
       const insertResult = this.deps.memoryRepository.insert({
         id: itemKey,
         thread_id: context.threadId,
@@ -217,7 +207,7 @@ export class MemoryAccessHandler {
     };
   }
 
-  /** Handle the 'delete' operation — remove a memory item by key. */
+  /** Handle the 'delete' operation — remove a memory item by (threadId, key). */
   private handleDelete(
     args: MemoryAccessArgs,
     context: ToolExecutionContext,
@@ -231,23 +221,7 @@ export class MemoryAccessHandler {
       return { requestId, tool: 'memory.access', status: 'error', error: error.message };
     }
 
-    // Verify ownership before deleting
-    const existing = this.deps.memoryRepository.findById(key);
-    if (existing.isErr()) {
-      const msg = `memory.access: delete pre-check failed — ${existing.error.message}`;
-      this.deps.logger.error({ requestId, key, err: existing.error }, msg);
-      return { requestId, tool: 'memory.access', status: 'error', error: msg };
-    }
-
-    if (existing.value && existing.value.thread_id !== context.threadId) {
-      const error = new ToolError(
-        `memory.access: key "${key}" does not belong to thread "${context.threadId}"`,
-      );
-      this.deps.logger.warn({ requestId, key }, error.message);
-      return { requestId, tool: 'memory.access', status: 'error', error: error.message };
-    }
-
-    const deleteResult = this.deps.memoryRepository.delete(key);
+    const deleteResult = this.deps.memoryRepository.delete(context.threadId, key);
     if (deleteResult.isErr()) {
       const msg = `memory.access: delete failed — ${deleteResult.error.message}`;
       this.deps.logger.error({ requestId, key, err: deleteResult.error }, msg);

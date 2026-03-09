@@ -1,0 +1,33 @@
+-- Migration 002: Compound primary key for memory_items
+--
+-- Fixes BUG-007: memory key (id) was globally unique but should be scoped
+-- per thread. Two threads using the same key (e.g. "user_name") would collide
+-- on insert. This migration changes the primary key from (id) to (thread_id, id).
+--
+-- SQLite does not support ALTER TABLE to change a primary key, so we recreate
+-- the table and copy existing data.
+
+-- 1. Create the new table with compound PK.
+CREATE TABLE memory_items_new (
+  thread_id     TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  id            TEXT NOT NULL,
+  type          TEXT NOT NULL CHECK (type IN ('fact', 'summary', 'note', 'embedding_ref')),
+  content       TEXT NOT NULL,
+  embedding_ref TEXT,
+  metadata      TEXT NOT NULL DEFAULT '{}',
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, id)
+);
+
+-- 2. Copy existing data.
+INSERT INTO memory_items_new (thread_id, id, type, content, embedding_ref, metadata, created_at, updated_at)
+  SELECT thread_id, id, type, content, embedding_ref, metadata, created_at, updated_at
+  FROM memory_items;
+
+-- 3. Drop old table and rename.
+DROP TABLE memory_items;
+ALTER TABLE memory_items_new RENAME TO memory_items;
+
+-- 4. Recreate index (thread_id is now part of PK, but we keep the type filter index).
+CREATE INDEX idx_memory_thread ON memory_items(thread_id, type);
