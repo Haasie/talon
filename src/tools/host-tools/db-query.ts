@@ -10,7 +10,8 @@
  *   2. Table whitelist — only approved tables can be queried
  *   3. Thread/persona scoping — auto-inject WHERE clauses for data isolation
  *   4. Row limit — hard cap on returned rows
- *   5. Read-only execution — prepare() on a read-only path (no writes possible)
+ *   5. Read-only connection — uses a separate better-sqlite3 connection opened
+ *      with { readonly: true }, so writes are rejected at the SQLite level
  *
  * Gated by `db.read:own` (persona can only query its own data).
  */
@@ -78,19 +79,26 @@ export function extractTableNames(sql: string): string[] {
   const tables = new Set<string>();
 
   // Match FROM clause table(s) — handles "FROM t1, t2" and "FROM t1"
-  const fromMatch = stripped.match(/\bFROM\s+([a-zA-Z_][\w]*(?:\s*,\s*[a-zA-Z_][\w]*)*)/i);
+  // Also handles schema-qualified names like "main.tablename" by extracting
+  // the part after the dot.
+  const fromMatch = stripped.match(/\bFROM\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?(?:\s*,\s*[a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)*)/i);
   if (fromMatch?.[1]) {
     for (const t of fromMatch[1].split(',')) {
-      const name = t.trim().split(/\s+/)[0];
-      if (name) tables.add(name.toLowerCase());
+      const raw = t.trim().split(/\s+/)[0];
+      if (!raw) continue;
+      // Strip schema prefix (e.g. "main.personas" → "personas")
+      const name = raw.includes('.') ? raw.split('.').pop()! : raw;
+      tables.add(name.toLowerCase());
     }
   }
 
-  // Match JOIN clauses
-  const joinRegex = /\bJOIN\s+([a-zA-Z_][\w]*)/gi;
+  // Match JOIN clauses (also handles schema-qualified names)
+  const joinRegex = /\bJOIN\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)/gi;
   let match;
   while ((match = joinRegex.exec(stripped)) !== null) {
-    if (match[1]) tables.add(match[1].toLowerCase());
+    const raw = match[1]!;
+    const name = raw.includes('.') ? raw.split('.').pop()! : raw;
+    tables.add(name.toLowerCase());
   }
 
   return [...tables];

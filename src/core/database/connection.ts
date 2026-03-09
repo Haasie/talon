@@ -13,11 +13,15 @@ import { DbError } from '../errors/index.js';
  * Opens a SQLite database at the given path and applies performance/safety PRAGMAs.
  *
  * @param dbPath - Filesystem path for the database file, or ':memory:' for in-memory.
+ * @param options - Optional configuration (e.g. readonly mode).
  * @returns Result with the open Database instance, or a DbError on failure.
  */
-export function createDatabase(dbPath: string): Result<Database.Database, DbError> {
+export function createDatabase(
+  dbPath: string,
+  options?: { readonly?: boolean },
+): Result<Database.Database, DbError> {
   try {
-    const db = new Database(dbPath);
+    const db = new Database(dbPath, { readonly: options?.readonly ?? false });
 
     // WAL mode: concurrent readers do not block writers and vice versa.
     db.pragma('journal_mode = WAL');
