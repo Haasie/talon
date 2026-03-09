@@ -95,6 +95,7 @@ _Nothing currently in progress._
 | BUG-002 | `SdkProcessSpawner` is dead code now that Agent SDK runs on host — should be removed or repurposed for Docker mode | Low |
 | BUG-003 | `zod` peer dep conflict: Agent SDK `@0.2.71` requires `zod@^4.0.0`, project uses `zod@3.25.76`. Upgrade zod to v4 — `@anthropic-ai/sdk` and `@modelcontextprotocol/sdk` both support v4 in their peer ranges. | Medium |
 | BUG-007 | Memory key (`id`) is globally unique but should be scoped per thread. Two threads using the same key (e.g. `user_name`) collide on insert. Fix: compound primary key `(thread_id, id)` via schema migration, update `findById`/`insert`/`update`/`delete` in memory-repository to always scope by thread_id. Temporary workaround: reject writes for keys owned by other threads. | High |
+| BUG-008 | Session resume lost on daemon restart. `SessionTracker` is in-memory only — all conversation context is forgotten after restart. The `session_id` is already persisted in the `runs` table; fix: on first message in a thread, look up the most recent `session_id` from `runs` and seed `SessionTracker`. Affects all channels. | High |
 | BUG-004 | ~~`schedule.manage` host tool dead code~~ — Fixed: wired via host-tools MCP bridge + Unix socket. All 5 tools work (schedule, channel, memory, http, db). | Resolved |
 | BUG-005 | ~~`schedule.manage` sets `next_run_at: null`~~ — Fixed: computes `next_run_at` from cron expression on create/update. | Resolved |
 | BUG-006 | ~~Agent SDK session resume hangs when MCP servers are attached.~~ Re-enabled and working. | Resolved |
