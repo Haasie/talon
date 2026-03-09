@@ -29,17 +29,18 @@ export async function chatCommand(options: ChatOptions): Promise<void> {
   const clientId = options.clientId ?? `${hostname()}-${randomUUID().slice(0, 8)}`;
   const url = `ws://${options.host}:${options.port}`;
 
-  console.log(`Connecting to ${url} as "${clientId}"...`);
-
-  const ws = new WebSocket(url);
-
-  // Dynamic imports for ESM-only packages.
+  // Load ESM-only deps BEFORE opening the WebSocket to avoid race conditions
+  // where 'open'/'error' events fire before handlers are registered.
   const { Marked } = await import('marked');
   const { markedTerminal } = await import('marked-terminal');
   const { default: ora } = await import('ora');
 
   const marked = new Marked(markedTerminal());
   const spinner = ora({ text: 'Thinking...', spinner: 'dots' });
+
+  console.log(`Connecting to ${url} as "${clientId}"...`);
+
+  const ws = new WebSocket(url);
 
   let authenticated = false;
   let rl: ReturnType<typeof createInterface> | undefined;

@@ -279,7 +279,7 @@ export class TerminalConnector implements ChannelConnector {
       channelName: this.name,
       externalThreadId: clientId,
       senderId: clientId,
-      idempotencyKey: `terminal:${clientId}:${++this.idempotencyCounter}`,
+      idempotencyKey: `terminal:${clientId}:${Date.now()}-${++this.idempotencyCounter}`,
       content: msg.content,
       timestamp: Date.now(),
     };
