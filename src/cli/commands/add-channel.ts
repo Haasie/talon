@@ -152,6 +152,8 @@ function buildPlaceholderConfig(type: string): Record<string, unknown> {
         imap: { host: 'mail.example.com', port: 993, user: 'user@example.com', password: 'PASSWORD' },
         smtp: { host: 'mail.example.com', port: 587, user: 'user@example.com', password: 'PASSWORD' },
       };
+    case 'terminal':
+      return { port: 7700, host: '0.0.0.0', token: '${TERMINAL_TOKEN}' };
     default:
       return {};
   }

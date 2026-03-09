@@ -23,6 +23,7 @@ import { addChannelCommand } from './commands/add-channel.js';
 import { addPersonaCommand } from './commands/add-persona.js';
 import { addSkillCommand } from './commands/add-skill.js';
 import { queuePurgeCommand } from './commands/queue-purge.js';
+import { chatCommand } from './commands/chat.js';
 
 // Load .env before anything else so ${VAR} substitution works in config.
 const envPath = resolve(process.env.TALOND_ENV_FILE || '.env');
@@ -158,6 +159,29 @@ program
       timeoutMs: parseInt(opts.timeout, 10),
       statuses: opts.statuses?.split(',').map((s) => s.trim()),
       all: opts.all,
+    });
+  });
+
+program
+  .command('chat')
+  .description('Connect to a Talon persona via terminal channel')
+  .option('--host <host>', 'Terminal connector host', '127.0.0.1')
+  .option('--port <port>', 'Terminal connector port', '7700')
+  .option('--token <token>', 'Authentication token (or set TERMINAL_TOKEN env var)')
+  .option('--client-id <id>', 'Client identity for persistent threads')
+  .option('--persona <name>', 'Persona to connect to (overrides channel default)')
+  .action(async (opts: { host: string; port: string; token?: string; clientId?: string; persona?: string }) => {
+    const token = opts.token ?? process.env.TERMINAL_TOKEN;
+    if (!token) {
+      console.error('Error: --token is required (or set TERMINAL_TOKEN env var).');
+      process.exit(1);
+    }
+    await chatCommand({
+      host: opts.host,
+      port: parseInt(opts.port, 10),
+      token,
+      clientId: opts.clientId,
+      persona: opts.persona,
     });
   });
 

@@ -17,6 +17,8 @@ import { WhatsAppConnector } from '../channels/connectors/whatsapp/whatsapp-conn
 import type { WhatsAppConfig } from '../channels/connectors/whatsapp/whatsapp-types.js';
 import { EmailConnector } from '../channels/connectors/email/email-connector.js';
 import type { EmailConfig } from '../channels/connectors/email/email-types.js';
+import { TerminalConnector } from '../channels/connectors/terminal/terminal-connector.js';
+import type { TerminalConfig } from '../channels/connectors/terminal/terminal-types.js';
 
 /**
  * Creates a channel connector instance for the given type.
@@ -44,6 +46,8 @@ export function createConnector(
       return new WhatsAppConnector(config as unknown as WhatsAppConfig, name, logger);
     case 'email':
       return new EmailConnector(config as unknown as EmailConfig, name, logger);
+    case 'terminal':
+      return new TerminalConnector(config as unknown as TerminalConfig, name, logger);
     default:
       return null;
   }

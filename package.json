@@ -30,11 +30,15 @@
     "cron-parser": "^4.9.0",
     "dockerode": "^4.0.2",
     "js-yaml": "^4.1.0",
+    "marked": "^17.0.4",
+    "marked-terminal": "^7.3.0",
     "neverthrow": "^8.0.0",
+    "ora": "^9.3.0",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2",
     "uuid": "^10.0.0",
     "write-file-atomic": "^6.0.0",
+    "ws": "^8.19.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -45,6 +49,7 @@
     "@types/node": "^22.5.1",
     "@types/uuid": "^10.0.0",
     "@types/write-file-atomic": "^4.0.3",
+    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^2.1.1",
     "eslint": "^9.9.0",
     "eslint-config-prettier": "^9.1.0",

@@ -32,6 +32,10 @@ vi.mock('../../../src/channels/connectors/email/email-connector.js', () => ({
   EmailConnector: vi.fn().mockImplementation(() => ({ type: 'email' })),
 }));
 
+vi.mock('../../../src/channels/connectors/terminal/terminal-connector.js', () => ({
+  TerminalConnector: vi.fn().mockImplementation(() => ({ type: 'terminal' })),
+}));
+
 // ---------------------------------------------------------------------------
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
@@ -42,6 +46,7 @@ import { SlackConnector } from '../../../src/channels/connectors/slack/slack-con
 import { DiscordConnector } from '../../../src/channels/connectors/discord/discord-connector.js';
 import { WhatsAppConnector } from '../../../src/channels/connectors/whatsapp/whatsapp-connector.js';
 import { EmailConnector } from '../../../src/channels/connectors/email/email-connector.js';
+import { TerminalConnector } from '../../../src/channels/connectors/terminal/terminal-connector.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -98,6 +103,13 @@ describe('createConnector', () => {
 
     expect(connector).not.toBeNull();
     expect(EmailConnector).toHaveBeenCalledWith(config, name, logger);
+  });
+
+  it('creates TerminalConnector for type "terminal"', () => {
+    const connector = createConnector('terminal', name, config, logger);
+
+    expect(connector).not.toBeNull();
+    expect(TerminalConnector).toHaveBeenCalledWith(config, name, logger);
   });
 
   it('returns null for unknown type', () => {

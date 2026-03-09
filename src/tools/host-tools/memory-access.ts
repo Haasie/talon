@@ -185,6 +185,11 @@ export class MemoryAccessHandler {
         this.deps.logger.error({ requestId, key: itemKey, err: updateResult.error }, msg);
         return { requestId, tool: 'memory.access', status: 'error', error: msg };
       }
+    } else if (existing.value) {
+      // Key exists but belongs to a different thread — reject to prevent overwrite.
+      const msg = `memory.access: key "${itemKey}" already exists in another thread. Use a unique key.`;
+      this.deps.logger.warn({ requestId, key: itemKey, threadId: context.threadId }, msg);
+      return { requestId, tool: 'memory.access', status: 'error', error: msg };
     } else {
       // Insert new item
       const insertResult = this.deps.memoryRepository.insert({
