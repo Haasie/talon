@@ -197,26 +197,29 @@ export class HostToolsBridge {
       return;
     }
 
+    let responded = false;
+
     const timeoutHandle = setTimeout(() => {
-      const errorResponse: BridgeResponse = {
-        id,
-        error: 'Request timeout',
-      };
-      this.sendResponse(socket, errorResponse);
+      if (responded) return;
+      responded = true;
+      this.ctx.logger.warn({ id, tool: normalizedTool }, 'host-tools-bridge: request timed out');
+      this.sendResponse(socket, { id, error: 'Request timeout' });
     }, REQUEST_TIMEOUT_MS);
 
     try {
       const result = await this.dispatch(normalizedTool, args, context);
       clearTimeout(timeoutHandle);
-      const response: BridgeResponse = { id, result };
-      this.sendResponse(socket, response);
+      if (responded) return; // Timeout already fired
+      responded = true;
+      this.sendResponse(socket, { id, result });
     } catch (err) {
       clearTimeout(timeoutHandle);
-      const errorResponse: BridgeResponse = {
+      if (responded) return; // Timeout already fired
+      responded = true;
+      this.sendResponse(socket, {
         id,
         error: err instanceof Error ? err.message : String(err),
-      };
-      this.sendResponse(socket, errorResponse);
+      });
     }
   }
 
