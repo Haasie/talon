@@ -21,6 +21,17 @@ import type {
 } from './terminal-types.js';
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Maximum WebSocket message size (bytes). Prevents DoS via large payloads. */
+const MAX_PAYLOAD_BYTES = 64 * 1024; // 64 KB
+/** Timeout for stop() to prevent hanging forever if close callbacks don't fire. */
+const STOP_TIMEOUT_MS = 5_000;
+/** Time allowed for a client to send an auth message before disconnection. */
+const AUTH_TIMEOUT_MS = 10_000;
+
+// ---------------------------------------------------------------------------
 // TerminalConnector
 // ---------------------------------------------------------------------------
 
@@ -51,6 +62,9 @@ export class TerminalConnector implements ChannelConnector {
     private readonly channelName: string,
     private readonly logger: pino.Logger,
   ) {
+    if (!config.token) {
+      throw new Error('TerminalConnector: config.token is required');
+    }
     this.name = channelName;
   }
 
@@ -64,11 +78,22 @@ export class TerminalConnector implements ChannelConnector {
     }
     this.running = true;
 
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       this.httpServer = createServer();
-      this.wss = new WebSocketServer({ server: this.httpServer });
+      this.wss = new WebSocketServer({
+        server: this.httpServer,
+        maxPayload: MAX_PAYLOAD_BYTES,
+      });
 
       this.wss.on('connection', (ws) => this.handleConnection(ws));
+      this.wss.on('error', (wsErr) => {
+        this.logger.error({ channelName: this.name, err: wsErr }, 'terminal: WebSocket server error');
+      });
+
+      this.httpServer.on('error', (httpErr) => {
+        this.running = false;
+        reject(httpErr);
+      });
 
       const host = this.config.host ?? '127.0.0.1';
       this.httpServer.listen(this.config.port, host, () => {
@@ -88,6 +113,12 @@ export class TerminalConnector implements ChannelConnector {
     this.running = false;
 
     return new Promise<void>((resolve) => {
+      // Safety timeout to prevent hanging forever.
+      const timeout = setTimeout(() => {
+        this.logger.warn({ channelName: this.name }, 'terminal: stop() timed out, forcing');
+        resolve();
+      }, STOP_TIMEOUT_MS);
+
       // Close all client connections.
       for (const ws of this.clients.values()) {
         ws.close();
@@ -99,12 +130,17 @@ export class TerminalConnector implements ChannelConnector {
       if (this.wss) {
         this.wss.close(() => {
           if (this.httpServer) {
-            this.httpServer.close(() => resolve());
+            this.httpServer.close(() => {
+              clearTimeout(timeout);
+              resolve();
+            });
           } else {
+            clearTimeout(timeout);
             resolve();
           }
         });
       } else {
+        clearTimeout(timeout);
         resolve();
       }
     });
@@ -150,6 +186,14 @@ export class TerminalConnector implements ChannelConnector {
   private handleConnection(ws: WebSocket): void {
     this.logger.debug({ channelName: this.name }, 'terminal: new connection');
 
+    // Auth timeout — disconnect if client doesn't authenticate in time.
+    const authTimeout = setTimeout(() => {
+      if (!this.authenticated.has(ws)) {
+        this.sendError(ws, 'auth timeout');
+        ws.close();
+      }
+    }, AUTH_TIMEOUT_MS);
+
     ws.once('message', (data: Buffer) => {
       let msg: ClientMessage;
       try {
@@ -173,8 +217,17 @@ export class TerminalConnector implements ChannelConnector {
         return;
       }
 
-      // Auth succeeded — register the client.
+      // Auth succeeded — clear timeout and register the client.
+      clearTimeout(authTimeout);
       const clientId = msg.clientId;
+
+      // Close any existing connection for this clientId (prevent resource leak).
+      const existingWs = this.clients.get(clientId);
+      if (existingWs && existingWs !== ws && existingWs.readyState === WebSocket.OPEN) {
+        this.logger.debug({ channelName: this.name, clientId }, 'terminal: closing old connection for reconnecting client');
+        existingWs.close();
+      }
+
       this.authenticated.set(ws, clientId);
       this.clients.set(clientId, ws);
 
@@ -201,14 +254,6 @@ export class TerminalConnector implements ChannelConnector {
       });
     });
 
-    // If the client doesn't send anything within 10s, disconnect.
-    const authTimeout = setTimeout(() => {
-      if (!this.authenticated.has(ws)) {
-        this.sendError(ws, 'auth timeout');
-        ws.close();
-      }
-    }, 10_000);
-
     ws.on('close', () => clearTimeout(authTimeout));
   }
 
@@ -217,15 +262,16 @@ export class TerminalConnector implements ChannelConnector {
     try {
       msg = JSON.parse(raw) as ClientMessage;
     } catch {
-      return; // Ignore malformed JSON.
+      this.logger.debug({ channelName: this.name, clientId }, 'terminal: malformed JSON, ignoring');
+      return;
     }
 
     if (msg.type !== 'message') {
-      return; // Ignore non-message types after auth.
+      return;
     }
 
     if (!msg.content || msg.content.trim() === '') {
-      return; // Ignore empty messages.
+      return;
     }
 
     const event: InboundEvent = {

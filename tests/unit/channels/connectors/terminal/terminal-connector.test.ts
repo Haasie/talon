@@ -118,6 +118,12 @@ describe('TerminalConnector', () => {
       connector = new TerminalConnector(defaultConfig(), 'my-term', silentLogger());
       expect(connector.name).toBe('my-term');
     });
+
+    it('throws if token is empty', () => {
+      expect(() => {
+        new TerminalConnector(defaultConfig({ token: '' }), 'bad', silentLogger());
+      }).toThrow('config.token is required');
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -269,6 +275,35 @@ describe('TerminalConnector', () => {
       // Both messages should have the same externalThreadId.
       expect(received[0].externalThreadId).toBe('my-laptop');
       expect(received[1].externalThreadId).toBe('my-laptop');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Reconnection
+  // -------------------------------------------------------------------------
+
+  describe('reconnection', () => {
+    it('closes old connection when same clientId reconnects', async () => {
+      connector = new TerminalConnector(defaultConfig(), 'test-terminal', silentLogger());
+      await connector.start();
+
+      // First connection.
+      const ws1 = await connectClient(connector.port);
+      clients.push(ws1);
+      await authenticate(ws1, 'test-secret-token', 'my-laptop');
+
+      const ws1ClosePromise = new Promise<void>((resolve) => {
+        ws1.on('close', () => resolve());
+      });
+
+      // Second connection with same clientId — should close first.
+      const ws2 = await connectClient(connector.port);
+      clients.push(ws2);
+      await authenticate(ws2, 'test-secret-token', 'my-laptop');
+
+      // First connection should be closed by server.
+      await ws1ClosePromise;
+      expect(ws1.readyState).toBe(WebSocket.CLOSED);
     });
   });
 
