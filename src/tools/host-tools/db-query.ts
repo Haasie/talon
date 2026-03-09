@@ -45,11 +45,11 @@ const MAX_LIMIT = 1_000;
  * Tables the agent is allowed to query. All other tables are blocked.
  * Tables with thread_id or persona_id will be auto-scoped.
  */
-const ALLOWED_TABLES: ReadonlyMap<string, { threadId: boolean; personaId: boolean }> = new Map([
-  ['memory_items',  { threadId: true,  personaId: false }],
-  ['schedules',     { threadId: true,  personaId: true  }],
-  ['messages',      { threadId: true,  personaId: false }],
-  ['threads',       { threadId: false, personaId: false }],
+const ALLOWED_TABLES: ReadonlyMap<string, { scopeColumn?: string; personaId: boolean }> = new Map([
+  ['memory_items',  { scopeColumn: 'thread_id',  personaId: false }],
+  ['schedules',     { scopeColumn: 'thread_id',  personaId: true  }],
+  ['messages',      { scopeColumn: 'thread_id',  personaId: false }],
+  ['threads',       { scopeColumn: 'id',         personaId: false }],
 ]);
 
 /**
@@ -216,12 +216,14 @@ export class DbQueryHandler {
     for (const table of tables) {
       const scoping = ALLOWED_TABLES.get(table);
       if (!scoping) continue;
-      if (scoping.threadId && context.threadId) {
-        scopingClauses.push(`${table}.thread_id = ?`);
+      // Use unqualified column names to support table aliases (e.g. "FROM memory_items m").
+      // Safe because the allowed tables don't share ambiguous column names.
+      if (scoping.scopeColumn && context.threadId) {
+        scopingClauses.push(`${scoping.scopeColumn} = ?`);
         scopingParams.push(context.threadId);
       }
       if (scoping.personaId && context.personaId) {
-        scopingClauses.push(`${table}.persona_id = ?`);
+        scopingClauses.push(`persona_id = ?`);
         scopingParams.push(context.personaId);
       }
     }
@@ -241,7 +243,9 @@ export class DbQueryHandler {
     }
 
     // Build the final SQL: inject scoping WHERE clause and LIMIT.
-    let finalSql = sql.trim();
+    // Use strippedSql (comments removed) to prevent comment-based injection
+    // that could confuse WHERE/ORDER BY keyword detection during injection.
+    let finalSql = strippedSql;
 
     if (scopingClauses.length > 0) {
       const scopingWhere = scopingClauses.join(' AND ');

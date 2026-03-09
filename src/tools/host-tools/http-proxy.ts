@@ -63,7 +63,7 @@ export class HttpProxyHandler {
   constructor(
     private readonly deps: {
       logger: pino.Logger;
-      /** Allowed domains (e.g. ['api.example.com', 'example.com']). Empty array = deny all. */
+      /** Allowed domains (e.g. ['api.example.com', 'example.com']). Empty array = allow all. */
       allowedDomains: string[];
     },
   ) {}

@@ -127,7 +127,7 @@ describe('DbQueryHandler — happy paths', () => {
     expect(result.status).toBe('success');
     // Verify scoping was injected
     const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(prepareCall).toContain('memory_items.thread_id = ?');
+    expect(prepareCall).toContain('thread_id = ?');
     // Verify thread_id param was passed
     const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
     expect(stmt.all).toHaveBeenCalledWith('thread-abc');
@@ -143,8 +143,8 @@ describe('DbQueryHandler — happy paths', () => {
     );
 
     const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(prepareCall).toContain('schedules.thread_id = ?');
-    expect(prepareCall).toContain('schedules.persona_id = ?');
+    expect(prepareCall).toContain('thread_id = ?');
+    expect(prepareCall).toContain('persona_id = ?');
     const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
     expect(stmt.all).toHaveBeenCalledWith('thread-abc', 'persona-xyz');
   });
@@ -159,20 +159,24 @@ describe('DbQueryHandler — happy paths', () => {
     );
 
     const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(prepareCall).toContain('memory_items.thread_id = ?');
+    expect(prepareCall).toContain('thread_id = ?');
     expect(prepareCall).toContain("type = 'note'");
   });
 
-  it('queries threads table without scoping (no thread_id/persona_id columns)', async () => {
+  it('queries threads table scoped by id = threadId', async () => {
     const db = makeDb(makeStatement([{ id: 't1' }]));
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
     const result = await handler.execute(
       makeArgs({ sql: 'SELECT * FROM threads' }),
-      makeContext(),
+      makeContext({ threadId: 'thread-abc' }),
     );
 
     expect(result.status).toBe('success');
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain('id = ?');
+    const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(stmt.all).toHaveBeenCalledWith('thread-abc');
   });
 
   it('passes user params after scoping params', async () => {
@@ -237,7 +241,7 @@ describe('DbQueryHandler — happy paths', () => {
     );
 
     const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(prepareCall).toContain('WHERE memory_items.thread_id = ?');
+    expect(prepareCall).toContain('WHERE thread_id = ?');
     expect(prepareCall).toContain('ORDER BY created_at DESC');
     // WHERE should come before ORDER BY
     const whereIdx = prepareCall.indexOf('WHERE');
@@ -524,7 +528,7 @@ describe('DbQueryHandler — adversarial', () => {
 
     // The prepared SQL must contain the scoping clause
     const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(prepareCall).toContain('memory_items.thread_id = ?');
+    expect(prepareCall).toContain('thread_id = ?');
     // And the param must be our thread
     const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
     expect(stmt.all).toHaveBeenCalledWith('my-thread');
