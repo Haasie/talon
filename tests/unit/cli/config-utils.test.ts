@@ -86,7 +86,7 @@ describe('readConfig', () => {
   });
 
   it('throws for non-existent file', async () => {
-    await expect(readConfig('/tmp/nonexistent-talond.yaml')).rejects.toThrow(/not found/);
+    await expect(readConfig(path.join(tmpDir, 'nonexistent-talond.yaml'))).rejects.toThrow(/not found/);
   });
 
   it('throws for invalid YAML', async () => {
@@ -123,7 +123,7 @@ describe('writeConfigAtomic', () => {
 
   it('throws for unwritable path', async () => {
     await expect(
-      writeConfigAtomic('/nonexistent-dir/talond.yaml', {}),
+      writeConfigAtomic(path.join(tmpDir, 'nonexistent-dir', 'talond.yaml'), {}),
     ).rejects.toThrow(/Error writing/);
   });
 });

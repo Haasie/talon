@@ -253,11 +253,11 @@ program
   .requiredOption('--name <name>', 'MCP server name')
   .requiredOption('--transport <type>', 'Transport type (stdio, sse, http)')
   .option('--command <cmd>', 'Command to run (required for stdio)')
-  .option('--args <args>', 'Command arguments (comma-separated)')
+  .option('--args <args...>', 'Command arguments (space-separated)')
   .option('--url <url>', 'Server URL (required for sse/http)')
   .option('--env <pairs>', 'Environment variables (KEY=VAL,KEY2=VAL2)')
   .option('--skills-dir <path>', 'Skills directory', 'skills')
-  .action(async (opts: { skill: string; name: string; transport: string; command?: string; args?: string; url?: string; env?: string; skillsDir: string }) => {
+  .action(async (opts: { skill: string; name: string; transport: string; command?: string; args?: string[]; url?: string; env?: string; skillsDir: string }) => {
     const envPairs: Record<string, string> = {};
     if (opts.env) {
       for (const pair of opts.env.split(',')) {
@@ -270,7 +270,7 @@ program
       name: opts.name,
       transport: opts.transport as 'stdio' | 'sse' | 'http',
       command: opts.command,
-      args: opts.args?.split(','),
+      args: opts.args,
       url: opts.url,
       env: Object.keys(envPairs).length > 0 ? envPairs : undefined,
       skillsDir: opts.skillsDir,

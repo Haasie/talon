@@ -2,10 +2,11 @@
  * `talonctl remove-persona` command.
  *
  * Removes a persona from talond.yaml by name.
- * Warns about existing bindings and skills directory.
+ * Warns about existing bindings and persona directory.
  */
 
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 
 import {
   DEFAULT_CONFIG_PATH,
@@ -67,7 +68,7 @@ export async function removePersona(options: RemovePersonaOptions): Promise<{ wa
   }
 
   // Warn about persona directory.
-  const personaDir = `${personasDir}/${options.name}`;
+  const personaDir = path.join(personasDir, options.name);
   if (existsSync(personaDir)) {
     warnings.push(
       `Persona directory "${personaDir}" still exists. Delete it manually if no longer needed.`,

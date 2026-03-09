@@ -94,10 +94,10 @@ describe('addChannel()', () => {
     const doc = readYaml(p);
     const channels = doc.channels as Array<Record<string, unknown>>;
     const config = channels[0]!.config as Record<string, unknown>;
-    expect(config.token).toBeDefined();
+    expect(config.botToken).toBeDefined();
   });
 
-  it('adds slack placeholder config with botToken and appToken', async () => {
+  it('adds slack placeholder config with botToken, appToken, and signingSecret', async () => {
     const p = writeMinimalConfig();
     await addChannel({ name: 'slack-main', type: 'slack', configPath: p });
 
@@ -106,6 +106,7 @@ describe('addChannel()', () => {
     const config = channels[0]!.config as Record<string, unknown>;
     expect(config.botToken).toBeDefined();
     expect(config.appToken).toBeDefined();
+    expect(config.signingSecret).toBeDefined();
   });
 
   it('adds terminal placeholder config', async () => {
@@ -115,7 +116,7 @@ describe('addChannel()', () => {
     const doc = readYaml(p);
     const channels = doc.channels as Array<Record<string, unknown>>;
     const config = channels[0]!.config as Record<string, unknown>;
-    expect(config.port).toBe(7700);
+    expect(config.port).toBe(8089);
   });
 
   // --- Validation ---

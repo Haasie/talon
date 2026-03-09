@@ -42,7 +42,7 @@ export interface AddMcpResult {
  * Adds an MCP server definition to a skill.
  *
  * Creates `skills/{skillName}/mcp/{name}.json` with the server config.
- * Verifies the skill exists in the config (registered on at least one persona).
+ * Verifies the skill directory exists on disk.
  *
  * @throws Error on validation failures or filesystem errors.
  */

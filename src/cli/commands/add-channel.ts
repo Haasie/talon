@@ -123,20 +123,21 @@ export async function addChannelCommand(options: AddChannelOptions): Promise<voi
 export function buildPlaceholderConfig(type: string): Record<string, unknown> {
   switch (type) {
     case 'telegram':
-      return { token: 'YOUR_TELEGRAM_BOT_TOKEN' };
+      return { botToken: '${TELEGRAM_BOT_TOKEN}', pollingTimeoutSec: 30 };
     case 'slack':
-      return { botToken: 'YOUR_SLACK_BOT_TOKEN', appToken: 'YOUR_SLACK_APP_TOKEN' };
+      return { botToken: '${SLACK_BOT_TOKEN}', appToken: '${SLACK_APP_TOKEN}', signingSecret: '${SLACK_SIGNING_SECRET}' };
     case 'discord':
-      return { token: 'YOUR_DISCORD_BOT_TOKEN' };
+      return { botToken: '${DISCORD_BOT_TOKEN}', applicationId: 'YOUR_APPLICATION_ID' };
     case 'whatsapp':
-      return { accountSid: 'YOUR_ACCOUNT_SID', authToken: 'YOUR_AUTH_TOKEN' };
+      return { phoneNumberId: 'YOUR_PHONE_NUMBER_ID', accessToken: '${WHATSAPP_ACCESS_TOKEN}', verifyToken: '${WHATSAPP_VERIFY_TOKEN}' };
     case 'email':
       return {
-        imap: { host: 'mail.example.com', port: 993, user: 'user@example.com', password: 'PASSWORD' },
-        smtp: { host: 'mail.example.com', port: 587, user: 'user@example.com', password: 'PASSWORD' },
+        imapHost: 'imap.gmail.com', imapPort: 993, imapUser: 'bot@gmail.com', imapPass: '${EMAIL_PASSWORD}', imapSecure: true,
+        smtpHost: 'smtp.gmail.com', smtpPort: 587, smtpUser: 'bot@gmail.com', smtpPass: '${EMAIL_PASSWORD}', smtpSecure: false,
+        fromAddress: 'Talon <bot@gmail.com>',
       };
     case 'terminal':
-      return { port: 7700, host: '0.0.0.0', token: '${TERMINAL_TOKEN}' };
+      return { port: 8089, host: '127.0.0.1', token: '${TERMINAL_TOKEN}' };
     default:
       return {};
   }
