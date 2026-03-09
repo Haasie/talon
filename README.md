@@ -2,7 +2,7 @@
 
 **Resilient, secure, extensible autonomous agent daemon.**
 
-[![Tests](https://img.shields.io/badge/tests-2211%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-2425%20passing-brightgreen)](#testing)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-blue)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-blue)](https://www.typescriptlang.org)
@@ -11,7 +11,7 @@
 
 ## What is Talon?
 
-Talon is a self-hosted daemon that orchestrates autonomous AI agents across multiple communication channels. You configure personas — each with their own system prompt, tools, and security policy — and bind them to channels like Telegram, Slack, Discord, WhatsApp, or email. Messages flow in, get routed to the right persona, processed inside isolated container sandboxes, and responses flow back out.
+Talon is a self-hosted daemon that orchestrates autonomous AI agents across multiple communication channels. You configure personas — each with their own system prompt, tools, and security policy — and bind them to channels like Telegram, Slack, Discord, WhatsApp, or email. Messages flow in, get routed to the right persona, processed by the Claude Agent SDK, and responses flow back out.
 
 It is built for single-user or small-team deployments where you want persistent, always-on AI agents that you fully control — no cloud platform, no vendor lock-in, just a daemon on your server.
 
@@ -19,7 +19,7 @@ It is built for single-user or small-team deployments where you want persistent,
 
 - **Self-hosted**: runs on your own hardware, your data stays with you
 - **Resilient**: durable message queue survives crashes, automatic retry with exponential backoff, dead-letter handling
-- **Secure**: agents run inside sandboxed containers with no ambient authority — every capability is explicitly granted
+- **Secure**: capability-based access control — every tool call is policy-checked and audit-logged
 - **Multi-channel**: one daemon handles Telegram, Slack, Discord, WhatsApp, email, and terminal simultaneously
 - **Multi-persona**: different agents with different personalities, tools, and permissions on different channels
 
@@ -39,32 +39,32 @@ It is built for single-user or small-team deployments where you want persistent,
 ### Agent System
 
 - **Persona-per-channel** — Each channel gets its own agent with a dedicated system prompt, model, tools, and capabilities
-- **Container sandboxing** — Agents execute inside Docker containers with `--cap-drop=ALL`, read-only rootfs, no network by default
+- **Claude Agent SDK** — Agents run via the Anthropic Agent SDK with session persistence and multi-turn support
 - **Per-thread memory** — Each conversation thread gets its own workspace with transcript, working memory, and artifacts
 - **Skills** — Modular prompt fragments and tool bundles that snap onto personas
-- **MCP integration** — Connect external MCP tool servers, host-brokered with policy enforcement
+- **MCP integration** — Connect external MCP tool servers via stdio, policy-enforced through host-tools bridge
 
 ### Infrastructure
 
 - **Durable queue** — SQLite-backed message queue with crash recovery, retry, and dead-letter
-- **Scheduler** — Cron, interval, and one-shot scheduled tasks
-- **File-based IPC** — Atomic write + poll protocol between host and sandboxes
+- **Scheduler** — Agent-managed cron, interval, and one-shot scheduled tasks
+- **Host-tools MCP bridge** — 5 built-in tools (schedule, channel, memory, http, db) exposed via Unix socket
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
-- **Token tracking** — Per-persona and per-thread usage aggregation with budget limits
+- **Session persistence** — Agent sessions resume across messages in the same thread
 
 ### Security
 
-- **Default-deny capabilities** — Tools are gated by capability labels, not raw names
+- **Default-deny capabilities** — Tools are gated by capability labels (`channel.send`, `schedule.manage`, etc.)
 - **Approval gates** — High-risk actions prompt for user approval in-channel before executing
-- **Secrets management** — Secrets delivered to containers via stdin JSON, never written to disk
+- **Secrets management** — Credentials via `${ENV_VAR}` substitution, never hardcoded in config
 - **Audit logging** — Every side-effecting operation recorded with full provenance
 
 ---
 
 ## Architecture
 
-Talon follows a **host-mediated security model**: agents run inside sandboxed containers and request actions through IPC. The host daemon enforces all policy, mediates all side effects, and owns all persistence.
+The daemon receives messages from channels, routes them through a durable queue, and dispatches them to the Claude Agent SDK. Agents interact with the host via MCP host-tools exposed over a Unix socket.
 
 ```mermaid
 graph TB
@@ -74,36 +74,33 @@ graph TB
         DC[Discord]
         WA[WhatsApp]
         EM[Email]
+        TM[Terminal]
     end
 
     subgraph "talond (Host Daemon)"
         CR[Channel Registry]
-        NP[Normalize + Dedup Pipeline]
-        RT[Router]
+        NP[Normalize + Dedup]
+        RT[Router / Bindings]
         Q[Durable Queue]
-        PE[Policy Engine]
         SCH[Scheduler]
-        AG[Approval Gate]
-        TT[Token Tracker]
+        HT[Host-Tools MCP Server]
     end
 
-    subgraph "Sandboxes (Docker)"
-        S1[Container: Thread A<br/>Claude Agent SDK]
-        S2[Container: Thread B<br/>Claude Agent SDK]
+    subgraph "Agent SDK (Host Process)"
+        A1[Agent: Thread A]
+        A2[Agent: Thread B]
     end
 
     DB[(SQLite)]
 
-    TG & SL & DC & WA & EM --> CR
+    TG & SL & DC & WA & EM & TM --> CR
     CR --> NP --> RT --> Q
-    Q --> S1 & S2
-    S1 & S2 -->|"IPC: tool.request"| PE
-    PE --> AG
-    PE -->|"tool.result"| S1 & S2
-    S1 & S2 -->|"IPC: message.send"| CR
+    Q --> A1 & A2
+    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db"| HT
+    HT --> CR
+    HT --> DB
     SCH --> Q
-    Q & PE & CR --> DB
-    TT --> DB
+    Q --> DB
 ```
 
 ### Message Flow
@@ -113,19 +110,18 @@ sequenceDiagram
     participant Ch as Channel
     participant D as talond
     participant Q as Queue
-    participant Sb as Sandbox
+    participant A as Agent SDK
 
     Ch->>D: Inbound message
     D->>D: Normalize + dedup
-    D->>D: Route to persona
+    D->>D: Route via bindings
     D->>Q: Enqueue (FIFO per thread)
-    Q->>Sb: Deliver via IPC
-    Sb->>D: tool.request (IPC)
-    D->>D: Policy check + execute
-    D->>Sb: tool.result (IPC)
-    Sb->>D: message.send (IPC)
+    Q->>A: Dispatch to Agent SDK
+    A->>D: MCP: host-tool call (Unix socket)
+    D->>D: Execute tool
+    D->>A: Tool result
+    A->>D: MCP: channel.send
     D->>Ch: Outbound reply
-    D->>D: Audit log
 ```
 
 ---
@@ -135,7 +131,7 @@ sequenceDiagram
 ### Prerequisites
 
 - **Node.js 22+**
-- **Docker** (for container sandboxing)
+- **Claude Max subscription** or **Anthropic API key**
 - **SQLite** (ships with better-sqlite3, no separate install)
 
 ### Install
@@ -189,18 +185,6 @@ storage:
   type: sqlite
   path: data/talond.sqlite
 
-sandbox:
-  runtime: docker
-  image: talon-sandbox:latest
-  maxConcurrent: 3
-  networkDefault: off
-  idleTimeoutMs: 1800000
-  hardTimeoutMs: 3600000
-  resourceLimits:
-    memoryMb: 1024
-    cpus: 1
-    pidsLimit: 256
-
 queue:
   maxAttempts: 3
   backoffBaseMs: 1000
@@ -216,20 +200,20 @@ personas:
       allow:
         - channel.send:telegram
       requireApproval: []
-    mounts: []
 
 channels:
   - name: my-telegram
     type: telegram
     enabled: true
     config:
-      token: ${TELEGRAM_BOT_TOKEN}
+      botToken: ${TELEGRAM_BOT_TOKEN}
+
+bindings:
+  - persona: assistant
+    channel: my-telegram
+    isDefault: true
 
 schedules: []
-
-ipc:
-  pollIntervalMs: 500
-  daemonSocketDir: data/ipc/daemon
 
 scheduler:
   tickIntervalMs: 5000
@@ -246,12 +230,11 @@ dataDir: data
 | Section                | Purpose                                                                       |
 | ---------------------- | ----------------------------------------------------------------------------- |
 | `storage`              | Database backend and SQLite path                                              |
-| `sandbox`              | Container runtime, image, limits, and network defaults                        |
 | `queue`                | Retry/backoff/concurrency controls for durable queue processing               |
-| `personas`             | Persona profiles: model, system prompt, skills, capabilities, mounts          |
+| `personas`             | Persona profiles: model, system prompt, skills, capabilities                  |
 | `channels`             | Channel connector entries with `type`, `name`, and connector `config` payload |
-| `schedules`            | Declarative schedule entries (`cron`, `interval`, `one_shot`, `event`)        |
-| `ipc`                  | IPC polling settings and daemon IPC directory                                 |
+| `bindings`             | Channel-to-persona routing with default persona per channel                   |
+| `schedules`            | Agent-managed schedule entries (cron, interval, one-shot)                     |
 | `scheduler`            | Scheduler tick interval                                                       |
 | `auth`                 | `subscription` or `api_key` authentication mode                               |
 | `logLevel` / `dataDir` | Runtime logging level and data root                                           |
@@ -264,7 +247,8 @@ Credential fields support `${ENV_VAR}` syntax so you never hardcode secrets:
 channels:
   - name: my-telegram
     type: telegram
-    token: ${TELEGRAM_BOT_TOKEN}
+    config:
+      botToken: ${TELEGRAM_BOT_TOKEN}
 ```
 
 ---
@@ -281,10 +265,12 @@ Long-polling connector using the Telegram Bot API.
 channels:
   - name: my-telegram
     type: telegram
-    token: ${TELEGRAM_BOT_TOKEN}
-    allowed_user_ids:
-      - 123456789
-    polling: true
+    enabled: true
+    config:
+      botToken: ${TELEGRAM_BOT_TOKEN}
+      pollingTimeoutSec: 30
+      allowedChatIds:
+        - 123456789
 ```
 
 - **Inbound**: Long polling via `getUpdates`
@@ -300,9 +286,11 @@ Event-driven connector for Slack's Events API or Socket Mode.
 channels:
   - name: my-slack
     type: slack
-    bot_token: ${SLACK_BOT_TOKEN}
-    app_token: ${SLACK_APP_TOKEN}
-    signing_secret: ${SLACK_SIGNING_SECRET}
+    enabled: true
+    config:
+      botToken: ${SLACK_BOT_TOKEN}
+      appToken: ${SLACK_APP_TOKEN}
+      signingSecret: ${SLACK_SIGNING_SECRET}
 ```
 
 - **Inbound**: Events API webhooks or Socket Mode
@@ -319,10 +307,12 @@ Push-based connector using the Discord Gateway and REST API.
 channels:
   - name: my-discord
     type: discord
-    token: ${DISCORD_BOT_TOKEN}
-    application_id: '123456789'
-    allowed_channel_ids:
-      - '987654321'
+    enabled: true
+    config:
+      botToken: ${DISCORD_BOT_TOKEN}
+      applicationId: '123456789'
+      allowedChannelIds:
+        - '987654321'
 ```
 
 - **Inbound**: Gateway `MESSAGE_CREATE` events
@@ -339,10 +329,11 @@ Webhook-based connector using the WhatsApp Cloud API.
 channels:
   - name: my-whatsapp
     type: whatsapp
-    phone_number_id: '123456789'
-    access_token: ${WHATSAPP_ACCESS_TOKEN}
-    verify_token: ${WHATSAPP_VERIFY_TOKEN}
-    webhook_path: /webhook/whatsapp
+    enabled: true
+    config:
+      phoneNumberId: '123456789'
+      accessToken: ${WHATSAPP_ACCESS_TOKEN}
+      verifyToken: ${WHATSAPP_VERIFY_TOKEN}
 ```
 
 - **Inbound**: Webhook events via `feedWebhook()`
@@ -358,20 +349,19 @@ Dual-mode connector with IMAP polling and SMTP outbound.
 channels:
   - name: my-email
     type: email
-    imap:
-      host: mail.example.com
-      port: 993
-      user: agent@example.com
-      password: ${EMAIL_PASSWORD}
-    smtp:
-      host: mail.example.com
-      port: 587
-      user: agent@example.com
-      password: ${EMAIL_PASSWORD}
-    from_address: agent@example.com
-    allowed_senders:
-      - you@example.com
-    polling_interval_ms: 30000
+    enabled: true
+    config:
+      imapHost: imap.gmail.com
+      imapPort: 993
+      imapUser: agent@example.com
+      imapPass: ${EMAIL_PASSWORD}
+      imapSecure: true
+      smtpHost: smtp.gmail.com
+      smtpPort: 587
+      smtpUser: agent@example.com
+      smtpPass: ${EMAIL_PASSWORD}
+      smtpSecure: false
+      fromAddress: 'Talon <agent@example.com>'
 ```
 
 - **Inbound**: IMAP polling (or webhook via `feedInbound()`)
@@ -428,56 +418,47 @@ The client provides:
 
 ## Personas
 
-A persona defines an AI agent's identity, capabilities, and channel bindings.
+A persona defines an AI agent's identity, capabilities, and channel bindings. Bindings are managed separately via `talonctl bind`.
 
 ```yaml
 personas:
   - name: alfred
     description: Personal assistant
     model: claude-sonnet-4-6
-    system_prompt: |
-      You are Alfred, a meticulous personal assistant.
-      Be concise. Use Markdown for formatting.
-
-    channels:
-      - my-telegram
-      - my-slack
-
+    systemPromptFile: personas/alfred/system.md
     skills:
       - web-search
       - calendar
-
     capabilities:
-      web_fetch: allow
-      fs_read: deny
-      fs_write: deny
-      shell: deny
-      send_channel: allow
+      allow:
+        - channel.send:telegram
+        - channel.send:slack
+        - net.http
+        - schedule.manage
+        - memory.access
+      requireApproval:
+        - db.query
 
-    memory:
-      context_window_messages: 20
-      long_term: false
-
-    network:
-      enabled: false
+bindings:
+  - persona: alfred
+    channel: my-telegram
+    isDefault: true
+  - persona: alfred
+    channel: my-slack
+    isDefault: true
 ```
 
 ### Capability Labels
 
-Tools are gated by capability labels, not raw tool names. This allows fine-grained control:
+Tools are gated by scoped capability labels. Capabilities are listed in `allow` or `requireApproval` arrays — anything not listed is denied by default.
 
-| Capability        | Description               |
-| ----------------- | ------------------------- |
-| `web_fetch`       | Fetch public URLs         |
-| `fs_read`         | Read host filesystem      |
-| `fs_write`        | Write host filesystem     |
-| `shell`           | Execute shell commands    |
-| `send_channel`    | Send messages to channels |
-| `db_query`        | Execute database queries  |
-| `schedule_manage` | Create/modify schedules   |
-| `memory_access`   | Read/write thread memory  |
-
-Each capability can be set to `allow`, `deny`, or `require_approval`.
+| Capability                 | Description                              |
+| -------------------------- | ---------------------------------------- |
+| `channel.send:<channel>`   | Send messages to a specific channel      |
+| `schedule.manage`          | Create/modify/delete scheduled tasks     |
+| `memory.access`            | Read/write per-thread structured memory  |
+| `net.http`                 | Fetch external URLs                      |
+| `db.query`                 | Execute read-only database queries       |
 
 ### Capability Resolution
 
@@ -485,10 +466,10 @@ When an agent requests a tool:
 
 ```mermaid
 flowchart LR
-    A[Tool request] --> B{Persona allows<br/>capability?}
-    B -->|deny| C[Reject]
+    A[Tool request] --> B{In persona's<br/>allow list?}
+    B -->|not listed| C[Reject]
     B -->|allow| D[Execute]
-    B -->|require_approval| E[Prompt user<br/>in channel]
+    B -->|requireApproval| E[Prompt user<br/>in channel]
     E -->|approved| D
     E -->|denied/timeout| C
 ```
@@ -568,6 +549,44 @@ npx talonctl add-persona --name researcher
 npx talonctl add-skill --name web-search --persona researcher
 ```
 
+### Channel & Persona Management
+
+| Command                                           | Description                                              |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| `talonctl list-channels`                          | List all configured channels                             |
+| `talonctl list-personas`                          | List all configured personas                             |
+| `talonctl list-skills`                            | List all configured skills across personas               |
+| `talonctl bind --persona <p> --channel <c>`       | Bind a persona to a channel (first binding becomes default) |
+| `talonctl unbind --persona <p> --channel <c>`     | Remove a persona-channel binding                         |
+| `talonctl remove-channel --name <n>`              | Remove a channel and its bindings                        |
+| `talonctl remove-persona --name <n>`              | Remove a persona, its directory, and bindings            |
+| `talonctl add-mcp --name <n> --command <cmd>`     | Add an MCP server to a persona                           |
+| `talonctl env-check`                              | Audit config for `${ENV_VAR}` placeholders and report missing env vars |
+| `talonctl config-show`                            | Display resolved config with secrets masked              |
+
+```bash
+# List what's configured
+npx talonctl list-channels
+npx talonctl list-personas
+npx talonctl list-skills
+
+# Bind a persona to a channel
+npx talonctl bind --persona assistant --channel my-telegram
+
+# Remove a channel (cascades to bindings)
+npx talonctl remove-channel --name old-slack
+
+# Add an MCP server to a persona
+npx talonctl add-mcp --name web-search --persona assistant \
+  --command npx --args @anthropic-ai/mcp-web-search --transport stdio
+
+# Check for missing environment variables
+npx talonctl env-check
+
+# Show resolved config (secrets masked)
+npx talonctl config-show
+```
+
 ### Database and Operations
 
 | Command                 | Description                                                    |
@@ -642,28 +661,7 @@ The service includes security hardening: `NoNewPrivileges`, `PrivateTmp`, `Prote
 
 ### 2. Containerized Daemon (Docker)
 
-Run the daemon itself inside Docker. Uses Docker-in-Docker or sibling containers for sandboxing.
-
-```bash
-# Build the images
-docker build -t talond:latest -f deploy/Dockerfile .
-docker build -t talon-sandbox:latest -f deploy/Dockerfile.sandbox .
-
-# Run with Docker Compose
-docker compose -f deploy/docker-compose.yaml up -d
-```
-
-Or manually:
-
-```bash
-docker run -d \
-  --name talond \
-  -v talon-data:/data \
-  -v ./talond.yaml:/config/talond.yaml:ro \
-  --env-file .env \
-  --restart unless-stopped \
-  talond:latest
-```
+> **Coming soon** — Docker deployment is under active development. The goal is to run the Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The host-mode path will remain as fallback. Dockerfiles and Compose config exist in `deploy/` and will be updated for the current architecture.
 
 ### 3. Wake-Only Mode (Timer)
 
@@ -696,25 +694,26 @@ Default: wakes every 5 minutes. Adjust `OnUnitActiveSec` in `talond.timer`.
 
 ## Security Model
 
-Talon implements defense in depth through container isolation, capability-based access control, and host-mediated side effects.
+Talon implements defense in depth through capability-based access control, host-mediated side effects, and audit logging. Docker container isolation for agent sandboxing is coming soon — wrapping Agent SDK execution in containers with network access limited to `api.anthropic.com` for defense-in-depth against prompt injection.
 
-### Container Sandboxing
+### Host-Tools MCP Bridge
 
-Every agent runs inside a Docker container with hardened defaults:
+Agents interact with the host through 5 MCP tools exposed over a Unix socket. The daemon mediates all side effects — agents cannot access channels, databases, or the network directly.
 
-- `--cap-drop=ALL` — No Linux capabilities
-- `--read-only` rootfs with tmpfs for `/tmp`
-- No Docker socket access
-- No network by default (enable per-persona with domain allowlists)
-- Resource limits: CPU, memory, PIDs
-- Strict mount allowlist: only thread-scoped directories
+| Tool               | Purpose                              |
+| ------------------ | ------------------------------------ |
+| `schedule_manage`  | CRUD + list scheduled tasks          |
+| `channel_send`     | Send messages to channel connectors  |
+| `memory_access`    | Read/write per-thread memory         |
+| `net_http`         | Fetch external URLs                  |
+| `db_query`         | Read-only database queries           |
 
 ### Capability System
 
 ```mermaid
 flowchart TB
-    subgraph "Sandbox (no ambient authority)"
-        Agent["Agent requests<br/>tool.request via IPC"]
+    subgraph "Agent SDK (host process)"
+        Agent["Agent calls MCP tool"]
     end
 
     subgraph "talond (policy enforcement)"
@@ -727,20 +726,20 @@ flowchart TB
 
     Agent --> PR
     PR --> CR
-    CR -->|denied| R[Reject + log]
+    CR -->|not in allow list| R[Reject + log]
     CR -->|allowed| EX
-    CR -->|requires approval| AG
+    CR -->|requireApproval| AG
     AG -->|approved| EX
     AG -->|denied| R
     EX --> AU
     R --> AU
 ```
 
-Agents have no ambient authority. Every tool call goes through:
+Every MCP tool call goes through:
 
-1. **Policy Engine** — Validates the tool exists and is enabled for this persona
-2. **Capability Resolver** — Checks the persona grants the required capability label
-3. **Approval Gate** — For `require_approval` capabilities, prompts the user in-channel
+1. **Policy Engine** — Validates the tool exists and maps to a capability label
+2. **Capability Resolver** — Checks the persona's `allow` or `requireApproval` lists
+3. **Approval Gate** — For `requireApproval` capabilities, prompts the user in-channel
 4. **Audit Log** — Records the decision and result regardless of outcome
 
 ### Database Query Isolation
@@ -759,10 +758,10 @@ Complex SQL patterns (UNION, subqueries, CTEs, INTERSECT, EXCEPT) are rejected t
 
 ### Secrets Management
 
-- Secrets live on the host (environment variables, OS keychain, secret store)
-- Delivered to containers via stdin JSON at spawn time
-- Never written to disk inside containers
-- Host tools that need secrets execute on the host side, not in the sandbox
+- Credentials use `${ENV_VAR}` substitution in `talond.yaml` — never hardcoded
+- Environment variables loaded from `.env` file at startup
+- `talonctl config-show` masks all secret values in output
+- `talonctl env-check` audits for missing environment variables
 
 ### Approval Gates
 
@@ -770,9 +769,11 @@ High-risk capabilities can require interactive user approval:
 
 ```yaml
 capabilities:
-  fs_write: require_approval # prompts "Allow write to /workspace? [y/n]"
-  shell: deny # never allowed
-  send_channel: allow # no prompt needed
+  allow:
+    - channel.send:telegram
+    - memory.access
+  requireApproval:
+    - db.query   # prompts user in-channel before executing
 ```
 
 Approval prompts are sent to the originating channel with a configurable timeout.
@@ -799,7 +800,7 @@ stateDiagram-v2
 - **FIFO per thread**: Messages within a thread are processed in order, no interleaving
 - **Cross-thread parallelism**: Different threads process concurrently up to `max_concurrent_containers`
 - **Exponential backoff**: Failed items retry with configurable base delay (1s), max delay (60s), and jitter
-- **Dead-letter queue**: After max attempts (default 5), items move to dead-letter for manual review
+- **Dead-letter queue**: After max attempts (default 3), items move to dead-letter for manual review
 
 ---
 
@@ -833,74 +834,69 @@ Memory writes are gated by persona capabilities. Thread notebooks persist across
 
 ## Scheduling
 
-The scheduler supports recurring and one-shot tasks that flow through the same queue and routing system as regular messages.
+Schedules are managed by agents at runtime via the `schedule_manage` MCP tool — agents can create, update, delete, and list their own scheduled tasks. Scheduled tasks flow through the same queue and routing system as regular messages.
 
 ```yaml
+# Config only sets the tick interval — schedules are agent-managed
 scheduler:
-  timezone: UTC
-  tasks:
-    - name: daily-summary
-      cron: '0 8 * * *'
-      persona: assistant
-      prompt: 'Generate a daily briefing.'
-      channels:
-        - my-telegram
-
-    - name: hourly-check
-      interval: 60m
-      persona: monitor
-      prompt: 'Check system health.'
+  tickIntervalMs: 5000
 ```
 
-| Schedule Type | Example                | Behavior                           |
-| ------------- | ---------------------- | ---------------------------------- |
-| Cron          | `0 9 * * *`            | Fires at 09:00 daily               |
-| Interval      | `every 30m`            | Recurring at fixed intervals       |
-| One-shot      | `at 2026-03-01T10:00Z` | Single execution at specified time |
+Agents create schedules like:
 
-Scheduled tasks are enqueued through the standard queue pipeline, subject to the same retry and dead-letter policies as regular messages.
+```
+"Schedule a daily briefing at 8am: cron 0 8 * * *"
+"Check system health every 30 minutes"
+```
+
+| Schedule Type | Example     | Behavior                     |
+| ------------- | ----------- | ---------------------------- |
+| Cron          | `0 9 * * *` | Fires at 09:00 daily         |
+| Interval      | `30m`       | Recurring at fixed intervals |
+| One-shot      | (future)    | Single execution at set time |
+
+Scheduled tasks are enqueued through the standard queue pipeline, subject to the same retry and dead-letter policies as regular messages. Cron expressions evaluate in system local time.
 
 ---
 
 ## MCP Integration
 
-Talon supports the [Model Context Protocol](https://modelcontextprotocol.io) for connecting external tool servers.
+Talon supports the [Model Context Protocol](https://modelcontextprotocol.io) for connecting external tool servers to personas. MCP servers are added per-persona via `talonctl add-mcp`.
 
-```yaml
-mcp:
-  clients:
-    - name: filesystem-mcp
-      url: http://localhost:5174
-      personas:
-        - assistant
+```bash
+# Add an MCP server to a persona
+npx talonctl add-mcp --name web-search --persona assistant \
+  --command npx --args @anthropic-ai/mcp-web-search --transport stdio
 
-  server:
-    enabled: false
-    # host: 127.0.0.1
-    # port: 5173
+# Add a custom MCP server
+npx talonctl add-mcp --name my-tools --persona assistant \
+  --command node --args ./tools/server.js --transport stdio
 ```
 
-MCP tool calls are policy-checked identically to host tools — the sandbox requests an MCP call via IPC, the host validates against the persona's capability policy, and forwards it if allowed. Each MCP server has its own credential scope and can be scoped to specific personas.
+This adds the MCP server to the persona's config in `talond.yaml`:
+
+```yaml
+personas:
+  - name: assistant
+    mcpServers:
+      - name: web-search
+        command: npx
+        args: ['@anthropic-ai/mcp-web-search']
+        transport: stdio
+```
+
+MCP servers are passed through to the Agent SDK at runtime. Each persona gets its own set of MCP servers.
 
 ---
 
 ## Token Usage Tracking
 
-When using Anthropic API keys, Talon tracks token usage per run:
+When using Anthropic API keys, Talon records token usage from Agent SDK results in the `runs` table:
 
-- Input tokens, output tokens, cache read/write tokens
-- Aggregated per persona, per thread, per time period
-- Optional budget limits with soft warnings and hard caps
+- Input tokens, output tokens, cache read/write tokens per run
+- `total_cost_usd` from Agent SDK results
 
-```yaml
-personas:
-  - name: assistant
-    budget:
-      daily_limit: 100000 # tokens
-      warning_threshold: 0.8 # warn at 80% usage
-```
-
-View current usage via `talonctl status`, which shows 24-hour token consumption per persona.
+Per-persona budget limits and a `talonctl usage` report command are planned (TASK-047).
 
 ---
 
@@ -916,7 +912,7 @@ npm run build          # TypeScript -> dist/
 ### Test
 
 ```bash
-npm test               # Run all 2211 tests
+npm test               # Run all tests
 npm run test:watch     # Watch mode
 npm run test:coverage  # Coverage report (80% target)
 ```
@@ -1011,10 +1007,9 @@ talon/
       retry-strategy.ts          # Exponential backoff with jitter
       dead-letter.ts             # Dead-letter queue management
     sandbox/
-      sandbox-manager.ts         # Container lifecycle management
-      container-factory.ts       # Docker container creation
-      sdk-process-spawner.ts     # Claude Agent SDK process runner
-      session-tracker.ts         # Warm container session tracking
+      sandbox-manager.ts         # Agent lifecycle management
+      agent-runner.ts            # Agent SDK query dispatch
+      session-tracker.ts         # Session resume tracking
     scheduler/
       scheduler.ts               # Tick-based schedule processor
       cron-evaluator.ts          # Cron expression evaluation
@@ -1066,21 +1061,7 @@ Talon uses SQLite with WAL mode and foreign keys. All persistence goes through t
 
 ## Multi-Agent Collaboration
 
-Talon supports supervisor/worker patterns where a primary agent spawns sub-agents for parallel work.
-
-```mermaid
-graph TB
-    S[Supervisor Agent<br/>Thread A] -->|spawn| W1[Worker 1<br/>Research task]
-    S -->|spawn| W2[Worker 2<br/>Analysis task]
-    W1 -->|artifacts| S
-    W2 -->|artifacts| S
-    S -->|final response| CH[Channel]
-```
-
-- Workers run in separate sandboxes with their own tool scope
-- Child runs tracked via `parent_run_id` in the `runs` table
-- Workers cannot send channel messages unless explicitly allowed
-- Supervisor reads worker outputs as artifacts
+Talon's data model supports supervisor/worker patterns via `parent_run_id` in the `runs` table. Full multi-agent collaboration (Agent SDK subagent/Task tool support) is planned in TASK-054.
 
 ---
 

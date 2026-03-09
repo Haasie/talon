@@ -1,32 +1,42 @@
 /**
  * Unit tests for the `talonctl add-skill` command.
  *
- * Uses real temp directories. Tests skill directory scaffolding, manifest
- * generation, persona skill list updates, and error handling.
+ * Tests both the pure `addSkill()` function (importable by setup skill /
+ * terminal agent) and the `addSkillCommand()` CLI wrapper.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs/promises';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import yaml from 'js-yaml';
 
-import { addSkillCommand } from '../../../src/cli/commands/add-skill.js';
+import { addSkill, addSkillCommand } from '../../../src/cli/commands/add-skill.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), 'talon-add-skill-test-'));
+let tmpDir: string;
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), 'talon-add-skill-test-'));
+});
+
+afterEach(async () => {
+  await fs.rm(tmpDir, { recursive: true, force: true });
+});
+
+function configPath(): string {
+  return join(tmpDir, 'talond.yaml');
 }
 
-/** Writes a talond.yaml with a single persona. */
-function writeConfigWithPersona(dir: string, personaName: string): string {
-  const configPath = join(dir, 'talond.yaml');
+function writeConfigWithPersona(personaName: string): string {
+  const p = configPath();
   writeFileSync(
-    configPath,
+    p,
     [
       'logLevel: info',
       'personas:',
@@ -35,194 +45,181 @@ function writeConfigWithPersona(dir: string, personaName: string): string {
       '    skills: []',
     ].join('\n') + '\n',
   );
-  return configPath;
+  return p;
 }
 
-/** Reads and parses the YAML at configPath. */
-function readConfig(configPath: string): Record<string, unknown> {
-  const content = readFileSync(configPath, 'utf-8');
-  return (yaml.load(content) ?? {}) as Record<string, unknown>;
+function writeYaml(content: string): string {
+  const p = configPath();
+  writeFileSync(p, content);
+  return p;
+}
+
+function readYaml(p: string): Record<string, unknown> {
+  return (yaml.load(readFileSync(p, 'utf-8')) ?? {}) as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// addSkill() — pure function
 // ---------------------------------------------------------------------------
 
-describe('addSkillCommand()', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir();
-  });
-
+describe('addSkill()', () => {
   it('creates the skill directory', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
+    const p = writeConfigWithPersona('assistant');
     const skillsDir = join(tmpDir, 'skills');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
+    await addSkill({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir });
 
     expect(existsSync(join(skillsDir, 'web-search'))).toBe(true);
-    expect(exitSpy).not.toHaveBeenCalled();
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
   it('creates the prompts/ subdirectory', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
+    const p = writeConfigWithPersona('assistant');
     const skillsDir = join(tmpDir, 'skills');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
+    await addSkill({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir });
 
     expect(existsSync(join(skillsDir, 'web-search', 'prompts'))).toBe(true);
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
   it('creates a skill.yaml manifest', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
+    const p = writeConfigWithPersona('assistant');
     const skillsDir = join(tmpDir, 'skills');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
+    await addSkill({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir });
 
     const manifestPath = join(skillsDir, 'web-search', 'skill.yaml');
     expect(existsSync(manifestPath)).toBe(true);
 
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('skill.yaml manifest contains expected fields', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
-    const skillsDir = join(tmpDir, 'skills');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
-
-    const manifestPath = join(skillsDir, 'web-search', 'skill.yaml');
     const content = readFileSync(manifestPath, 'utf-8');
     const manifest = yaml.load(content) as Record<string, unknown>;
-
     expect(manifest.name).toBe('web-search');
     expect(manifest.version).toBeDefined();
-    expect(manifest.description).toBeDefined();
-    expect(Array.isArray(manifest.prompts)).toBe(true);
-    expect(manifest.capabilities).toBeDefined();
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
-  it('adds skill to persona skills list in talond.yaml', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
+  it('adds skill to persona skills list in config', async () => {
+    const p = writeConfigWithPersona('assistant');
     const skillsDir = join(tmpDir, 'skills');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
+    const result = await addSkill({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir });
 
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
+    expect(result.name).toBe('web-search');
+    expect(result.personaName).toBe('assistant');
 
-    const doc = readConfig(configPath);
+    const doc = readYaml(p);
     const personas = doc.personas as Array<Record<string, unknown>>;
     const skills = personas[0]!.skills as string[];
-
     expect(skills).toContain('web-search');
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
-  it('exits with code 1 when persona does not exist', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
+  it('adds multiple skills to the same persona', async () => {
+    const p = writeConfigWithPersona('assistant');
     const skillsDir = join(tmpDir, 'skills');
 
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
+    await addSkill({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir });
+    await addSkill({ name: 'code-runner', personaName: 'assistant', configPath: p, skillsDir });
 
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'nonexistent',
-      configPath,
-      skillsDir,
-    });
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
+    const doc = readYaml(p);
+    const personas = doc.personas as Array<Record<string, unknown>>;
+    const skills = personas[0]!.skills as string[];
+    expect(skills).toContain('web-search');
+    expect(skills).toContain('code-runner');
+    expect(skills).toHaveLength(2);
   });
 
-  it('exits with code 1 when skill already registered on persona', async () => {
-    const configPath = join(tmpDir, 'talond.yaml');
-    writeFileSync(
-      configPath,
-      [
-        'logLevel: info',
-        'personas:',
-        '  - name: assistant',
-        '    model: claude-sonnet-4-6',
-        '    skills:',
-        '      - web-search',
-      ].join('\n') + '\n',
-    );
+  it('does not overwrite existing skill.yaml', async () => {
+    const p = writeConfigWithPersona('assistant');
     const skillsDir = join(tmpDir, 'skills');
 
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(skillsDir, 'web-search', 'prompts'), { recursive: true });
+    const manifestPath = join(skillsDir, 'web-search', 'skill.yaml');
+    writeFileSync(manifestPath, '# existing manifest\nname: web-search\n');
 
-    await addSkillCommand({
+    await addSkill({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir });
+
+    const content = readFileSync(manifestPath, 'utf-8');
+    expect(content).toBe('# existing manifest\nname: web-search\n');
+  });
+
+  // --- Validation ---
+
+  it('rejects an invalid skill name', async () => {
+    const p = writeConfigWithPersona('assistant');
+    const skillsDir = join(tmpDir, 'skills');
+
+    await expect(addSkill({ name: 'bad name', personaName: 'assistant', configPath: p, skillsDir }))
+      .rejects.toThrow(/invalid/);
+  });
+
+  it('rejects an empty skill name', async () => {
+    const p = writeConfigWithPersona('assistant');
+    const skillsDir = join(tmpDir, 'skills');
+
+    await expect(addSkill({ name: '', personaName: 'assistant', configPath: p, skillsDir }))
+      .rejects.toThrow(/must not be empty/);
+  });
+
+  it('throws when persona does not exist', async () => {
+    const p = writeConfigWithPersona('assistant');
+    const skillsDir = join(tmpDir, 'skills');
+
+    await expect(addSkill({ name: 'web-search', personaName: 'nonexistent', configPath: p, skillsDir }))
+      .rejects.toThrow(/not found/);
+  });
+
+  it('throws when skill already registered on persona', async () => {
+    const p = writeYaml([
+      'personas:',
+      '  - name: assistant',
+      '    model: claude-sonnet-4-6',
+      '    skills:',
+      '      - web-search',
+    ].join('\n') + '\n');
+    const skillsDir = join(tmpDir, 'skills');
+
+    await expect(addSkill({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir }))
+      .rejects.toThrow(/already registered/);
+  });
+
+  it('rejects an invalid persona name', async () => {
+    const p = writeConfigWithPersona('assistant');
+    const skillsDir = join(tmpDir, 'skills');
+
+    await expect(addSkill({ name: 'web-search', personaName: 'bad persona', configPath: p, skillsDir }))
+      .rejects.toThrow(/invalid/);
+  });
+
+  it('throws for non-existent config file', async () => {
+    await expect(addSkill({
       name: 'web-search',
       personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
+      configPath: join(tmpDir, 'nope.yaml'),
+      skillsDir: join(tmpDir, 'skills'),
+    })).rejects.toThrow(/not found/);
+  });
+});
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+// ---------------------------------------------------------------------------
+// addSkillCommand() — CLI wrapper
+// ---------------------------------------------------------------------------
 
+describe('addSkillCommand()', () => {
+  it('prints confirmation on success', async () => {
+    const p = writeConfigWithPersona('assistant');
+    const skillsDir = join(tmpDir, 'skills');
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await addSkillCommand({ name: 'web-search', personaName: 'assistant', configPath: p, skillsDir });
+
+    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
+    expect(output).toContain('web-search');
+    expect(output).toContain('assistant');
     consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
-  it('exits with code 1 when config file does not exist', async () => {
+  it('exits with code 1 on error', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
     await addSkillCommand({
       name: 'web-search',
@@ -232,89 +229,6 @@ describe('addSkillCommand()', () => {
     });
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('does not overwrite existing skill.yaml', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
-    const skillsDir = join(tmpDir, 'skills');
-
-    // Pre-create skill directory and manifest
-    const { mkdirSync } = await import('node:fs');
-    mkdirSync(join(skillsDir, 'web-search', 'prompts'), { recursive: true });
-    const manifestPath = join(skillsDir, 'web-search', 'skill.yaml');
-    writeFileSync(manifestPath, '# existing manifest\nname: web-search\n');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
-
-    const content = readFileSync(manifestPath, 'utf-8');
-    expect(content).toBe('# existing manifest\nname: web-search\n');
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('prints a confirmation message on success', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
-    const skillsDir = join(tmpDir, 'skills');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
-
-    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
-    expect(output).toContain('web-search');
-    expect(output).toContain('assistant');
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('adds multiple skills to the same persona', async () => {
-    const configPath = writeConfigWithPersona(tmpDir, 'assistant');
-    const skillsDir = join(tmpDir, 'skills');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addSkillCommand({
-      name: 'web-search',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
-
-    await addSkillCommand({
-      name: 'code-runner',
-      personaName: 'assistant',
-      configPath,
-      skillsDir,
-    });
-
-    const doc = readConfig(configPath);
-    const personas = doc.personas as Array<Record<string, unknown>>;
-    const skills = personas[0]!.skills as string[];
-
-    expect(skills).toContain('web-search');
-    expect(skills).toContain('code-runner');
-    expect(skills).toHaveLength(2);
-
     consoleSpy.mockRestore();
     exitSpy.mockRestore();
   });

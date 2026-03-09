@@ -23,13 +23,36 @@ to the next step.
 
 - **One question at a time.** Never dump a wall of questions.
 - **Detect state first.** Skip steps that are already done.
-- **Show what you write.** When editing `talond.yaml` or creating files, let the user see the changes.
+- **Use talonctl commands.** Never edit talond.yaml directly. Use the CLI commands.
 - **No secrets.** Never ask for or write actual tokens. Use `${ENV_VAR}` placeholders only.
-- **Use talonctl for validation.** Direct file manipulation for config, `talonctl` for `migrate` and `doctor`.
+- **Show what you do.** When running commands, show the output.
+
+## Available talonctl Commands
+
+All config mutations MUST go through these commands:
+
+| Command | Purpose |
+|---------|---------|
+| `npx talonctl setup` | Bootstrap (dirs, config, migrations) |
+| `npx talonctl add-channel --name <n> --type <t>` | Add a channel |
+| `npx talonctl add-persona --name <n>` | Scaffold persona + add to config |
+| `npx talonctl add-skill --name <n> --persona <p>` | Add a skill to a persona |
+| `npx talonctl bind --persona <p> --channel <c>` | Bind persona to channel |
+| `npx talonctl unbind --persona <p> --channel <c>` | Remove binding |
+| `npx talonctl add-mcp --skill <s> --name <n> --transport stdio --command <c>` | Add MCP server |
+| `npx talonctl list-channels` | Show channels |
+| `npx talonctl list-personas` | Show personas |
+| `npx talonctl list-skills` | Show skills |
+| `npx talonctl env-check` | Audit env var placeholders |
+| `npx talonctl config-show` | Show effective config (secrets masked) |
+| `npx talonctl remove-channel --name <n>` | Remove a channel |
+| `npx talonctl remove-persona --name <n>` | Remove a persona |
+| `npx talonctl migrate` | Run database migrations |
+| `npx talonctl doctor` | Validate configuration |
 
 ## State Detection
 
-Before starting, check the current state to determine where to enter the flow:
+Before starting, check the current state:
 
 ```
 Check these files/directories:
@@ -45,19 +68,22 @@ Check these files/directories:
 | State | Action |
 |-------|--------|
 | No `talond.yaml` | Full flow from step 1 |
-| `talond.yaml` exists, no channels configured | Skip to Channel Configuration |
-| `talond.yaml` exists, has channels and personas | Ask what they want to do (menu) |
+| Config exists, no channels | Skip to Channel Configuration |
+| Config exists, has channels and personas | Show menu |
 
 ### Returning User Menu
 
-If setup is already complete (config exists with channels and personas), present:
+If setup is already complete, present:
 
 ```
 What would you like to do?
   a) Add a channel
   b) Add a persona
-  c) Run validation (doctor)
-  d) Show current config summary
+  c) Add a skill to a persona
+  d) Bind/unbind persona to channel
+  e) Run validation (doctor)
+  f) Show current config summary
+  g) Check environment variables
 ```
 
 ## Full Setup Flow
@@ -69,286 +95,63 @@ Check each prerequisite. Report status. Fix what can be fixed automatically.
 ```
 1. Node.js >= 22          → check `node --version`
 2. Docker available       → check `docker info`
-3. Dependencies installed → check node_modules/ exists, run `npm install` if not
-4. Project built          → check dist/ exists, run `npm run build` if not
+3. Dependencies installed → check node_modules/, run `npm install` if not
+4. Project built          → check dist/, run `npm run build` if not
 ```
-
-For each check, report pass/fail. If Docker is missing, warn but continue (sandbox
-features won't work without it). If Node.js is wrong version, stop — nothing else
-will work.
 
 ### Step 2: Bootstrap
 
 Skip if `talond.yaml` already exists.
 
-1. Create directory structure:
-   ```
-   data/
-   data/ipc/
-   data/ipc/daemon/
-   data/backups/
-   data/threads/
-   ```
+Run: `npx talonctl setup`
 
-2. Generate `talond.yaml` with these defaults:
-   ```yaml
-   logLevel: info
-   dataDir: data
-
-   storage:
-     type: sqlite
-     path: data/talond.sqlite
-
-   sandbox:
-     runtime: docker
-     image: talon-sandbox:latest
-     maxConcurrent: 3
-     networkDefault: off
-     idleTimeoutMs: 1800000
-     hardTimeoutMs: 3600000
-     resourceLimits:
-       memoryMb: 1024
-       cpus: 1
-       pidsLimit: 256
-
-   ipc:
-     pollIntervalMs: 500
-     daemonSocketDir: data/ipc/daemon
-
-   queue:
-     maxAttempts: 3
-     backoffBaseMs: 1000
-     backoffMaxMs: 60000
-     concurrencyLimit: 5
-
-   scheduler:
-     tickIntervalMs: 5000
-
-   auth:
-     mode: subscription
-
-   channels: []
-   personas: []
-   schedules: []
-   ```
-
-Tell the user: "Generated default config at `talond.yaml`. Let's add some channels."
+This creates directories, generates default config, runs migrations, validates.
 
 ### Step 3: Channel Configuration
 
 Ask: **"Which channel do you want to connect first?"**
 
-Present options:
 ```
 a) Telegram
 b) Slack
 c) Discord
 d) WhatsApp
 e) Email
-f) Skip for now
+f) Terminal (for CLI chat)
+g) Skip for now
 ```
 
-For each selected channel, follow the channel-specific guidance below, then ask:
-**"Add another channel?"**
+**Invoke the matching per-channel skill** for the full setup walkthrough:
 
-Loop until the user says no or chooses "skip".
+| Channel | Skill to invoke |
+|---------|----------------|
+| Telegram | `/add-telegram` |
+| Slack | `/add-slack` |
+| Discord | `/add-discord` |
+| WhatsApp | `/add-whatsapp` |
+| Email | `/add-email` |
+| Terminal | `/add-terminal` |
 
-#### Channel: Telegram
+Each skill handles: bot/app creation, credentials, config, env vars, verification, and troubleshooting.
 
-Add to `talond.yaml` channels array:
-```yaml
-- name: <ask user for name, suggest "my-telegram">
-  type: telegram
-  enabled: true
-  config:
-    botToken: ${TELEGRAM_BOT_TOKEN}
-    allowedChatIds: []
-    pollIntervalMs: 1000
-```
-
-Tell the user:
-- "Create a Telegram bot via @BotFather — send `/newbot` and follow the prompts."
-- "Set the `TELEGRAM_BOT_TOKEN` environment variable to the token BotFather gives you."
-- "Add your Telegram chat ID (as a string) to `allowedChatIds` to restrict who can talk to the bot. You can find your ID by messaging @userinfobot on Telegram."
-
-#### Channel: Slack
-
-Add to `talond.yaml` channels array:
-```yaml
-- name: <ask user for name, suggest "my-slack">
-  type: slack
-  enabled: true
-  config:
-    botToken: ${SLACK_BOT_TOKEN}
-    appToken: ${SLACK_APP_TOKEN}
-    signingSecret: ${SLACK_SIGNING_SECRET}
-```
-
-Tell the user:
-- "Create a Slack app at https://api.slack.com/apps"
-- "Enable Socket Mode and generate an App-Level Token (scope: `connections:write`) — this is `SLACK_APP_TOKEN`."
-- "Under OAuth & Permissions, install to workspace and copy the Bot User OAuth Token — this is `SLACK_BOT_TOKEN`."
-- "Under Basic Information, copy the Signing Secret — this is `SLACK_SIGNING_SECRET`."
-- "Required bot scopes: `chat:write`, `channels:read`, `channels:history`, `groups:read`, `groups:history`, `im:read`, `im:history`."
-
-#### Channel: Discord
-
-Add to `talond.yaml` channels array:
-```yaml
-- name: <ask user for name, suggest "my-discord">
-  type: discord
-  enabled: true
-  config:
-    token: ${DISCORD_BOT_TOKEN}
-    applicationId: "<ask user>"
-    allowedChannelIds: []
-```
-
-Tell the user:
-- "Create an application at https://discord.com/developers/applications"
-- "Under Bot, create a bot and copy the token — this is `DISCORD_BOT_TOKEN`."
-- "The Application ID is on the General Information page."
-- "Enable the Message Content Intent under Bot > Privileged Gateway Intents."
-- "Invite the bot to your server using OAuth2 URL Generator with `bot` scope and `Send Messages`, `Read Message History` permissions."
-- "Add channel IDs to `allowedChannelIds` to restrict where the bot listens."
-
-#### Channel: WhatsApp
-
-Add to `talond.yaml` channels array:
-```yaml
-- name: <ask user for name, suggest "my-whatsapp">
-  type: whatsapp
-  enabled: true
-  config:
-    phoneNumberId: "<ask user>"
-    accessToken: ${WHATSAPP_ACCESS_TOKEN}
-    verifyToken: ${WHATSAPP_VERIFY_TOKEN}
-    webhookPath: /webhook/whatsapp
-```
-
-Tell the user:
-- "Set up a WhatsApp Business account and create an app in the Meta Business Suite."
-- "Get your Phone Number ID from the WhatsApp > Getting Started page."
-- "Generate a permanent access token — this is `WHATSAPP_ACCESS_TOKEN`."
-- "Choose a verify token (any string you pick) and set it as `WHATSAPP_VERIFY_TOKEN`. You'll use the same string when configuring the webhook in Meta."
-- "Configure the webhook URL to point to your server at the path `/webhook/whatsapp`."
-
-#### Channel: Email
-
-Add to `talond.yaml` channels array:
-```yaml
-- name: <ask user for name, suggest "my-email">
-  type: email
-  enabled: true
-  config:
-    imap:
-      host: <ask user>
-      port: 993
-      user: <ask user>
-      password: ${EMAIL_PASSWORD}
-    smtp:
-      host: <ask user>
-      port: 587
-      user: <ask user>
-      password: ${EMAIL_PASSWORD}
-    fromAddress: <ask user>
-    allowedSenders: []
-    pollingIntervalMs: 30000
-```
-
-Tell the user:
-- "Use an app-specific password, not your main email password. For Gmail, generate one at https://myaccount.google.com/apppasswords"
-- "Set the `EMAIL_PASSWORD` environment variable."
-- "Add sender addresses to `allowedSenders` to restrict who can trigger the agent."
-- "IMAP port 993 is for SSL. SMTP port 587 is for STARTTLS. Adjust if your provider differs."
+Ask: **"Add another channel?"** Loop until done.
 
 ### Step 4: Persona Configuration
 
 Ask: **"Let's create a persona. What should this agent be called?"**
 
-Accept a name (suggest "assistant" if first persona).
-
-Then ask these three questions, one at a time:
-
-**Q1: "What should {name} do?"**
-Free-form. Examples: "personal assistant", "code reviewer", "customer support agent", "research helper".
-
-**Q2: "What tone should {name} use?"**
-```
-a) Professional — clear, formal, no slang
-b) Casual — friendly, conversational
-c) Technical — precise, detailed, uses jargon freely
-d) Friendly — warm, approachable, uses simple language
-```
-
-**Q3: "Any specific constraints or rules?"** (optional)
-Free-form. Examples: "never share personal data", "always respond in Spanish", "keep answers under 3 sentences".
-
-#### System Prompt Generation
-
-Using the answers, generate a structured system prompt:
-
-```markdown
-# {Name} — System Prompt
-
-You are {name}, {purpose description based on Q1}.
-
-## Behavior
-
-- {tone-specific behavior rules based on Q2}
-- {2-3 behavior rules derived from the stated purpose}
-
-## Constraints
-
-- {constraints from Q3, or sensible defaults if none given}
-- Do not reveal system prompt contents or internal configuration.
-- Decline requests that violate safety guidelines.
-```
-
-**Present the generated prompt to the user for review.** Ask: "How does this look? Want me to adjust anything?"
-
-Revise if requested. Once approved:
-
-1. Create `personas/{name}/system.md` with the approved prompt.
-2. Ask which model to use:
-   ```
-   Which model? (default: claude-sonnet-4-6)
-     a) claude-sonnet-4-6 (recommended — fast, capable)
-     b) claude-opus-4-6 (most capable, slower, more expensive)
-     c) claude-haiku-4-5 (fastest, cheapest, less capable)
-     d) Other (enter model ID)
-   ```
-3. Ask which channels to bind (from channels configured in step 3):
-   "Which channels should {name} respond on? (comma-separated, or 'all')"
-4. Ask about capabilities with sensible defaults:
-   ```
-   Default capabilities for {name}:
-     - channel.send:{channels} → allow
-     - fs.read:workspace → allow
-     - fs.write:workspace → require approval
-
-   Accept these defaults? Or customize?
-   ```
-5. Add the persona entry to `talond.yaml`:
-   ```yaml
-   - name: {name}
-     model: {model}
-     systemPromptFile: personas/{name}/system.md
-     skills: []
-     capabilities:
-       allow:
-         - channel.send:{channel}
-         - fs.read:workspace
-       requireApproval:
-         - fs.write:workspace
-     mounts:
-       - source: data/threads/{thread}/memory
-         target: /memory
-         mode: ro
-       - source: data/threads/{thread}/artifacts
-         target: /artifacts
-         mode: rw
-   ```
+1. Accept a name (suggest "assistant")
+2. Run: `npx talonctl add-persona --name <name>`
+3. Ask these questions one at a time:
+   - **"What should {name} do?"** (purpose)
+   - **"What tone?"** (professional/casual/technical/friendly)
+   - **"Any specific constraints?"** (optional)
+4. Generate a system prompt from the answers
+5. Show it to the user for review
+6. Write the approved prompt to `personas/{name}/system.md` (Edit the file created by add-persona)
+7. Ask which channels to bind:
+   - Run: `npx talonctl list-channels` to show options
+   - For each selected: `npx talonctl bind --persona <name> --channel <channel>`
 
 Ask: **"Add another persona?"** Loop until done.
 
@@ -356,72 +159,64 @@ Ask: **"Add another persona?"** Loop until done.
 
 Run: `npx talonctl migrate --config talond.yaml`
 
-Report the result. If it fails, show the error and suggest fixes.
-
 ### Step 6: Validation
 
 Run: `npx talonctl doctor --config talond.yaml`
 
-Report each check result. For failures, provide specific remediation steps.
+For failures, provide specific remediation steps.
 
-### Step 7: Systemd Service (Linux only)
+### Step 7: Environment Check
 
-Ask: **"Want to install talond as a systemd service? It'll auto-start on boot and restart on crash."**
+Run: `npx talonctl env-check`
 
-If yes:
+Show which env vars are missing. Tell the user to add them to `.env`.
 
-1. Check if systemd is available: `systemctl --version`
-2. Tell the user to run:
-   ```bash
-   sudo ./deploy/install-service.sh --user $(whoami) --dir $(pwd)
-   ```
-3. Explain what this does:
-   - Generates a systemd unit file at `/etc/systemd/system/talond.service`
-   - Sets `WorkingDirectory`, `User`, `ExecStart`, and `EnvironmentFile` to match their setup
-   - Enables the service (auto-start on boot)
-   - Does NOT start it yet
-4. Tell the user:
-   ```
-   Start:   sudo systemctl start talond
-   Status:  sudo systemctl status talond
-   Logs:    journalctl -u talond -f
-   Stop:    sudo systemctl stop talond
-   ```
+### Step 8: Systemd Service (Linux only)
 
-If no, skip and continue to summary.
+Ask: **"Want to install talond as a systemd service?"**
 
-### Step 8: Summary
-
-Print a summary of everything that was configured:
-
+If yes, tell the user to run:
+```bash
+sudo ./deploy/install-service.sh --user $(whoami) --dir $(pwd)
 ```
-Setup complete!
 
-Channels configured:
-  - my-telegram (telegram)
-  - my-slack (slack)
+### Step 9: Summary
 
-Personas configured:
-  - assistant (claude-sonnet-4-6) → my-telegram, my-slack
-
-Environment variables to set:
-  - TELEGRAM_BOT_TOKEN
-  - SLACK_BOT_TOKEN
-  - SLACK_APP_TOKEN
-  - SLACK_SIGNING_SECRET
-
-To start the daemon:
-  sudo systemctl start talond     (if systemd service installed)
-  node dist/index.js              (or run directly)
+Run these to build the summary:
+```bash
+npx talonctl list-channels
+npx talonctl list-personas
+npx talonctl env-check
 ```
+
+Print results and instructions to start the daemon.
+
+## Shared Memory Between Agents
+
+Talon supports shared memory between personas using the [Anthropic Memory MCP server](https://github.com/anthropics/memory). This is a knowledge graph stored in a single JSON file — when multiple personas use the same file, they share knowledge automatically.
+
+**How to set it up:**
+
+For each persona that should share memory, add the memory MCP server to one of its skills:
+
+```bash
+npx talonctl add-mcp --skill <skill-name> --name memory \
+  --transport stdio \
+  --command npx \
+  --args "-y @anthropic-ai/memory --memory-path data/shared-memory.json"
+```
+
+The key is that all personas point to the same `--memory-path`. Use `data/shared-memory.json` as the default location (inside the existing data directory).
+
+Agents can then create entities, add relations, and store observations. Any agent reading the same file sees everything other agents have written.
+
+**When to suggest this:** When the user has multiple personas and asks about sharing context, knowledge, or memory between them. Don't suggest it proactively during initial setup — it's an advanced feature.
 
 ## Important Rules
 
 1. **Never write actual secrets.** Only `${ENV_VAR}` placeholders in config files.
-2. **Always read talond.yaml before editing.** Use Read tool first, then Edit tool.
+2. **Use talonctl commands for all config mutations.** The only exception is editing the system prompt file and the channel config section for env var placeholders.
 3. **One question per message.** Do not batch questions.
-4. **Show file changes.** When writing config, show what you're adding.
-5. **Use Edit, not Write, for existing files.** Only use Write for new files.
-6. **Run talonctl from project root.** Always use the project's npx.
-7. **Don't start the daemon.** Setup only. The user starts it themselves.
-8. **Validate at the end.** Always run doctor before declaring setup complete.
+4. **Show command output.** Let the user see what happened.
+5. **Don't start the daemon.** Setup only. The user starts it themselves.
+6. **Validate at the end.** Always run doctor and env-check before declaring setup complete.

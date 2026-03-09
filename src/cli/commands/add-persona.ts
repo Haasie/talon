@@ -19,14 +19,16 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import yaml from 'js-yaml';
+import {
+  DEFAULT_CONFIG_PATH,
+  validateName,
+  readConfig,
+  writeConfigAtomic,
+} from '../config-utils.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/** Default config file path. */
-const DEFAULT_CONFIG_PATH = 'talond.yaml';
 
 /** Default model for newly created personas. */
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
@@ -35,69 +37,45 @@ const DEFAULT_MODEL = 'claude-sonnet-4-6';
 // Types
 // ---------------------------------------------------------------------------
 
-/** Shape of a persona entry in talond.yaml. */
-interface PersonaEntry {
-  name: string;
-  model?: string;
-  systemPromptFile?: string;
-  skills?: string[];
-  capabilities?: { allow?: string[]; requireApproval?: string[] };
-  [key: string]: unknown;
-}
-
-/** Root YAML document structure (partial). */
-interface YamlDocument {
-  personas?: PersonaEntry[];
-  [key: string]: unknown;
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Executes the `add-persona` CLI command.
- *
- * Scaffolds a persona directory with a system prompt template, then adds the
- * persona to the `personas` section of talond.yaml.
- *
- * @param options.name       - Persona name (e.g. "assistant").
- * @param options.configPath - Path to talond.yaml (default: "talond.yaml").
- * @param options.personasDir - Override base directory for personas (for testing).
- */
-export async function addPersonaCommand(options: {
+export interface AddPersonaOptions {
   name: string;
   configPath?: string;
   personasDir?: string;
-}): Promise<void> {
+}
+
+export interface AddPersonaEntry {
+  name: string;
+  model: string;
+  systemPromptFile: string;
+  skills: string[];
+  capabilities: { allow: string[]; requireApproval: string[] };
+}
+
+// ---------------------------------------------------------------------------
+// Core logic (importable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Adds a persona to the config file and scaffolds its directory.
+ *
+ * Pure business logic — no console output or process.exit.
+ * Can be called from CLI, setup skill, or terminal agent.
+ *
+ * @returns The persona entry that was added.
+ * @throws Error with a user-facing message on any failure.
+ */
+export async function addPersona(options: AddPersonaOptions): Promise<AddPersonaEntry> {
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
   const personasDir = options.personasDir ?? 'personas';
 
-  if (!existsSync(configPath)) {
-    console.error(`Error: config file "${configPath}" not found.`);
-    console.error(`Run \`talonctl setup\` first, or pass --config to specify a different path.`);
-    process.exit(1);
-    return;
+  // Validate name.
+  const nameError = validateName(options.name, 'Persona');
+  if (nameError) {
+    throw new Error(nameError);
   }
 
-  let rawContent: string;
-  try {
-    rawContent = await fs.readFile(configPath, 'utf-8');
-  } catch (cause) {
-    console.error(`Error reading config file "${configPath}": ${String(cause)}`);
-    process.exit(1);
-    return;
-  }
-
-  let doc: YamlDocument;
-  try {
-    const parsed = yaml.load(rawContent);
-    doc = (parsed ?? {}) as YamlDocument;
-  } catch (cause) {
-    console.error(`Error parsing YAML in "${configPath}": ${String(cause)}`);
-    process.exit(1);
-    return;
-  }
+  // Read existing config.
+  const doc = await readConfig(configPath);
 
   // Ensure personas array exists.
   if (!Array.isArray(doc.personas)) {
@@ -107,10 +85,9 @@ export async function addPersonaCommand(options: {
   // Check for duplicate persona name.
   const duplicate = doc.personas.find((p) => p.name === options.name);
   if (duplicate) {
-    console.error(`Error: a persona named "${options.name}" already exists in "${configPath}".`);
-    console.error(`Choose a different name or edit the existing persona entry directly.`);
-    process.exit(1);
-    return;
+    throw new Error(
+      `A persona named "${options.name}" already exists in "${configPath}". Choose a different name or edit the existing entry directly.`,
+    );
   }
 
   // Scaffold persona directory.
@@ -120,9 +97,7 @@ export async function addPersonaCommand(options: {
   try {
     await fs.mkdir(personaDir, { recursive: true });
   } catch (cause) {
-    console.error(`Error creating persona directory "${personaDir}": ${String(cause)}`);
-    process.exit(1);
-    return;
+    throw new Error(`Error creating persona directory "${personaDir}": ${String(cause)}`);
   }
 
   // Write system prompt template if it doesn't already exist.
@@ -130,14 +105,12 @@ export async function addPersonaCommand(options: {
     try {
       await fs.writeFile(systemPromptFile, buildSystemPromptTemplate(options.name), 'utf-8');
     } catch (cause) {
-      console.error(`Error writing system prompt file "${systemPromptFile}": ${String(cause)}`);
-      process.exit(1);
-      return;
+      throw new Error(`Error writing system prompt file "${systemPromptFile}": ${String(cause)}`);
     }
   }
 
-  // Add persona entry to config.
-  const newPersona: PersonaEntry = {
+  // Build persona entry.
+  const entry: AddPersonaEntry = {
     name: options.name,
     model: DEFAULT_MODEL,
     systemPromptFile,
@@ -148,26 +121,34 @@ export async function addPersonaCommand(options: {
     },
   };
 
-  doc.personas.push(newPersona);
+  doc.personas.push(entry);
 
-  const updatedYaml = yaml.dump(doc, {
-    lineWidth: 120,
-    quotingType: '"',
-    forceQuotes: false,
-  });
+  // Write atomically.
+  await writeConfigAtomic(configPath, doc);
 
+  return entry;
+}
+
+// ---------------------------------------------------------------------------
+// CLI wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * CLI entrypoint for `talonctl add-persona`.
+ *
+ * Thin wrapper around {@link addPersona} that prints output and exits.
+ */
+export async function addPersonaCommand(options: AddPersonaOptions): Promise<void> {
   try {
-    await fs.writeFile(configPath, updatedYaml, 'utf-8');
-  } catch (cause) {
-    console.error(`Error writing config file "${configPath}": ${String(cause)}`);
+    const entry = await addPersona(options);
+    console.log(`Created persona directory: ${path.dirname(entry.systemPromptFile)}`);
+    console.log(`Created system prompt:     ${entry.systemPromptFile}`);
+    console.log(`Added persona "${entry.name}" to "${options.configPath ?? DEFAULT_CONFIG_PATH}".`);
+    console.log(`Edit "${entry.systemPromptFile}" to customise the system prompt.`);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
-    return;
   }
-
-  console.log(`Created persona directory: ${personaDir}`);
-  console.log(`Created system prompt:     ${systemPromptFile}`);
-  console.log(`Added persona "${options.name}" to "${configPath}".`);
-  console.log(`Edit "${systemPromptFile}" to customise the system prompt.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +158,7 @@ export async function addPersonaCommand(options: {
 /**
  * Returns a default system prompt markdown template for the given persona name.
  */
-function buildSystemPromptTemplate(name: string): string {
+export function buildSystemPromptTemplate(name: string): string {
   return [
     `# ${name} — System Prompt`,
     '',

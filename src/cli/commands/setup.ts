@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 
 import yaml from 'js-yaml';
+import writeFileAtomic from 'write-file-atomic';
 
 import { loadConfigFromString } from '../../core/config/config-loader.js';
 import { createDatabase } from '../../core/database/connection.js';
@@ -277,7 +278,7 @@ export async function generateDefaultConfig(
   ].join('\n');
 
   try {
-    await fs.writeFile(configPath, header + yamlContent, 'utf-8');
+    await writeFileAtomic(configPath, header + yamlContent, { encoding: 'utf-8' });
   } catch (cause) {
     return {
       name: 'Config file generation',

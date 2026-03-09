@@ -17,6 +17,8 @@ const DEFAULT_IPC_DIR = 'data/ipc/daemon';
 const DEFAULT_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 
+const VALID_STATUSES = ['pending', 'claimed', 'processing', 'completed', 'failed', 'dead_letter'] as const;
+
 export async function queuePurgeCommand(options: {
   ipcDir?: string;
   timeoutMs?: number;
@@ -29,8 +31,17 @@ export async function queuePurgeCommand(options: {
   const outputDir = path.join(ipcDir, 'output');
 
   const statuses = options.all
-    ? ['pending', 'claimed', 'processing', 'completed', 'failed', 'dead_letter']
+    ? [...VALID_STATUSES]
     : options.statuses ?? ['pending', 'failed', 'completed'];
+
+  // Validate provided status values.
+  const invalidStatuses = statuses.filter((s) => !VALID_STATUSES.includes(s as (typeof VALID_STATUSES)[number]));
+  if (invalidStatuses.length > 0) {
+    console.error(`Error: Invalid status value(s): ${invalidStatuses.join(', ')}`);
+    console.error(`Valid statuses: ${VALID_STATUSES.join(', ')}`);
+    process.exit(1);
+    return;
+  }
 
   const command: DaemonCommand = {
     id: randomUUID(),

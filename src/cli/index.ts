@@ -24,6 +24,16 @@ import { addPersonaCommand } from './commands/add-persona.js';
 import { addSkillCommand } from './commands/add-skill.js';
 import { queuePurgeCommand } from './commands/queue-purge.js';
 import { chatCommand } from './commands/chat.js';
+import { listChannelsCommand } from './commands/list-channels.js';
+import { listPersonasCommand } from './commands/list-personas.js';
+import { listSkillsCommand } from './commands/list-skills.js';
+import { bindCommand } from './commands/bind.js';
+import { unbindCommand } from './commands/unbind.js';
+import { addMcpCommand } from './commands/add-mcp.js';
+import { envCheckCommand } from './commands/env-check.js';
+import { removeChannelCommand } from './commands/remove-channel.js';
+import { removePersonaCommand } from './commands/remove-persona.js';
+import { configShowCommand } from './commands/config-show.js';
 
 // Load .env before anything else so ${VAR} substitution works in config.
 const envPath = resolve(process.env.TALOND_ENV_FILE || '.env');
@@ -170,7 +180,8 @@ program
   .option('--token <token>', 'Authentication token (or set TERMINAL_TOKEN env var)')
   .option('--client-id <id>', 'Client identity for persistent threads')
   .option('--persona <name>', 'Persona to connect to (overrides channel default)')
-  .action(async (opts: { host: string; port: string; token?: string; clientId?: string; persona?: string }) => {
+  .option('--tls', 'Use wss:// (TLS) instead of ws://')
+  .action(async (opts: { host: string; port: string; token?: string; clientId?: string; persona?: string; tls?: boolean }) => {
     const token = opts.token ?? process.env.TERMINAL_TOKEN;
     if (!token) {
       console.error('Error: --token is required (or set TERMINAL_TOKEN env var).');
@@ -182,7 +193,123 @@ program
       token,
       clientId: opts.clientId,
       persona: opts.persona,
+      tls: opts.tls,
     });
+  });
+
+// ---------------------------------------------------------------------------
+// New commands (CLI-008 through CLI-017)
+// ---------------------------------------------------------------------------
+
+program
+  .command('list-channels')
+  .description('List all configured channels')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { config: string }) => {
+    await listChannelsCommand({ configPath: opts.config });
+  });
+
+program
+  .command('list-personas')
+  .description('List all configured personas')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { config: string }) => {
+    await listPersonasCommand({ configPath: opts.config });
+  });
+
+program
+  .command('list-skills')
+  .description('List all skills (optionally filter by persona)')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .option('--persona <name>', 'Filter skills by persona name')
+  .action(async (opts: { config: string; persona?: string }) => {
+    await listSkillsCommand({ configPath: opts.config, personaName: opts.persona });
+  });
+
+program
+  .command('bind')
+  .description('Bind a persona to a channel')
+  .requiredOption('--persona <name>', 'Persona name')
+  .requiredOption('--channel <name>', 'Channel name')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { persona: string; channel: string; config: string }) => {
+    await bindCommand({ persona: opts.persona, channel: opts.channel, configPath: opts.config });
+  });
+
+program
+  .command('unbind')
+  .description('Remove a persona-channel binding')
+  .requiredOption('--persona <name>', 'Persona name')
+  .requiredOption('--channel <name>', 'Channel name')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { persona: string; channel: string; config: string }) => {
+    await unbindCommand({ persona: opts.persona, channel: opts.channel, configPath: opts.config });
+  });
+
+program
+  .command('add-mcp')
+  .description('Add an MCP server to a skill')
+  .requiredOption('--skill <name>', 'Skill name')
+  .requiredOption('--name <name>', 'MCP server name')
+  .requiredOption('--transport <type>', 'Transport type (stdio, sse, http)')
+  .option('--command <cmd>', 'Command to run (required for stdio)')
+  .option('--args <args...>', 'Command arguments (space-separated)')
+  .option('--url <url>', 'Server URL (required for sse/http)')
+  .option('--env <pairs>', 'Environment variables (KEY=VAL,KEY2=VAL2)')
+  .option('--skills-dir <path>', 'Skills directory', 'skills')
+  .action(async (opts: { skill: string; name: string; transport: string; command?: string; args?: string[]; url?: string; env?: string; skillsDir: string }) => {
+    const envPairs: Record<string, string> = {};
+    if (opts.env) {
+      for (const pair of opts.env.split(',')) {
+        const [k, ...vParts] = pair.split('=');
+        if (k) envPairs[k] = vParts.join('=');
+      }
+    }
+    await addMcpCommand({
+      skillName: opts.skill,
+      name: opts.name,
+      transport: opts.transport as 'stdio' | 'sse' | 'http',
+      command: opts.command,
+      args: opts.args,
+      url: opts.url,
+      env: Object.keys(envPairs).length > 0 ? envPairs : undefined,
+      skillsDir: opts.skillsDir,
+    });
+  });
+
+program
+  .command('env-check')
+  .description('Check environment variables referenced in config')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { config: string }) => {
+    await envCheckCommand({ configPath: opts.config });
+  });
+
+program
+  .command('remove-channel')
+  .description('Remove a channel from talond.yaml')
+  .requiredOption('--name <name>', 'Channel name to remove')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; config: string }) => {
+    await removeChannelCommand({ name: opts.name, configPath: opts.config });
+  });
+
+program
+  .command('remove-persona')
+  .description('Remove a persona from talond.yaml')
+  .requiredOption('--name <name>', 'Persona name to remove')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; config: string }) => {
+    await removePersonaCommand({ name: opts.name, configPath: opts.config });
+  });
+
+program
+  .command('config-show')
+  .description('Show effective config with env vars substituted (secrets masked)')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .option('--show-secrets', 'Show secret values instead of masking them')
+  .action(async (opts: { config: string; showSecrets?: boolean }) => {
+    await configShowCommand({ configPath: opts.config, showSecrets: opts.showSecrets });
   });
 
 program.parse();

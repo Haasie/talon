@@ -4,86 +4,64 @@
  * Adds a new channel connector entry to talond.yaml. The entry is appended
  * to the `channels` array with the given name and type, and a placeholder
  * `config` object that the user can fill in.
- *
- * Exits with an error if a channel with the same name already exists.
  */
 
-import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-
-import yaml from 'js-yaml';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Default config file path. */
-const DEFAULT_CONFIG_PATH = 'talond.yaml';
+import {
+  DEFAULT_CONFIG_PATH,
+  VALID_CHANNEL_TYPES,
+  validateName,
+  readConfig,
+  writeConfigAtomic,
+} from '../config-utils.js';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/** Shape expected in the YAML channels array. */
-interface ChannelEntry {
-  name: string;
-  type: string;
-  config?: Record<string, unknown>;
-  enabled?: boolean;
-}
-
-/** Root YAML document structure (partial — only what we need). */
-interface YamlDocument {
-  channels?: ChannelEntry[];
-  [key: string]: unknown;
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Executes the `add-channel` CLI command.
- *
- * Reads the existing talond.yaml, validates uniqueness of the channel name,
- * appends a new channel entry, and writes the updated YAML back to disk.
- *
- * @param options.name       - Unique name for the channel (e.g. "my-telegram").
- * @param options.type       - Connector type (e.g. "telegram").
- * @param options.configPath - Path to talond.yaml (default: "talond.yaml").
- */
-export async function addChannelCommand(options: {
+export interface AddChannelOptions {
   name: string;
   type: string;
   configPath?: string;
-}): Promise<void> {
+}
+
+export interface AddChannelEntry {
+  name: string;
+  type: string;
+  config: Record<string, unknown>;
+  enabled: true;
+}
+
+// ---------------------------------------------------------------------------
+// Core logic (importable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Adds a channel to the config file.
+ *
+ * Pure business logic — no console output or process.exit.
+ * Can be called from CLI, setup skill, or terminal agent.
+ *
+ * @returns The channel entry that was added.
+ * @throws Error with a user-facing message on any failure.
+ */
+export async function addChannel(options: AddChannelOptions): Promise<AddChannelEntry> {
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
 
-  if (!existsSync(configPath)) {
-    console.error(`Error: config file "${configPath}" not found.`);
-    console.error(`Run \`talonctl setup\` first, or pass --config to specify a different path.`);
-    process.exit(1);
-    return;
+  // Validate name.
+  const nameError = validateName(options.name, 'Channel');
+  if (nameError) {
+    throw new Error(nameError);
   }
 
-  let rawContent: string;
-  try {
-    rawContent = await fs.readFile(configPath, 'utf-8');
-  } catch (cause) {
-    console.error(`Error reading config file "${configPath}": ${String(cause)}`);
-    process.exit(1);
-    return;
+  // Validate type.
+  if (!VALID_CHANNEL_TYPES.includes(options.type as (typeof VALID_CHANNEL_TYPES)[number])) {
+    throw new Error(
+      `Unknown channel type "${options.type}". Valid types: ${VALID_CHANNEL_TYPES.join(', ')}.`,
+    );
   }
 
-  let doc: YamlDocument;
-  try {
-    const parsed = yaml.load(rawContent);
-    doc = (parsed ?? {}) as YamlDocument;
-  } catch (cause) {
-    console.error(`Error parsing YAML in "${configPath}": ${String(cause)}`);
-    process.exit(1);
-    return;
-  }
+  // Read existing config.
+  const doc = await readConfig(configPath);
 
   // Ensure channels array exists.
   if (!Array.isArray(doc.channels)) {
@@ -93,39 +71,45 @@ export async function addChannelCommand(options: {
   // Check for duplicate channel name.
   const duplicate = doc.channels.find((c) => c.name === options.name);
   if (duplicate) {
-    console.error(`Error: a channel named "${options.name}" already exists in "${configPath}".`);
-    console.error(`Choose a different name or edit the existing channel entry directly.`);
-    process.exit(1);
-    return;
+    throw new Error(
+      `A channel named "${options.name}" already exists in "${configPath}". Choose a different name or edit the existing entry directly.`,
+    );
   }
 
-  // Build the new channel entry with a type-specific placeholder config.
-  const newChannel: ChannelEntry = {
+  // Build and append the new channel entry.
+  const entry: AddChannelEntry = {
     name: options.name,
     type: options.type,
     config: buildPlaceholderConfig(options.type),
     enabled: true,
   };
 
-  doc.channels.push(newChannel);
+  doc.channels.push(entry);
 
-  // Serialise the updated document back to YAML.
-  const updatedYaml = yaml.dump(doc, {
-    lineWidth: 120,
-    quotingType: '"',
-    forceQuotes: false,
-  });
+  // Write atomically.
+  await writeConfigAtomic(configPath, doc);
 
+  return entry;
+}
+
+// ---------------------------------------------------------------------------
+// CLI wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * CLI entrypoint for `talonctl add-channel`.
+ *
+ * Thin wrapper around {@link addChannel} that prints output and exits.
+ */
+export async function addChannelCommand(options: AddChannelOptions): Promise<void> {
   try {
-    await fs.writeFile(configPath, updatedYaml, 'utf-8');
-  } catch (cause) {
-    console.error(`Error writing config file "${configPath}": ${String(cause)}`);
+    const entry = await addChannel(options);
+    console.log(`Added channel "${entry.name}" (type: ${entry.type}) to "${options.configPath ?? DEFAULT_CONFIG_PATH}".`);
+    console.log(`Edit "${options.configPath ?? DEFAULT_CONFIG_PATH}" to fill in the channel credentials.`);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
-    return;
   }
-
-  console.log(`Added channel "${options.name}" (type: ${options.type}) to "${configPath}".`);
-  console.log(`Edit "${configPath}" to fill in the channel credentials.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -134,26 +118,26 @@ export async function addChannelCommand(options: {
 
 /**
  * Returns a type-specific placeholder config object for the channel entry.
- *
- * Provides sensible field names so the user knows what to fill in.
+ * Exported for use by the setup skill preview flow.
  */
-function buildPlaceholderConfig(type: string): Record<string, unknown> {
+export function buildPlaceholderConfig(type: string): Record<string, unknown> {
   switch (type) {
     case 'telegram':
-      return { token: 'YOUR_TELEGRAM_BOT_TOKEN' };
+      return { botToken: '${TELEGRAM_BOT_TOKEN}', pollingTimeoutSec: 30 };
     case 'slack':
-      return { botToken: 'YOUR_SLACK_BOT_TOKEN', appToken: 'YOUR_SLACK_APP_TOKEN' };
+      return { botToken: '${SLACK_BOT_TOKEN}', appToken: '${SLACK_APP_TOKEN}', signingSecret: '${SLACK_SIGNING_SECRET}' };
     case 'discord':
-      return { token: 'YOUR_DISCORD_BOT_TOKEN' };
+      return { botToken: '${DISCORD_BOT_TOKEN}', applicationId: 'YOUR_APPLICATION_ID' };
     case 'whatsapp':
-      return { accountSid: 'YOUR_ACCOUNT_SID', authToken: 'YOUR_AUTH_TOKEN' };
+      return { phoneNumberId: 'YOUR_PHONE_NUMBER_ID', accessToken: '${WHATSAPP_ACCESS_TOKEN}', verifyToken: '${WHATSAPP_VERIFY_TOKEN}' };
     case 'email':
       return {
-        imap: { host: 'mail.example.com', port: 993, user: 'user@example.com', password: 'PASSWORD' },
-        smtp: { host: 'mail.example.com', port: 587, user: 'user@example.com', password: 'PASSWORD' },
+        imapHost: 'imap.gmail.com', imapPort: 993, imapUser: 'bot@gmail.com', imapPass: '${EMAIL_PASSWORD}', imapSecure: true,
+        smtpHost: 'smtp.gmail.com', smtpPort: 587, smtpUser: 'bot@gmail.com', smtpPass: '${EMAIL_PASSWORD}', smtpSecure: false,
+        fromAddress: 'Talon <bot@gmail.com>',
       };
     case 'terminal':
-      return { port: 7700, host: '0.0.0.0', token: '${TERMINAL_TOKEN}' };
+      return { port: 8089, host: '127.0.0.1', token: '${TERMINAL_TOKEN}' };
     default:
       return {};
   }
