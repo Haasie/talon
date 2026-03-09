@@ -4,6 +4,7 @@ import { ok, err, type Result } from 'neverthrow';
 
 import type { DaemonContext } from './daemon-context.js';
 import type { QueueItem } from '../queue/queue-types.js';
+import { filterAllowedMcpTools } from '../tools/tool-filter.js';
 
 /** Default maximum time (ms) an Agent SDK query may run before being aborted. */
 const DEFAULT_QUERY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
@@ -126,10 +127,8 @@ export class AgentRunner {
       // tools, hooks, MCP servers, session resumption, and permissions.
       // ----------------------------------------------------------------
 
-      // Session resume disabled: the Agent SDK hangs or takes excessively long
-      // when resuming sessions with MCP servers attached. Revisit when the SDK
-      // stabilizes session resume + MCP interaction.
-      const existingSessionId: string | undefined = undefined;
+      // Look up existing session for this thread to enable conversation memory.
+      const existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
 
       this.ctx.logger.info(
         {
@@ -170,7 +169,13 @@ export class AgentRunner {
         }
       }
 
+      // Determine which host tools this persona may use based on capabilities.
+      const allowedMcpTools = filterAllowedMcpTools(
+        loadedPersona.resolvedCapabilities ?? { allow: [], requireApproval: [] },
+      );
+
       // Add built-in host-tools MCP server (schedule, channel, memory, http, db).
+      // Only tools allowed by persona capabilities are exposed via TALOND_ALLOWED_TOOLS.
       mcpServers['host-tools'] = {
         type: 'stdio',
         command: 'node',
@@ -181,8 +186,14 @@ export class AgentRunner {
           TALOND_RUN_ID: runId,
           TALOND_THREAD_ID: item.threadId,
           TALOND_PERSONA_ID: personaId,
+          TALOND_ALLOWED_TOOLS: allowedMcpTools.join(','),
         },
       };
+
+      this.ctx.logger.info(
+        { runId, personaId, allowedMcpTools },
+        'agent-sdk: persona tool restrictions applied',
+      );
 
       // Build Agent SDK options from persona config.
       const agentOptions: Record<string, unknown> = {

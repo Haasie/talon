@@ -32,6 +32,8 @@
 | FEAT-006 | `talonctl queue-purge` command with FK-safe transaction | `6e7c8ad` |
 | FEAT-007 | Schedule list action (agents can review their schedules) | `7de45de` |
 | TASK-044 | Scheduled tasks — tested end-to-end on VM | `7de45de` |
+| TASK-059 | Native .env file loading (PR #1) | merged |
+| TASK-039 | Systemd service unit with install script (PR #2) | merged |
 
 ---
 
@@ -47,10 +49,8 @@ _Nothing currently in progress._
 |----|-------|-------------|
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
 | TASK-038 | talonctl as single source of truth | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. All config mutations (channels, personas, MCP, skills, bindings) should go through CLI. The setup skill should only call CLI commands, never write YAML. Needs: `add-channel`, `add-persona`, `add-mcp`, `add-skill`, `bind`, `env-check`. |
-| TASK-039 | Systemd service unit | Create a systemd service file for `talond` so it auto-starts on boot, restarts on crash, and manages env vars via an EnvironmentFile. |
 | TASK-040 | Per-persona tool restrictions | Map persona `capabilities.allow` / `capabilities.requireApproval` to Agent SDK `allowedTools` / `disallowedTools` / `canUseTool`. Currently all tools are allowed via `bypassPermissions`. |
-| TASK-057 | ~~Extract AgentRunner from daemon.ts~~ | Done — `AgentRunner` extracted in `src/daemon/agent-runner.ts` with full test coverage. |
-| TASK-059 | Native .env file loading | Add `dotenv` to load a `.env` file at daemon startup so env vars do not require external tooling like direnv or manual exports. Load before config parsing so `${VAR}` substitution in `talond.yaml` and skill MCP configs works automatically. |
+| TASK-060 | GPT-5.4 code review fixes | Address actionable feedback from GPT-5.4 review (see `GPT5.4-feedback.md`). High: db.query persona scoping, net.http empty allowedDomains, bridge double-respond on timeout, MCP client error swallowing. Medium: queue backoff config ignored, lint errors. Low: unused repo refs, bootstrap null-cast, sendTyping fire-and-forget. |
 
 ---
 
@@ -82,6 +82,7 @@ _Nothing currently in progress._
 | TASK-055 | Graceful shutdown | Verify SIGTERM handling: drain queue, finish active runs, close channels, then exit. |
 | TASK-056 | Fix pre-existing test failures | 30 test files / 359 tests failing (pre-existing, mostly tool-result-repository setup issues). |
 | TASK-058 | Connector plugin/factory pattern | Refactor channel connectors into a plugin or factory pattern so new connectors can be added without touching core code. Currently connectors are hardcoded by type string in channel registration. Move to a registry where connectors self-register or are loaded from a config-driven factory. |
+| TASK-061 | Dynamic code generation & execution | When Talon lacks a tool for a user's request, it should be able to generate code, deploy it safely (Sprites.dev sandbox or Docker container), and execute it. Saved snippets can be reused later. Code generation via Claude Code or OpenAI API with GPT-5.3-spark (optimized for speed). Key differentiator — turns Talon from a fixed-tool agent into a self-extending one. Needs: code-gen prompt pipeline, sandbox execution runtime (Sprites.dev preferred, Docker fallback), snippet storage/retrieval, capability gating so only authorized personas can generate+run code. |
 
 ---
 
