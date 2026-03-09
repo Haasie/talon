@@ -121,23 +121,20 @@ f) Terminal (for CLI chat)
 g) Skip for now
 ```
 
-For each selected channel:
+**Invoke the matching per-channel skill** for the full setup walkthrough:
 
-1. Ask for a channel name (suggest defaults like "my-telegram")
-2. Run: `npx talonctl add-channel --name <name> --type <type>`
-3. Edit the config to set `${ENV_VAR}` placeholders for credentials (use Edit tool on talond.yaml to update the config section)
-4. Tell the user which env vars to set (see channel-specific guidance below)
+| Channel | Skill to invoke |
+|---------|----------------|
+| Telegram | `/add-telegram` |
+| Slack | `/add-slack` |
+| Discord | `/add-discord` |
+| WhatsApp | `/add-whatsapp` |
+| Email | `/add-email` |
+| Terminal | `/add-terminal` |
+
+Each skill handles: bot/app creation, credentials, config, env vars, verification, and troubleshooting.
 
 Ask: **"Add another channel?"** Loop until done.
-
-#### Channel-Specific Env Vars
-
-**Telegram:** `TELEGRAM_BOT_TOKEN` — get from @BotFather
-**Slack:** `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET` — from api.slack.com
-**Discord:** `DISCORD_BOT_TOKEN` — from discord.com/developers
-**WhatsApp:** `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN` — from Meta Business Suite
-**Email:** `EMAIL_PASSWORD` — use app-specific password
-**Terminal:** `TERMINAL_TOKEN` — any string you choose
 
 ### Step 4: Persona Configuration
 
