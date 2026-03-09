@@ -161,7 +161,14 @@ class SocketClient {
       }, REQUEST_TIMEOUT_MS);
 
       this.pendingRequests.set(id, {
-        resolve: (response: BridgeResponse) => resolve(response.result),
+        resolve: (response: BridgeResponse) => {
+          // Surface bridge-level errors instead of silently dropping them.
+          if (response.error && !response.result) {
+            reject(new Error(`Bridge error: ${response.error}`));
+          } else {
+            resolve(response.result);
+          }
+        },
         reject,
         timeout,
       });
