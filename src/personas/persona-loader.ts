@@ -174,8 +174,16 @@ export class PersonaLoader {
     let entries: string[];
     try {
       entries = await readdir(personalityDir);
-    } catch {
-      // Folder doesn't exist — that's fine.
+    } catch (cause: unknown) {
+      // ENOENT is expected — folder simply doesn't exist.
+      if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') {
+        return undefined;
+      }
+      // Surface other errors (EACCES, ENOTDIR, etc.) so misconfigs aren't silent.
+      this.logger.warn(
+        { persona: personaName, err: cause },
+        'failed to read personality folder',
+      );
       return undefined;
     }
 
@@ -184,12 +192,21 @@ export class PersonaLoader {
 
     const contents: string[] = [];
     for (const file of mdFiles) {
-      const content = await readFile(join(personalityDir, file), 'utf-8');
-      contents.push(content.trim());
+      try {
+        const content = await readFile(join(personalityDir, file), 'utf-8');
+        contents.push(content.trim());
+      } catch (cause) {
+        this.logger.warn(
+          { persona: personaName, file, err: cause },
+          'failed to read personality file, skipping',
+        );
+      }
     }
 
+    if (contents.length === 0) return undefined;
+
     this.logger.debug(
-      { persona: personaName, files: mdFiles.length },
+      { persona: personaName, files: contents.length },
       'personality files loaded',
     );
 

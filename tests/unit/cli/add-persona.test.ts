@@ -131,6 +131,22 @@ describe('addPersona()', () => {
     expect(example).toContain('Tone');
   });
 
+  it('does not overwrite existing personality files', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    // Pre-create persona dir with custom personality file
+    const { mkdirSync } = await import('node:fs');
+    const personalityDir = join(personasDir, 'custom-agent', 'personality');
+    mkdirSync(personalityDir, { recursive: true });
+    writeFileSync(join(personalityDir, '01-tone.md'), '# My custom tone\n');
+
+    await addPersona({ name: 'custom-agent', configPath: p, personasDir });
+
+    const content = readFileSync(join(personalityDir, '01-tone.md'), 'utf-8');
+    expect(content).toBe('# My custom tone\n');
+  });
+
   it('creates personas array if missing from config', async () => {
     const p = writeYaml('logLevel: info\n');
     const personasDir = join(tmpDir, 'personas');
