@@ -37,6 +37,7 @@
 | TASK-040 | Per-persona tool restrictions (PR #3) | merged |
 | FIX-016 | Re-enable session resume for conversation memory | `cc3449c` |
 | TASK-060 | GPT-5.4 code review fixes (all 10 items) | PR #4 |
+| TASK-062 | Terminal channel connector + talonctl chat CLI | PR #5 |
 
 ---
 
