@@ -328,16 +328,19 @@ describe('AgentRunner', () => {
       expect(queryCall.options.resume).toBe('session-from-db');
     });
 
-    it('seeds session tracker when restoring from DB', async () => {
+    it('does not eagerly seed tracker from DB (waits for successful run)', async () => {
       vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue(undefined);
       vi.mocked(ctx.repos.run.getLatestSessionId).mockReturnValue(ok('session-from-db'));
       const item = makeQueueItem();
 
       await runner.run(item);
 
+      // The tracker should be seeded with the *result* session_id (session-abc-123),
+      // not the DB-restored one (session-from-db), because the SDK returns a new
+      // session_id after a successful resumed run.
       expect(ctx.sessionTracker.setSessionId).toHaveBeenCalledWith(
         'thread-001',
-        'session-from-db',
+        'session-abc-123',
       );
     });
 
@@ -348,6 +351,18 @@ describe('AgentRunner', () => {
       await runner.run(item);
 
       expect(ctx.repos.run.getLatestSessionId).not.toHaveBeenCalled();
+    });
+
+    it('records DB session_id in run insert', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue(undefined);
+      vi.mocked(ctx.repos.run.getLatestSessionId).mockReturnValue(ok('session-from-db'));
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      expect(ctx.repos.run.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ session_id: 'session-from-db' }),
+      );
     });
 
     it('starts fresh when neither in-memory nor DB session exists', async () => {

@@ -39,7 +39,7 @@
 | TASK-060 | GPT-5.4 code review fixes (all 10 items) | PR #4 |
 | TASK-062 | Terminal channel connector + talonctl chat CLI | PR #5 |
 | BUG-007 | Compound PK (thread_id, id) for memory_items | PR #6 |
-| BUG-007 | Compound PK (thread_id, id) for memory_items | PR #6 |
+| BUG-008 | Session resume across daemon restarts | PR #7 |
 
 ---
 
