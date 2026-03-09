@@ -194,6 +194,27 @@ npx talonctl env-check
 
 Print results and instructions to start the daemon.
 
+## Shared Memory Between Agents
+
+Talon supports shared memory between personas using the [Anthropic Memory MCP server](https://github.com/anthropics/memory). This is a knowledge graph stored in a single JSON file — when multiple personas use the same file, they share knowledge automatically.
+
+**How to set it up:**
+
+For each persona that should share memory, add the memory MCP server to one of its skills:
+
+```bash
+npx talonctl add-mcp --skill <skill-name> --name memory \
+  --transport stdio \
+  --command npx \
+  --args "-y @anthropic-ai/memory --memory-path data/shared-memory.json"
+```
+
+The key is that all personas point to the same `--memory-path`. Use `data/shared-memory.json` as the default location (inside the existing data directory).
+
+Agents can then create entities, add relations, and store observations. Any agent reading the same file sees everything other agents have written.
+
+**When to suggest this:** When the user has multiple personas and asks about sharing context, knowledge, or memory between them. Don't suggest it proactively during initial setup — it's an advanced feature.
+
 ## Important Rules
 
 1. **Never write actual secrets.** Only `${ENV_VAR}` placeholders in config files.
