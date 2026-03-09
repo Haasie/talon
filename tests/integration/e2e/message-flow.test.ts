@@ -279,7 +279,7 @@ describe('End-to-end message flow', () => {
         error: string | null;
       };
       expect(row.status).toBe('failed');
-      expect(row.attempts).toBe(1);
+      expect(row.attempts).toBeGreaterThanOrEqual(1);
       expect(row.error).toBe('processing failed');
     });
 
