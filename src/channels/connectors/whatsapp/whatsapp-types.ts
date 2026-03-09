@@ -75,7 +75,7 @@ export interface WhatsAppMessage {
   id: string;
   from: string;
   timestamp: string;
-  type: 'text' | 'image' | 'document' | 'audio' | 'video' | 'sticker' | string;
+  type: string;
   text?: WhatsAppTextBody;
   image?: WhatsAppMediaBody;
   document?: WhatsAppMediaBody;

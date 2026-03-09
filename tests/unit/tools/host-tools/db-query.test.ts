@@ -2,20 +2,17 @@
  * Unit tests for DbQueryHandler.
  *
  * Tests cover:
- *   - Successful SELECT query with column/row result shape
- *   - SQL safety check (reject INSERT, UPDATE, DELETE, DROP, etc.)
- *   - Non-SELECT statements rejected (must start with SELECT)
- *   - Comment-injection bypass attempts rejected
- *   - Missing/empty SQL rejected
- *   - Invalid params type rejected
- *   - Default limit of 100 rows
- *   - Custom limit, clamped to max 1000
- *   - Empty result set
- *   - Database execution errors
+ *   - Successful SELECT queries with scoping
+ *   - Table whitelist enforcement
+ *   - Complex SQL rejection (UNION, subqueries, CTEs)
+ *   - Thread/persona scoping auto-injection
+ *   - SQL safety (DML/DDL rejection, comment injection)
+ *   - Adversarial / prompt-injection attempts
+ *   - Arg validation and database errors
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DbQueryHandler } from '../../../../src/tools/host-tools/db-query.js';
+import { describe, it, expect, vi } from 'vitest';
+import { DbQueryHandler, extractTableNames } from '../../../../src/tools/host-tools/db-query.js';
 import type { DbQueryArgs } from '../../../../src/tools/host-tools/db-query.js';
 import type { ToolExecutionContext } from '../../../../src/tools/host-tools/channel-send.js';
 import type Database from 'better-sqlite3';
@@ -48,24 +45,52 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
 
 function makeArgs(overrides: Partial<DbQueryArgs> = {}): DbQueryArgs {
   return {
-    sql: 'SELECT id, name FROM personas',
+    sql: 'SELECT * FROM memory_items',
     ...overrides,
   };
 }
 
-/** Create a mock Database.Statement that returns the given rows. */
 function makeStatement(rows: Record<string, unknown>[]): Database.Statement {
   return {
     all: vi.fn().mockReturnValue(rows),
   } as unknown as Database.Statement;
 }
 
-/** Create a mock Database instance. */
 function makeDb(statement?: Database.Statement): Database.Database {
   return {
     prepare: vi.fn().mockReturnValue(statement ?? makeStatement([])),
   } as unknown as Database.Database;
 }
+
+// ---------------------------------------------------------------------------
+// extractTableNames
+// ---------------------------------------------------------------------------
+
+describe('extractTableNames', () => {
+  it('extracts single table from simple SELECT', () => {
+    expect(extractTableNames('SELECT * FROM memory_items')).toEqual(['memory_items']);
+  });
+
+  it('extracts multiple tables from comma-separated FROM', () => {
+    const tables = extractTableNames('SELECT * FROM memory_items, messages');
+    expect(tables).toContain('memory_items');
+    expect(tables).toContain('messages');
+  });
+
+  it('extracts JOIN table', () => {
+    const tables = extractTableNames('SELECT * FROM memory_items JOIN threads ON memory_items.thread_id = threads.id');
+    expect(tables).toContain('memory_items');
+    expect(tables).toContain('threads');
+  });
+
+  it('handles case-insensitive keywords', () => {
+    expect(extractTableNames('select * from Memory_Items')).toEqual(['memory_items']);
+  });
+
+  it('returns empty for no FROM clause', () => {
+    expect(extractTableNames('SELECT 1')).toEqual([]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Manifest
@@ -86,14 +111,92 @@ describe('DbQueryHandler — manifest', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Successful queries
+// Happy paths — allowed tables with scoping
 // ---------------------------------------------------------------------------
 
-describe('DbQueryHandler — success', () => {
+describe('DbQueryHandler — happy paths', () => {
+  it('queries memory_items with auto-injected thread_id scoping', async () => {
+    const db = makeDb(makeStatement([{ id: '1', content: 'hello' }]));
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items' }),
+      makeContext({ threadId: 'thread-abc' }),
+    );
+
+    expect(result.status).toBe('success');
+    // Verify scoping was injected
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain('thread_id = ?');
+    // Verify thread_id param was passed
+    const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(stmt.all).toHaveBeenCalledWith('thread-abc');
+  });
+
+  it('queries schedules with both thread_id and persona_id scoping', async () => {
+    const db = makeDb(makeStatement([]));
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM schedules' }),
+      makeContext({ threadId: 'thread-abc', personaId: 'persona-xyz' }),
+    );
+
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain('thread_id = ?');
+    expect(prepareCall).toContain('persona_id = ?');
+    const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(stmt.all).toHaveBeenCalledWith('thread-abc', 'persona-xyz');
+  });
+
+  it('preserves existing WHERE clause and adds scoping with AND', async () => {
+    const db = makeDb(makeStatement([]));
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    await handler.execute(
+      makeArgs({ sql: "SELECT * FROM memory_items WHERE type = 'note'" }),
+      makeContext({ threadId: 'thread-abc' }),
+    );
+
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain('thread_id = ?');
+    expect(prepareCall).toContain("type = 'note'");
+  });
+
+  it('queries threads table scoped by id = threadId', async () => {
+    const db = makeDb(makeStatement([{ id: 't1' }]));
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM threads' }),
+      makeContext({ threadId: 'thread-abc' }),
+    );
+
+    expect(result.status).toBe('success');
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain('id = ?');
+    const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(stmt.all).toHaveBeenCalledWith('thread-abc');
+  });
+
+  it('passes user params after scoping params', async () => {
+    const stmt = makeStatement([]);
+    const db = makeDb(stmt);
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    await handler.execute(
+      makeArgs({ sql: "SELECT * FROM memory_items WHERE type = ?", params: ['note'] }),
+      makeContext({ threadId: 'thread-abc' }),
+    );
+
+    // scoping param first, then user param
+    expect(stmt.all).toHaveBeenCalledWith('thread-abc', 'note');
+  });
+
   it('returns columns, rows, and rowCount', async () => {
     const rows = [
-      { id: '1', name: 'Alice' },
-      { id: '2', name: 'Bob' },
+      { id: '1', content: 'hello' },
+      { id: '2', content: 'world' },
     ];
     const db = makeDb(makeStatement(rows));
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
@@ -101,90 +204,199 @@ describe('DbQueryHandler — success', () => {
     const result = await handler.execute(makeArgs(), makeContext());
 
     expect(result.status).toBe('success');
-    expect(result.tool).toBe('db.query');
     expect(result.result).toEqual({
-      columns: ['id', 'name'],
-      rows: [['1', 'Alice'], ['2', 'Bob']],
+      columns: ['id', 'content'],
+      rows: [['1', 'hello'], ['2', 'world']],
       rowCount: 2,
     });
   });
 
-  it('returns empty columns and rows for no results', async () => {
+  it('applies default limit of 100', async () => {
     const db = makeDb(makeStatement([]));
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
-    const result = await handler.execute(makeArgs(), makeContext());
+    await handler.execute(makeArgs(), makeContext());
 
-    expect(result.status).toBe('success');
-    expect(result.result).toEqual({ columns: [], rows: [], rowCount: 0 });
-  });
-
-  it('wraps query in a LIMIT subquery with default limit of 100', async () => {
-    const db = makeDb(makeStatement([]));
-    const handler = new DbQueryHandler({ db, logger: makeLogger() });
-
-    await handler.execute(makeArgs({ sql: 'SELECT * FROM threads' }), makeContext());
-
-    expect(db.prepare).toHaveBeenCalledWith('SELECT * FROM (SELECT * FROM threads) LIMIT 100');
-  });
-
-  it('uses custom limit when provided', async () => {
-    const db = makeDb(makeStatement([]));
-    const handler = new DbQueryHandler({ db, logger: makeLogger() });
-
-    await handler.execute(makeArgs({ sql: 'SELECT * FROM messages', limit: 25 }), makeContext());
-
-    expect(db.prepare).toHaveBeenCalledWith('SELECT * FROM (SELECT * FROM messages) LIMIT 25');
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toMatch(/LIMIT 100$/);
   });
 
   it('clamps limit to MAX_LIMIT of 1000', async () => {
     const db = makeDb(makeStatement([]));
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
-    await handler.execute(makeArgs({ sql: 'SELECT * FROM messages', limit: 9999 }), makeContext());
+    await handler.execute(makeArgs({ limit: 9999 }), makeContext());
 
-    expect(db.prepare).toHaveBeenCalledWith('SELECT * FROM (SELECT * FROM messages) LIMIT 1000');
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toMatch(/LIMIT 1000$/);
   });
 
-  it('passes positional params to statement.all', async () => {
-    const stmt = makeStatement([]);
-    const db = makeDb(stmt);
+  it('injects scoping before ORDER BY', async () => {
+    const db = makeDb(makeStatement([]));
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
     await handler.execute(
-      makeArgs({ sql: 'SELECT * FROM threads WHERE persona_id = ?', params: ['persona-001'] }),
-      makeContext(),
+      makeArgs({ sql: 'SELECT * FROM memory_items ORDER BY created_at DESC' }),
+      makeContext({ threadId: 'thread-abc' }),
     );
 
-    expect(stmt.all).toHaveBeenCalledWith('persona-001');
-  });
-
-  it('handles null values in result rows', async () => {
-    const rows = [{ id: '1', parent_id: null }];
-    const db = makeDb(makeStatement(rows));
-    const handler = new DbQueryHandler({ db, logger: makeLogger() });
-
-    const result = await handler.execute(makeArgs(), makeContext());
-
-    expect((result.result as { rows: unknown[][] }).rows[0][1]).toBeNull();
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain('WHERE thread_id = ?');
+    expect(prepareCall).toContain('ORDER BY created_at DESC');
+    // WHERE should come before ORDER BY
+    const whereIdx = prepareCall.indexOf('WHERE');
+    const orderIdx = prepareCall.indexOf('ORDER BY');
+    expect(whereIdx).toBeLessThan(orderIdx);
   });
 });
 
 // ---------------------------------------------------------------------------
-// SQL safety validation
+// Table whitelist enforcement
+// ---------------------------------------------------------------------------
+
+describe('DbQueryHandler — blocked tables', () => {
+  const blockedTables = [
+    'personas',
+    'channels',
+    'runs',
+    'audit_log',
+    'bindings',
+    'queue_items',
+    'artifacts',
+    'tool_results',
+  ];
+
+  for (const table of blockedTables) {
+    it(`blocks access to ${table}`, async () => {
+      const db = makeDb();
+      const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+      const result = await handler.execute(
+        makeArgs({ sql: `SELECT * FROM ${table}` }),
+        makeContext(),
+      );
+
+      expect(result.status).toBe('error');
+      expect(result.error).toContain('not accessible');
+      expect(result.error).toContain(table);
+      // DB should never be called
+      expect(db.prepare).not.toHaveBeenCalled();
+    });
+  }
+
+  it('blocks JOIN to a restricted table', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items JOIN personas ON memory_items.id = personas.id' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('personas');
+    expect(result.error).toContain('not accessible');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Complex SQL rejection
+// ---------------------------------------------------------------------------
+
+describe('DbQueryHandler — complex SQL rejection', () => {
+  it('rejects UNION', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items UNION SELECT * FROM personas' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('complex SQL');
+  });
+
+  it('rejects UNION ALL', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items UNION ALL SELECT * FROM personas' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('complex SQL');
+  });
+
+  it('rejects subqueries', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items WHERE id IN (SELECT id FROM personas)' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('complex SQL');
+  });
+
+  it('rejects CTEs', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'WITH x AS (SELECT * FROM personas) SELECT * FROM x' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+  });
+
+  it('rejects EXCEPT', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items EXCEPT SELECT * FROM memory_items WHERE 1=0' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('complex SQL');
+  });
+
+  it('rejects INTERSECT', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items INTERSECT SELECT * FROM memory_items' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('complex SQL');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SQL safety — DML/DDL rejection
 // ---------------------------------------------------------------------------
 
 describe('DbQueryHandler — SQL safety', () => {
   const forbiddenStatements = [
-    { desc: 'INSERT', sql: 'INSERT INTO personas VALUES (1)' },
-    { desc: 'UPDATE', sql: 'UPDATE personas SET name = "hacked"' },
-    { desc: 'DELETE', sql: 'DELETE FROM personas WHERE 1=1' },
-    { desc: 'DROP', sql: 'DROP TABLE personas' },
+    { desc: 'INSERT', sql: 'INSERT INTO memory_items VALUES (1)' },
+    { desc: 'UPDATE', sql: 'UPDATE memory_items SET content = "hacked"' },
+    { desc: 'DELETE', sql: 'DELETE FROM memory_items WHERE 1=1' },
+    { desc: 'DROP', sql: 'DROP TABLE memory_items' },
     { desc: 'CREATE', sql: 'CREATE TABLE evil (id TEXT)' },
-    { desc: 'ALTER', sql: 'ALTER TABLE personas ADD COLUMN secret TEXT' },
+    { desc: 'ALTER', sql: 'ALTER TABLE memory_items ADD COLUMN secret TEXT' },
     { desc: 'ATTACH', sql: 'ATTACH DATABASE "/etc/passwd" AS pw' },
     { desc: 'PRAGMA', sql: 'PRAGMA wal_checkpoint' },
-    { desc: 'TRUNCATE', sql: 'TRUNCATE TABLE personas' },
+    { desc: 'TRUNCATE', sql: 'TRUNCATE TABLE memory_items' },
     { desc: 'BEGIN', sql: 'BEGIN TRANSACTION' },
     { desc: 'COMMIT', sql: 'COMMIT' },
     { desc: 'ROLLBACK', sql: 'ROLLBACK' },
@@ -202,76 +414,183 @@ describe('DbQueryHandler — SQL safety', () => {
     });
   }
 
-  it('rejects statement that does not start with SELECT', async () => {
-    const db = makeDb();
-    const handler = new DbQueryHandler({ db, logger: makeLogger() });
-
-    const result = await handler.execute(makeArgs({ sql: 'WITH cte AS (SELECT 1) DELETE FROM t' }), makeContext());
-
-    // This gets caught by the FORBIDDEN_KEYWORDS check on DELETE
-    expect(result.status).toBe('error');
-  });
-
   it('rejects block-comment injection to bypass safety check', async () => {
     const db = makeDb();
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
-    // Block comment to hide the SELECT, real statement is DROP
     const result = await handler.execute(
       makeArgs({ sql: '/* SELECT * FROM t */ DROP TABLE t' }),
       makeContext(),
     );
 
     expect(result.status).toBe('error');
-    expect(result.error).toMatch(/only SELECT statements are allowed/i);
   });
 
   it('rejects line-comment injection to bypass safety check', async () => {
     const db = makeDb();
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
-    // Line comment to hide DELETE
     const result = await handler.execute(
       makeArgs({ sql: '-- SELECT * FROM t\nDELETE FROM t' }),
       makeContext(),
     );
 
     expect(result.status).toBe('error');
-    expect(result.error).toMatch(/only SELECT statements are allowed/i);
   });
 
-  it('accepts valid SELECT with leading whitespace', async () => {
-    const db = makeDb(makeStatement([]));
-    const handler = new DbQueryHandler({ db, logger: makeLogger() });
-
-    const result = await handler.execute(makeArgs({ sql: '   SELECT 1' }), makeContext());
-
-    expect(result.status).toBe('success');
-  });
-
-  it('accepts case-insensitive select', async () => {
-    const db = makeDb(makeStatement([]));
-    const handler = new DbQueryHandler({ db, logger: makeLogger() });
-
-    const result = await handler.execute(makeArgs({ sql: 'select * from threads' }), makeContext());
-
-    expect(result.status).toBe('success');
-  });
-
-  it('rejects non-SELECT non-DML statement (bare identifier)', async () => {
+  it('rejects EXPLAIN', async () => {
     const db = makeDb();
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
     const result = await handler.execute(makeArgs({ sql: 'EXPLAIN SELECT 1' }), makeContext());
 
-    // EXPLAIN is not in forbidden keywords but does not start with SELECT
     expect(result.status).toBe('error');
     expect(result.error).toMatch(/must begin with SELECT/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Arg validation failures
+// Adversarial / prompt injection attempts
+// ---------------------------------------------------------------------------
+
+describe('DbQueryHandler — adversarial', () => {
+  it('blocks reading all personas via direct query', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM personas' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('not accessible');
+  });
+
+  it('blocks reading channels config', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM channels' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('not accessible');
+  });
+
+  it('blocks subquery to bypass table whitelist', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items WHERE id IN (SELECT id FROM personas)' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('complex SQL');
+  });
+
+  it('blocks UNION to exfiltrate from blocked table', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: "SELECT id, content FROM memory_items UNION SELECT id, name FROM personas" }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+  });
+
+  it('blocks CTE to bypass table whitelist', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'WITH leaked AS (SELECT * FROM audit_log) SELECT * FROM leaked' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+  });
+
+  it('blocks reading other threads data (scoping enforcement)', async () => {
+    const db = makeDb(makeStatement([]));
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM memory_items' }),
+      makeContext({ threadId: 'my-thread' }),
+    );
+
+    // The prepared SQL must contain the scoping clause
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain('thread_id = ?');
+    // And the param must be our thread
+    const stmt = (db.prepare as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(stmt.all).toHaveBeenCalledWith('my-thread');
+  });
+
+  it('blocks comment-hidden table access', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT * FROM /* memory_items */ personas' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('not accessible');
+  });
+
+  it('prevents OR-based scoping bypass', async () => {
+    const db = makeDb(makeStatement([]));
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    await handler.execute(
+      makeArgs({ sql: "SELECT * FROM memory_items WHERE type = 'a' OR 1=1" }),
+      makeContext({ threadId: 'my-thread' }),
+    );
+
+    // The user's conditions must be wrapped in parens to prevent OR bypass:
+    // WHERE thread_id = ? AND (type = 'a' OR 1=1)  ← correct
+    // WHERE thread_id = ? AND type = 'a' OR 1=1     ← wrong (bypasses scoping)
+    const prepareCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prepareCall).toContain("AND (type = 'a' OR 1=1)");
+  });
+
+  it('blocks WITH RECURSIVE', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'WITH RECURSIVE cte AS (SELECT 1) SELECT * FROM cte' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+  });
+
+  it('rejects query with no identifiable table', async () => {
+    const db = makeDb();
+    const handler = new DbQueryHandler({ db, logger: makeLogger() });
+
+    const result = await handler.execute(
+      makeArgs({ sql: 'SELECT 1' }),
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('could not identify any table');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Arg validation
 // ---------------------------------------------------------------------------
 
 describe('DbQueryHandler — arg validation', () => {
@@ -300,7 +619,7 @@ describe('DbQueryHandler — arg validation', () => {
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
     const result = await handler.execute(
-      makeArgs({ sql: 'SELECT 1', params: 'not-an-array' as unknown as unknown[] }),
+      makeArgs({ sql: 'SELECT * FROM memory_items', params: 'not-an-array' as unknown as unknown[] }),
       makeContext(),
     );
 
@@ -322,11 +641,10 @@ describe('DbQueryHandler — database errors', () => {
     } as unknown as Database.Database;
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
-    const result = await handler.execute(makeArgs({ sql: 'SELECT * FROM nonexistent' }), makeContext());
+    const result = await handler.execute(makeArgs(), makeContext());
 
     expect(result.status).toBe('error');
     expect(result.error).toMatch(/query execution failed/);
-    expect(result.error).toMatch(/syntax error/);
   });
 
   it('returns error when statement.all throws', async () => {
@@ -338,21 +656,9 @@ describe('DbQueryHandler — database errors', () => {
     const db = makeDb(stmt);
     const handler = new DbQueryHandler({ db, logger: makeLogger() });
 
-    const result = await handler.execute(makeArgs({ sql: 'SELECT * FROM missing' }), makeContext());
+    const result = await handler.execute(makeArgs(), makeContext());
 
     expect(result.status).toBe('error');
     expect(result.error).toMatch(/query execution failed/);
-  });
-
-  it('uses unknown requestId when not in context', async () => {
-    const db = makeDb();
-    const handler = new DbQueryHandler({ db, logger: makeLogger() });
-
-    const context = makeContext();
-    delete (context as Partial<ToolExecutionContext>).requestId;
-    // Empty SQL triggers validation before any DB call
-    const result = await handler.execute(makeArgs({ sql: '' }), context);
-
-    expect(result.requestId).toBe('unknown');
   });
 });

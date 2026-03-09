@@ -100,8 +100,8 @@ export function registerChannels(
       }
     }
 
-    connector.onMessage(async (event: InboundEvent) => {
-      const pipelineResult = await messagePipeline.handleInboundEvent(event);
+    connector.onMessage((event: InboundEvent) => {
+      const pipelineResult = messagePipeline.handleInboundEvent(event);
       if (pipelineResult.isErr()) {
         logger.error(
           { channelName: event.channelName, err: pipelineResult.error.message },

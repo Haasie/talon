@@ -119,7 +119,7 @@ class SocketClient {
       }
 
       try {
-        const response: BridgeResponse = JSON.parse(line);
+        const response = JSON.parse(line) as BridgeResponse;
         const pending = this.pendingRequests.get(response.id);
         if (pending) {
           clearTimeout(pending.timeout);
@@ -161,7 +161,14 @@ class SocketClient {
       }, REQUEST_TIMEOUT_MS);
 
       this.pendingRequests.set(id, {
-        resolve: (response: BridgeResponse) => resolve(response.result),
+        resolve: (response: BridgeResponse) => {
+          // Surface bridge-level errors instead of silently dropping them.
+          if (response.error && !response.result) {
+            reject(new Error(`Bridge error: ${response.error}`));
+          } else {
+            resolve(response.result);
+          }
+        },
         reject,
         timeout,
       });
@@ -375,7 +382,7 @@ async function main(): Promise<void> {
     },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
+  server.setRequestHandler(ListToolsRequestSchema, () => {
     return {
       tools: filteredTools,
     };

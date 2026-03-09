@@ -63,7 +63,7 @@ export class HttpProxyHandler {
   constructor(
     private readonly deps: {
       logger: pino.Logger;
-      /** Allowed domains (e.g. ['api.example.com', 'example.com']). Empty array = deny all. */
+      /** Allowed domains (e.g. ['api.example.com', 'example.com']). Empty array = allow all. */
       allowedDomains: string[];
     },
   ) {}
@@ -185,6 +185,9 @@ export class HttpProxyHandler {
   /**
    * Check whether the given hostname is in the allowedDomains list.
    *
+   * If the allowedDomains list is empty, all domains are permitted — the
+   * capability system (`net.http` capability) is the access gate.
+   *
    * A domain entry matches if the hostname equals it exactly or is a
    * subdomain of it (e.g. allowedDomains: ['example.com'] matches
    * 'api.example.com' and 'example.com').
@@ -192,6 +195,10 @@ export class HttpProxyHandler {
    * @param hostname - Parsed hostname from the request URL.
    */
   private isDomainAllowed(hostname: string): boolean {
+    // Empty allowlist = all domains permitted (capability is the gate).
+    if (this.deps.allowedDomains.length === 0) {
+      return true;
+    }
     for (const allowed of this.deps.allowedDomains) {
       if (hostname === allowed || hostname.endsWith(`.${allowed}`)) {
         return true;

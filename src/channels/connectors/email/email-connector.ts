@@ -15,7 +15,7 @@
 import type pino from 'pino';
 import type { ChannelConnector, InboundEvent, AgentOutput } from '../../channel-types.js';
 import type { Result } from '../../../core/types/result.js';
-import { ok, err } from '../../../core/types/result.js';
+import { err } from '../../../core/types/result.js';
 import { ChannelError } from '../../../core/errors/error-types.js';
 import type { EmailConfig, ParsedEmail, SmtpSendOptions } from './email-types.js';
 import { markdownToHtml } from './email-format.js';
@@ -125,10 +125,12 @@ export function createDefaultSmtpTransport(_config: EmailConfig): SmtpTransport 
   // indicating that a real transport must be injected.  This avoids a hard
   // dependency on nodemailer while still providing a usable interface.
   return {
-    async send(_from: string, _options: SmtpSendOptions): Promise<Result<void, ChannelError>> {
-      return err(
-        new ChannelError(
-          'EmailConnector: no SMTP transport provided — inject a SmtpTransport via options.smtpTransport',
+    send(_from: string, _options: SmtpSendOptions): Promise<Result<void, ChannelError>> {
+      return Promise.resolve(
+        err(
+          new ChannelError(
+            'EmailConnector: no SMTP transport provided — inject a SmtpTransport via options.smtpTransport',
+          ),
         ),
       );
     },
@@ -143,8 +145,8 @@ export function createDefaultSmtpTransport(_config: EmailConfig): SmtpTransport 
  */
 export function createDefaultImapClient(_config: EmailConfig): ImapClient {
   return {
-    async fetchUnseen(_mailbox: string): Promise<ParsedEmail[]> {
-      return [];
+    fetchUnseen(_mailbox: string): Promise<ParsedEmail[]> {
+      return Promise.resolve([]);
     },
   };
 }
@@ -182,7 +184,7 @@ export class EmailConnector implements ChannelConnector {
   readonly type = 'email';
   readonly name: string;
 
-  private handler?: (event: InboundEvent) => Promise<void>;
+  private handler?: (event: InboundEvent) => void | Promise<void>;
   private running = false;
   private abortController?: AbortController;
   /** Promise tracking the active poll loop (used for clean shutdown). */
@@ -209,16 +211,17 @@ export class EmailConnector implements ChannelConnector {
   /**
    * Start IMAP polling. Idempotent — no-op if already running.
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
     if (this.running) {
       this.logger.debug({ channelName: this.name }, 'email connector already running');
-      return;
+      return Promise.resolve();
     }
     this.running = true;
     this.abortController = new AbortController();
     this.logger.info({ channelName: this.name }, 'email connector starting');
     // Launch the poll loop in the background.
     this.pollLoopPromise = this.pollLoop();
+    return Promise.resolve();
   }
 
   /**
@@ -242,7 +245,7 @@ export class EmailConnector implements ChannelConnector {
    * Register the inbound message handler.
    * A second call replaces the previous handler.
    */
-  onMessage(handler: (event: InboundEvent) => Promise<void>): void {
+  onMessage(handler: (event: InboundEvent) => void | Promise<void>): void {
     this.handler = handler;
   }
 
@@ -288,9 +291,7 @@ export class EmailConnector implements ChannelConnector {
       return await this.smtpTransport.send(this.config.fromAddress, sendOptions);
     } catch (smtpErr) {
       const cause = smtpErr instanceof Error ? smtpErr : undefined;
-      return err(
-        new ChannelError(`EmailConnector: SMTP send failed: ${String(smtpErr)}`, cause),
-      );
+      return err(new ChannelError(`EmailConnector: SMTP send failed: ${String(smtpErr)}`, cause));
     }
   }
 
@@ -434,7 +435,7 @@ export class EmailConnector implements ChannelConnector {
       const timer = setTimeout(resolve, ms);
       const signal = this.abortController?.signal;
       if (signal) {
-        const onAbort = () => {
+        const onAbort = (): void => {
           clearTimeout(timer);
           resolve();
         };

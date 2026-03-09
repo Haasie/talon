@@ -14,11 +14,7 @@ import type { ChannelConnector, InboundEvent, AgentOutput } from '../../channel-
 import type { Result } from '../../../core/types/result.js';
 import { ok, err } from '../../../core/types/result.js';
 import { ChannelError } from '../../../core/errors/error-types.js';
-import type {
-  SlackConfig,
-  SlackEvent,
-  SlackPostMessageResult,
-} from './slack-types.js';
+import type { SlackConfig, SlackEvent, SlackPostMessageResult } from './slack-types.js';
 import { markdownToSlackMrkdwn } from './slack-format.js';
 
 // ---------------------------------------------------------------------------
@@ -50,7 +46,7 @@ export class SlackConnector implements ChannelConnector {
   readonly type = 'slack';
   readonly name: string;
 
-  private handler?: (event: InboundEvent) => Promise<void>;
+  private handler?: (event: InboundEvent) => void | Promise<void>;
   private running = false;
 
   constructor(
@@ -73,31 +69,33 @@ export class SlackConnector implements ChannelConnector {
    * records the started state so that the connector can guard against processing
    * events while stopped.
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
     if (this.running) {
       this.logger.debug({ channelName: this.name }, 'slack connector already running');
-      return;
+      return Promise.resolve();
     }
     this.running = true;
     this.logger.info({ channelName: this.name }, 'slack connector started');
+    return Promise.resolve();
   }
 
   /**
    * Mark the connector as stopped. Idempotent — no-op if already stopped.
    */
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     if (!this.running) {
-      return;
+      return Promise.resolve();
     }
     this.running = false;
     this.logger.info({ channelName: this.name }, 'slack connector stopped');
+    return Promise.resolve();
   }
 
   /**
    * Register the inbound message handler.
    * A second call replaces the previous handler.
    */
-  onMessage(handler: (event: InboundEvent) => Promise<void>): void {
+  onMessage(handler: (event: InboundEvent) => void | Promise<void>): void {
     this.handler = handler;
   }
 
@@ -143,17 +141,14 @@ export class SlackConnector implements ChannelConnector {
     } catch (fetchErr) {
       const cause = fetchErr instanceof Error ? fetchErr : undefined;
       return err(
-        new ChannelError(
-          `Slack chat.postMessage network error: ${String(fetchErr)}`,
-          cause,
-        ),
+        new ChannelError(`Slack chat.postMessage network error: ${String(fetchErr)}`, cause),
       );
     }
 
     let data: SlackPostMessageResult;
     try {
       data = (await response.json()) as SlackPostMessageResult;
-    } catch (_parseErr) {
+    } catch {
       return err(
         new ChannelError(
           `Slack chat.postMessage: could not parse response (HTTP ${response.status})`,
@@ -163,11 +158,7 @@ export class SlackConnector implements ChannelConnector {
 
     if (!data.ok) {
       const errorCode = data.error ?? 'unknown_error';
-      return err(
-        new ChannelError(
-          `Slack chat.postMessage failed: ${errorCode}`,
-        ),
-      );
+      return err(new ChannelError(`Slack chat.postMessage failed: ${errorCode}`));
     }
 
     return ok(undefined);
@@ -235,10 +226,7 @@ export class SlackConnector implements ChannelConnector {
     }
 
     if (!message.text) {
-      this.logger.debug(
-        { channelName: this.name },
-        'slack message has no text, skipping',
-      );
+      this.logger.debug({ channelName: this.name }, 'slack message has no text, skipping');
       return;
     }
 
@@ -246,18 +234,13 @@ export class SlackConnector implements ChannelConnector {
     const threadTs = message.thread_ts;
 
     // Build a compound external thread ID that encodes both channel and thread.
-    const externalThreadId = threadTs
-      ? encodeThreadId(channelId, threadTs)
-      : channelId;
+    const externalThreadId = threadTs ? encodeThreadId(channelId, threadTs) : channelId;
 
     // Determine sender ID.
     const senderId = message.user ?? channelId;
 
     // Determine idempotency key.
-    const idempotencyKey =
-      event.event_id ??
-      message.client_msg_id ??
-      `${channelId}:${message.ts}`;
+    const idempotencyKey = event.event_id ?? message.client_msg_id ?? `${channelId}:${message.ts}`;
 
     // Determine timestamp (Slack ts is a decimal string of Unix seconds).
     const timestamp = parseSlackTimestamp(message.ts);

@@ -124,7 +124,7 @@ export class TalondDaemon {
       outputDir: join(ipcBase, 'output'),
       errorsDir: join(ipcBase, 'errors'),
       logger: this.logger,
-      commandHandler: (cmd: DaemonCommand) => this.handleIpcCommand(cmd),
+      commandHandler: (cmd: DaemonCommand): Promise<DaemonResponse> => this.handleIpcCommand(cmd),
     });
     this.ipcServer.start();
     this.logger.info('daemon: IPC server started');
@@ -490,7 +490,7 @@ export class TalondDaemon {
       }
 
       default: {
-        const unknownCommand = (command as DaemonCommand).command;
+        const unknownCommand = command.command;
         return {
           id: responseId,
           commandId: command.id,

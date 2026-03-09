@@ -187,7 +187,9 @@ export async function bootstrap(
 
   // 15. Host tools bridge (needs a partial context to construct)
   // We build the context object first, then create the bridge and attach it.
-  const ctx: DaemonContext = {
+  // Two-phase init: HostToolsBridge needs ctx, but ctx needs hostToolsBridge.
+  // Build a partial context first, then fill in the bridge field.
+  const partialCtx = {
     db,
     config,
     configPath,
@@ -203,13 +205,12 @@ export async function bootstrap(
     skillResolver,
     loadedSkills: loadedSkills.value,
     messagePipeline,
-    // Placeholder — replaced immediately below.
-    hostToolsBridge: null as unknown as HostToolsBridge,
     logger,
-  };
+  } as Omit<DaemonContext, 'hostToolsBridge'> & { hostToolsBridge?: HostToolsBridge };
 
-  const hostToolsBridge = new HostToolsBridge(ctx);
-  (ctx as { hostToolsBridge: HostToolsBridge }).hostToolsBridge = hostToolsBridge;
+  const hostToolsBridge = new HostToolsBridge(partialCtx as DaemonContext);
+  partialCtx.hostToolsBridge = hostToolsBridge;
+  const ctx = partialCtx as DaemonContext;
 
   logger.info('bootstrap: context ready');
 

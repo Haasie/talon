@@ -74,6 +74,8 @@ export class QueueManager {
       calculateBackoff,
       this.deadLetterHandler,
       logger,
+      config.backoffBaseMs,
+      config.backoffMaxMs,
     );
   }
 

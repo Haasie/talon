@@ -11,7 +11,7 @@
  * no file I/O, database access, or other side effects.
  */
 
-import { ok, err, type Result } from 'neverthrow';
+import { ok, type Result } from 'neverthrow';
 import type pino from 'pino';
 import { SkillError } from '../core/errors/index.js';
 import type { LoadedSkill, McpServerDef, ResolvedSkillSet } from './skill-types.js';

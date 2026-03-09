@@ -22,9 +22,7 @@ import type {
   MessageRepository,
   RunRepository,
   MemoryRepository,
-  ArtifactRepository,
   BindingRepository,
-  ToolResultRepository,
 } from '../core/database/repositories/index.js';
 
 // ---------------------------------------------------------------------------
@@ -96,12 +94,8 @@ export interface DaemonDependencies {
   runRepo: RunRepository;
   /** Memory item repository. */
   memoryRepo: MemoryRepository;
-  /** Artifact repository. */
-  artifactRepo: ArtifactRepository;
   /** Channel–persona binding repository. */
   bindingRepo: BindingRepository;
-  /** Tool result repository. */
-  toolResultRepo: ToolResultRepository;
   /** Channel connector registry. */
   channelRegistry: ChannelRegistry;
   /** Queue manager (background processing loop). */

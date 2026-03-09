@@ -9,6 +9,7 @@
 import { unlinkSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import net from 'node:net';
+import type Database from 'better-sqlite3';
 import type { DaemonContext } from '../daemon/daemon-context.js';
 import type { ToolCallResult } from './tool-types.js';
 import type { ToolExecutionContext } from './host-tools/channel-send.js';
@@ -18,6 +19,7 @@ import { HttpProxyHandler, type HttpProxyArgs } from './host-tools/http-proxy.js
 import { DbQueryHandler, type DbQueryArgs } from './host-tools/db-query.js';
 import { MemoryAccessHandler, type MemoryAccessArgs } from './host-tools/memory-access.js';
 import { isToolAllowed, MCP_TO_INTERNAL } from './tool-filter.js';
+import { createDatabase } from '../core/database/connection.js';
 import type { ResolvedCapabilities } from '../personas/persona-types.js';
 
 /** NDJSON request shape from MCP server. */
@@ -43,6 +45,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 export class HostToolsBridge {
   private server: net.Server | null = null;
   private readonly socketPath: string;
+  private readonlyDb: Database.Database | null = null;
   private scheduleHandler: ScheduleManageHandler;
   private channelHandler: ChannelSendHandler;
   private httpHandler: HttpProxyHandler;
@@ -68,8 +71,22 @@ export class HostToolsBridge {
       allowedDomains: [],
     });
 
+    // Open a separate read-only database connection for db.query.
+    // This is a defense-in-depth measure — even if the SQL validation
+    // layers are bypassed, the connection itself cannot write.
+    const roResult = createDatabase(ctx.config.storage.path, { readonly: true });
+    if (roResult.isOk()) {
+      this.readonlyDb = roResult.value;
+      ctx.logger.info('host-tools-bridge: opened read-only DB connection for db.query');
+    } else {
+      ctx.logger.error(
+        { err: roResult.error },
+        'host-tools-bridge: failed to open read-only DB connection, falling back to main connection',
+      );
+    }
+
     this.dbHandler = new DbQueryHandler({
-      db: ctx.db,
+      db: this.readonlyDb ?? ctx.db,
       logger: ctx.logger,
     });
 
@@ -105,13 +122,22 @@ export class HostToolsBridge {
     });
   }
 
-  /** Stops the server and cleans up the socket file. */
+  /** Stops the server, closes the read-only DB connection, and cleans up the socket file. */
   stop(): void {
     if (this.server) {
       this.server.close(() => {
         this.ctx.logger.info('host-tools-bridge: stopped');
       });
       this.server = null;
+    }
+
+    // Close the read-only DB connection if we opened one.
+    if (this.readonlyDb) {
+      try {
+        this.readonlyDb.close();
+      } catch {
+        // Ignore close errors during shutdown
+      }
     }
 
     try {
@@ -138,7 +164,7 @@ export class HostToolsBridge {
           continue;
         }
 
-        this.handleRequest(line, socket);
+        void this.handleRequest(line, socket);
       }
     });
 
@@ -151,7 +177,7 @@ export class HostToolsBridge {
     let request: BridgeRequest;
 
     try {
-      request = JSON.parse(line);
+      request = JSON.parse(line) as BridgeRequest;
     } catch {
       const errorResponse: BridgeResponse = {
         id: 'unknown',
@@ -197,26 +223,29 @@ export class HostToolsBridge {
       return;
     }
 
+    let responded = false;
+
     const timeoutHandle = setTimeout(() => {
-      const errorResponse: BridgeResponse = {
-        id,
-        error: 'Request timeout',
-      };
-      this.sendResponse(socket, errorResponse);
+      if (responded) return;
+      responded = true;
+      this.ctx.logger.warn({ id, tool: normalizedTool }, 'host-tools-bridge: request timed out');
+      this.sendResponse(socket, { id, error: 'Request timeout' });
     }, REQUEST_TIMEOUT_MS);
 
     try {
       const result = await this.dispatch(normalizedTool, args, context);
       clearTimeout(timeoutHandle);
-      const response: BridgeResponse = { id, result };
-      this.sendResponse(socket, response);
+      if (responded) return; // Timeout already fired
+      responded = true;
+      this.sendResponse(socket, { id, result });
     } catch (err) {
       clearTimeout(timeoutHandle);
-      const errorResponse: BridgeResponse = {
+      if (responded) return; // Timeout already fired
+      responded = true;
+      this.sendResponse(socket, {
         id,
         error: err instanceof Error ? err.message : String(err),
-      };
-      this.sendResponse(socket, errorResponse);
+      });
     }
   }
 

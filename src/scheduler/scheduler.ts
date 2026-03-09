@@ -80,7 +80,7 @@ export class Scheduler {
    * disables one-shot / event schedules. Errors on individual schedules are
    * logged and skipped so one bad schedule cannot block the rest.
    */
-  private async tick(): Promise<void> {
+  private tick(): void {
     if (!this.running) {
       return;
     }
@@ -95,7 +95,7 @@ export class Scheduler {
       this.logger.debug({ count: due.length, now }, 'scheduler tick');
 
       for (const schedule of due) {
-        await this.processSchedule(schedule, now);
+        this.processSchedule(schedule, now);
       }
     }
 
@@ -114,7 +114,7 @@ export class Scheduler {
    * @param schedule - The schedule row to process.
    * @param now      - Current epoch ms (used for last_run_at).
    */
-  private async processSchedule(schedule: ScheduleRow, now: number): Promise<void> {
+  private processSchedule(schedule: ScheduleRow, now: number): void {
     this.logger.info(
       { scheduleId: schedule.id, type: schedule.type, expression: schedule.expression },
       'scheduler: firing schedule',

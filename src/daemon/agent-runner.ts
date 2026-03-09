@@ -234,9 +234,13 @@ export class AgentRunner {
 
       // Send typing indicator and keep it alive every 4s while the agent works.
       if (connector?.sendTyping && externalId) {
-        connector.sendTyping(externalId);
+        connector.sendTyping(externalId).catch((e: unknown) => {
+          this.ctx.logger.debug({ err: e }, 'sendTyping failed');
+        });
         typingInterval = setInterval(() => {
-          connector.sendTyping!(externalId);
+          connector.sendTyping!(externalId).catch((e: unknown) => {
+            this.ctx.logger.debug({ err: e }, 'sendTyping failed');
+          });
         }, 4000);
       }
 
@@ -253,7 +257,7 @@ export class AgentRunner {
 
       // Wrap the streaming loop in a timeout to prevent indefinite hangs
       // (e.g. stale session resume, SDK bugs, network issues).
-      const queryPromise = (async () => {
+      const queryPromise = (async (): Promise<void> => {
         for await (const message of agentQuery) {
           if (message.type === 'assistant' && message.message?.content) {
             for (const block of message.message.content) {

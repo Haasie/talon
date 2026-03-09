@@ -48,7 +48,7 @@ export class WhatsAppConnector implements ChannelConnector {
   readonly type = 'whatsapp';
   readonly name: string;
 
-  private handler?: (event: InboundEvent) => Promise<void>;
+  private handler?: (event: InboundEvent) => void | Promise<void>;
   private running = false;
 
   constructor(
@@ -70,31 +70,33 @@ export class WhatsAppConnector implements ChannelConnector {
    * handled externally (e.g. an nginx proxy forwarding to the daemon's HTTP
    * endpoint, which then calls `feedWebhook()`).
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
     if (this.running) {
       this.logger.debug({ channelName: this.name }, 'whatsapp connector already running');
-      return;
+      return Promise.resolve();
     }
     this.running = true;
     this.logger.info({ channelName: this.name }, 'whatsapp connector started');
+    return Promise.resolve();
   }
 
   /**
    * Mark the connector as stopped. Idempotent — no-op if already stopped.
    */
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     if (!this.running) {
-      return;
+      return Promise.resolve();
     }
     this.running = false;
     this.logger.info({ channelName: this.name }, 'whatsapp connector stopped');
+    return Promise.resolve();
   }
 
   /**
    * Register the inbound message handler.
    * A second call replaces the previous handler.
    */
-  onMessage(handler: (event: InboundEvent) => Promise<void>): void {
+  onMessage(handler: (event: InboundEvent) => void | Promise<void>): void {
     this.handler = handler;
   }
 
@@ -132,40 +134,25 @@ export class WhatsAppConnector implements ChannelConnector {
       });
     } catch (fetchErr) {
       const cause = fetchErr instanceof Error ? fetchErr : undefined;
-      return err(
-        new ChannelError(
-          `WhatsApp send network error: ${String(fetchErr)}`,
-          cause,
-        ),
-      );
+      return err(new ChannelError(`WhatsApp send network error: ${String(fetchErr)}`, cause));
     }
 
     let data: WhatsAppSendResult;
     try {
       data = (await response.json()) as WhatsAppSendResult;
-    } catch (_parseErr) {
+    } catch {
       return err(
-        new ChannelError(
-          `WhatsApp send: could not parse response (HTTP ${response.status})`,
-        ),
+        new ChannelError(`WhatsApp send: could not parse response (HTTP ${response.status})`),
       );
     }
 
     if (data.error) {
       const { code, message } = data.error;
-      return err(
-        new ChannelError(
-          `WhatsApp send failed (${code}): ${message}`,
-        ),
-      );
+      return err(new ChannelError(`WhatsApp send failed (${code}): ${message}`));
     }
 
     if (!response.ok) {
-      return err(
-        new ChannelError(
-          `WhatsApp send failed with HTTP ${response.status}`,
-        ),
-      );
+      return err(new ChannelError(`WhatsApp send failed with HTTP ${response.status}`));
     }
 
     return ok(undefined);

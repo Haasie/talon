@@ -13,6 +13,16 @@ import type { ScheduleRepository } from '../../../src/core/database/repositories
 import type { ChannelRegistry } from '../../../src/channels/channel-registry.js';
 import { ok } from 'neverthrow';
 
+// Mock createDatabase so it doesn't try to open a real file for the readonly connection.
+// Returns an err() result so the bridge falls back to the main ctx.db connection.
+vi.mock('../../../src/core/database/connection.js', async () => {
+  const { err: errFn } = await import('neverthrow');
+  const { DbError } = await import('../../../src/core/errors/index.js');
+  return {
+    createDatabase: vi.fn().mockReturnValue(errFn(new DbError('test: no real db'))),
+  };
+});
+
 /** Helper: send an NDJSON request to the bridge and wait for the response. */
 function sendRequest(
   socketPath: string,
@@ -92,7 +102,7 @@ describe('HostToolsBridge', () => {
 
     mockCtx = {
       db: {} as any,
-      config: {} as any,
+      config: { storage: { path: ':memory:' } } as any,
       configPath: '',
       dataDir: tempDir,
       repos: {

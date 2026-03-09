@@ -130,7 +130,7 @@ export class McpRegistry {
    * because actual transport spawning is a future task. The method exists to
    * establish the lifecycle contract and allow future transport integration.
    */
-  async startAll(): Promise<void> {
+  startAll(): Promise<void> {
     for (const [name, entry] of this.servers) {
       entry.status = 'starting';
       this.logger.info({ mcpServer: name }, 'starting MCP server');
@@ -139,6 +139,7 @@ export class McpRegistry {
       entry.status = 'running';
       this.logger.info({ mcpServer: name }, 'MCP server running');
     }
+    return Promise.resolve();
   }
 
   /**
@@ -147,7 +148,7 @@ export class McpRegistry {
    * Errors from individual servers are caught and logged; all servers are
    * stopped regardless of failures so the daemon can shut down cleanly.
    */
-  async stopAll(): Promise<void> {
+  stopAll(): Promise<void> {
     for (const [name, entry] of this.servers) {
       try {
         this.logger.info({ mcpServer: name }, 'stopping MCP server');
@@ -162,5 +163,6 @@ export class McpRegistry {
         entry.lastError = err instanceof Error ? err.message : String(err);
       }
     }
+    return Promise.resolve();
   }
 }

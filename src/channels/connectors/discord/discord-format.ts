@@ -59,12 +59,13 @@ export function markdownToDiscord(markdown: string): string {
   result = convertTables(result);
 
   // Step 5: Restore inline codes.
-  result = result.replace(/\x00INLINE_CODE_(\d+)\x00/g, (_match, idx: string) => {
+  const nul = String.fromCharCode(0);
+  result = result.replace(new RegExp(`${nul}INLINE_CODE_(\\d+)${nul}`, 'gu'), (_match, idx: string) => {
     return inlineCodes[parseInt(idx, 10)] ?? '';
   });
 
   // Step 6: Restore code blocks.
-  result = result.replace(/\x00CODE_BLOCK_(\d+)\x00/g, (_match, idx: string) => {
+  result = result.replace(new RegExp(`${nul}CODE_BLOCK_(\\d+)${nul}`, 'gu'), (_match, idx: string) => {
     return codeBlocks[parseInt(idx, 10)] ?? '';
   });
 

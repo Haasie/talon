@@ -30,6 +30,8 @@ export class QueueProcessor {
     private readonly retryStrategy: typeof calculateBackoff,
     private readonly deadLetterHandler: DeadLetterHandler,
     private readonly logger: pino.Logger,
+    private readonly backoffBaseMs: number = 1000,
+    private readonly backoffMaxMs: number = 60_000,
   ) {}
 
   /**
@@ -208,7 +210,7 @@ export class QueueProcessor {
     }
 
     // Schedule the next retry using exponential backoff.
-    const delayMs = this.retryStrategy(row.attempts, 1000, 60_000);
+    const delayMs = this.retryStrategy(row.attempts, this.backoffBaseMs, this.backoffMaxMs);
     const nextRetryAt = Date.now() + delayMs;
 
     const result = this.queueRepo.fail(itemId, error, nextRetryAt);
