@@ -40,7 +40,7 @@
 | TASK-062 | Terminal channel connector + talonctl chat CLI | PR #5 |
 | BUG-007 | Compound PK (thread_id, id) for memory_items | PR #6 |
 | BUG-008 | Session resume across daemon restarts | PR #7 |
-| TASK-038 | talonctl CLI cleanup (20/20 subtasks) | branch `refactor/talonctl-cleanup` |
+| TASK-038 | talonctl CLI cleanup (20/20 subtasks, 213 tests) | PR #8 |
 
 ---
 
@@ -65,8 +65,6 @@ _Nothing currently in progress._
 | TASK-041 | Multi-persona support | Test multiple personas bound to different channels (e.g. a "coder" persona for Slack, an "assistant" persona for Telegram). Verify routing and isolation. |
 | TASK-042 | Slack channel connector + multi-agent swarm | Test and fix the Slack connector end-to-end. **Design needed**: `bot_id` filter (line 220) drops ALL bot messages — blocks agent-to-agent communication. Need echo prevention that allows cross-channel bot messages while preventing self-reply loops. Also: shared workspace between agents, persona-per-channel routing. Target: multiple domain-specific agents collaborating in Slack. |
 | TASK-043 | Discord channel connector | Test and fix the Discord connector end-to-end. |
-| ~~TASK-045~~ | ~~`talonctl add-mcp` command~~ | Done as CLI-013 in TASK-038 |
-| ~~TASK-046~~ | ~~Setup skill cleanup~~ | Done as CLI-019 in TASK-038 |
 | TASK-047 | Cost tracking & limits | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command. |
 | TASK-048 | Thread memory | Use the thread workspace's `memory/` directory for persistent agent memory across sessions. Explore Agent SDK file persistence. |
 

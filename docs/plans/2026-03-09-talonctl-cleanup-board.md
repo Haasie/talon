@@ -39,8 +39,10 @@ skill and terminal agent can call the same logic.
 
 ## 📝 Notes
 
-- **Atomic writes**: Use `write-file-atomic` (already a dependency for IPC).
-- **Name validation**: `^[a-zA-Z0-9_-]+$` — no spaces, dots, or special chars.
-- **Importable functions**: Each command should export its core logic as a function (not just a CLI entrypoint) so the setup skill and terminal agent can call it programmatically.
-- **Test coverage**: `add-skill` has 12 tests. `add-channel` and `add-persona` have zero. Target: tests for every command.
-- **CLI-020 decision**: Bindings are currently created implicitly by daemon startup code (`channel-setup.ts`) — it creates a default binding when a channel has no persona. Explicit binding config would let the CLI manage persona-channel mappings without the daemon running.
+- **Atomic writes**: All config mutations use `write-file-atomic`.
+- **Name validation**: `^[a-zA-Z0-9_-]+$` for `add-*` and `bind`/`unbind`. Remove commands skip format validation to support legacy names.
+- **Importable functions**: Every command exports a pure function (throws on error) + thin CLI wrapper (try/catch → console + exit).
+- **Test coverage**: 213 CLI tests across 20 test files. All commands covered.
+- **CLI-020 decision**: Bindings stored in `talond.yaml` as config-only. The daemon still auto-binds from config on startup — wiring CLI bindings into runtime routing is a future task.
+- **Review**: Reviewed by Codex (gpt-5.3-codex), GitHub Copilot, and GPT-5.4. All findings addressed or documented as by-design.
+- **Per-channel setup skills**: Added `add-telegram`, `add-slack`, `add-discord`, `add-whatsapp`, `add-email`, `add-terminal` skills with comprehensive setup guides.
