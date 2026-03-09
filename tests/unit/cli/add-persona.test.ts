@@ -1,232 +1,111 @@
 /**
  * Unit tests for the `talonctl add-persona` command.
  *
- * Uses real temp directories. Tests directory scaffolding, system prompt
- * file creation, config updates, and duplicate detection.
+ * Tests both the pure `addPersona()` function (importable by setup skill /
+ * terminal agent) and the `addPersonaCommand()` CLI wrapper.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs/promises';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import yaml from 'js-yaml';
 
-import { addPersonaCommand } from '../../../src/cli/commands/add-persona.js';
+import { addPersona, addPersonaCommand } from '../../../src/cli/commands/add-persona.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), 'talon-add-persona-test-'));
+let tmpDir: string;
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), 'talon-add-persona-test-'));
+});
+
+afterEach(async () => {
+  await fs.rm(tmpDir, { recursive: true, force: true });
+});
+
+function configPath(): string {
+  return join(tmpDir, 'talond.yaml');
 }
 
-/** Writes a minimal talond.yaml with an empty personas array. */
-function writeMinimalConfig(dir: string): string {
-  const configPath = join(dir, 'talond.yaml');
-  writeFileSync(configPath, 'logLevel: info\npersonas: []\n');
-  return configPath;
+function writeMinimalConfig(): string {
+  const p = configPath();
+  writeFileSync(p, 'logLevel: info\npersonas: []\n');
+  return p;
 }
 
-/** Reads and parses the YAML at configPath. */
-function readConfig(configPath: string): Record<string, unknown> {
-  const content = readFileSync(configPath, 'utf-8');
-  return (yaml.load(content) ?? {}) as Record<string, unknown>;
+function writeYaml(content: string): string {
+  const p = configPath();
+  writeFileSync(p, content);
+  return p;
+}
+
+function readYaml(p: string): Record<string, unknown> {
+  return (yaml.load(readFileSync(p, 'utf-8')) ?? {}) as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// addPersona() — pure function
 // ---------------------------------------------------------------------------
 
-describe('addPersonaCommand()', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir();
-  });
-
+describe('addPersona()', () => {
   it('creates the persona directory', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
+    const p = writeMinimalConfig();
     const personasDir = join(tmpDir, 'personas');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'assistant', configPath, personasDir });
+    await addPersona({ name: 'assistant', configPath: p, personasDir });
 
     expect(existsSync(join(personasDir, 'assistant'))).toBe(true);
-    expect(exitSpy).not.toHaveBeenCalled();
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
   it('creates system.md in the persona directory', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
+    const p = writeMinimalConfig();
     const personasDir = join(tmpDir, 'personas');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'helper', configPath, personasDir });
+    await addPersona({ name: 'helper', configPath: p, personasDir });
 
     const systemPromptPath = join(personasDir, 'helper', 'system.md');
     expect(existsSync(systemPromptPath)).toBe(true);
     const content = readFileSync(systemPromptPath, 'utf-8');
-    expect(content.length).toBeGreaterThan(0);
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('system.md contains the persona name', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
-    const personasDir = join(tmpDir, 'personas');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'my-agent', configPath, personasDir });
-
-    const systemPromptPath = join(personasDir, 'my-agent', 'system.md');
-    const content = readFileSync(systemPromptPath, 'utf-8');
-    expect(content).toContain('my-agent');
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
+    expect(content).toContain('helper');
   });
 
   it('adds persona entry to talond.yaml', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
+    const p = writeMinimalConfig();
     const personasDir = join(tmpDir, 'personas');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
+    const result = await addPersona({ name: 'assistant', configPath: p, personasDir });
 
-    await addPersonaCommand({ name: 'assistant', configPath, personasDir });
+    expect(result.name).toBe('assistant');
+    expect(result.model).toBeDefined();
+    expect(result.systemPromptFile).toBeDefined();
+    expect(result.skills).toEqual([]);
 
-    const doc = readConfig(configPath);
+    const doc = readYaml(p);
     const personas = doc.personas as Array<Record<string, unknown>>;
-
     expect(personas).toHaveLength(1);
     expect(personas[0]!.name).toBe('assistant');
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('persona entry has model and systemPromptFile fields', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
-    const personasDir = join(tmpDir, 'personas');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'assistant', configPath, personasDir });
-
-    const doc = readConfig(configPath);
-    const personas = doc.personas as Array<Record<string, unknown>>;
-
-    expect(personas[0]!.model).toBeDefined();
-    expect(personas[0]!.systemPromptFile).toBeDefined();
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('persona entry has an empty skills list', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
-    const personasDir = join(tmpDir, 'personas');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'assistant', configPath, personasDir });
-
-    const doc = readConfig(configPath);
-    const personas = doc.personas as Array<Record<string, unknown>>;
-    expect(personas[0]!.skills).toEqual([]);
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
   it('appends to an existing personas list', async () => {
-    const configPath = join(tmpDir, 'talond.yaml');
-    writeFileSync(
-      configPath,
-      'personas:\n  - name: existing\n    model: claude-sonnet-4-6\nlogLevel: info\n',
-    );
+    const p = writeYaml('personas:\n  - name: existing\n    model: claude-sonnet-4-6\n');
     const personasDir = join(tmpDir, 'personas');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
+    await addPersona({ name: 'new-agent', configPath: p, personasDir });
 
-    await addPersonaCommand({ name: 'new-agent', configPath, personasDir });
-
-    const doc = readConfig(configPath);
+    const doc = readYaml(p);
     const personas = doc.personas as Array<Record<string, unknown>>;
     expect(personas).toHaveLength(2);
     expect(personas[1]!.name).toBe('new-agent');
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('rejects a duplicate persona name', async () => {
-    const configPath = join(tmpDir, 'talond.yaml');
-    writeFileSync(
-      configPath,
-      'personas:\n  - name: assistant\n    model: claude-sonnet-4-6\nlogLevel: info\n',
-    );
-    const personasDir = join(tmpDir, 'personas');
-
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'assistant', configPath, personasDir });
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('exits with code 1 when config file does not exist', async () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({
-      name: 'assistant',
-      configPath: join(tmpDir, 'nonexistent.yaml'),
-      personasDir: join(tmpDir, 'personas'),
-    });
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
-
-  it('prints a confirmation message on success', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
-    const personasDir = join(tmpDir, 'personas');
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'assistant', configPath, personasDir });
-
-    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
-    expect(output).toContain('assistant');
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
   it('does not overwrite existing system.md', async () => {
-    const configPath = writeMinimalConfig(tmpDir);
+    const p = writeMinimalConfig();
     const personasDir = join(tmpDir, 'personas');
 
     // Pre-create persona dir and custom system.md
@@ -235,14 +114,93 @@ describe('addPersonaCommand()', () => {
     const systemPromptPath = join(personasDir, 'assistant', 'system.md');
     writeFileSync(systemPromptPath, '# Custom content\n');
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => undefined as never);
-
-    await addPersonaCommand({ name: 'assistant', configPath, personasDir });
+    await addPersona({ name: 'assistant', configPath: p, personasDir });
 
     const content = readFileSync(systemPromptPath, 'utf-8');
     expect(content).toBe('# Custom content\n');
+  });
 
+  it('creates personas array if missing from config', async () => {
+    const p = writeYaml('logLevel: info\n');
+    const personasDir = join(tmpDir, 'personas');
+
+    await addPersona({ name: 'assistant', configPath: p, personasDir });
+
+    const doc = readYaml(p);
+    const personas = doc.personas as Array<Record<string, unknown>>;
+    expect(personas).toHaveLength(1);
+  });
+
+  // --- Validation ---
+
+  it('rejects a duplicate persona name', async () => {
+    const p = writeYaml('personas:\n  - name: assistant\n    model: claude-sonnet-4-6\n');
+    const personasDir = join(tmpDir, 'personas');
+
+    await expect(addPersona({ name: 'assistant', configPath: p, personasDir }))
+      .rejects.toThrow(/already exists/);
+  });
+
+  it('rejects an invalid persona name', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    await expect(addPersona({ name: 'bad name', configPath: p, personasDir }))
+      .rejects.toThrow(/invalid/);
+  });
+
+  it('rejects an empty persona name', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    await expect(addPersona({ name: '', configPath: p, personasDir }))
+      .rejects.toThrow(/must not be empty/);
+  });
+
+  it('throws for non-existent config file', async () => {
+    await expect(addPersona({ name: 'bot', configPath: join(tmpDir, 'nope.yaml'), personasDir: join(tmpDir, 'personas') }))
+      .rejects.toThrow(/not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// addPersonaCommand() — CLI wrapper
+// ---------------------------------------------------------------------------
+
+describe('addPersonaCommand()', () => {
+  it('prints confirmation on success', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await addPersonaCommand({ name: 'assistant', configPath: p, personasDir });
+
+    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
+    expect(output).toContain('assistant');
+    consoleSpy.mockRestore();
+  });
+
+  it('exits with code 1 on error', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    await addPersonaCommand({ name: 'bot', configPath: join(tmpDir, 'nonexistent.yaml'), personasDir: join(tmpDir, 'personas') });
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    consoleSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it('prints error message for invalid name', async () => {
+    const p = writeMinimalConfig();
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    await addPersonaCommand({ name: 'bad name', configPath: p, personasDir: join(tmpDir, 'personas') });
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errOutput = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
+    expect(errOutput).toContain('invalid');
     consoleSpy.mockRestore();
     exitSpy.mockRestore();
   });
