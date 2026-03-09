@@ -64,6 +64,16 @@ describe('configShow()', () => {
     expect(output).not.toContain('secret2');
   });
 
+  it('masks extended secret keys (signingSecret, clientSecret, privateKey)', async () => {
+    const p = writeYaml('oauth:\n  clientSecret: abc123\n  signingSecret: xyz789\n  privateKey: my-key\n');
+    const output = await configShow({ configPath: p });
+
+    expect(output).not.toContain('abc123');
+    expect(output).not.toContain('xyz789');
+    expect(output).not.toContain('my-key');
+    expect(output).toContain('MASKED');
+  });
+
   it('throws for non-existent config', async () => {
     await expect(configShow({ configPath: join(tmpDir, 'nope.yaml') }))
       .rejects.toThrow(/not found/);

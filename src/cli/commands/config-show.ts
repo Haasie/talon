@@ -26,8 +26,10 @@ export interface ConfigShowOptions {
 
 /** Keys whose values should be masked unless --show-secrets is used. */
 const SECRET_KEYS = new Set([
-  'token', 'botToken', 'appToken', 'authToken', 'password',
-  'accountSid', 'apiKey', 'secret', 'secretKey',
+  'token', 'botToken', 'appToken', 'authToken', 'accessToken', 'refreshToken',
+  'password', 'accountSid', 'apiKey', 'secret', 'secretKey',
+  'signingSecret', 'clientSecret', 'privateKey', 'webhookSecret',
+  'encryptionKey', 'encryptionSecret',
 ]);
 
 const MASK = '***MASKED***';

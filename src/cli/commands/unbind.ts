@@ -61,7 +61,16 @@ export async function unbind(options: UnbindOptions): Promise<UnbindResult> {
     );
   }
 
+  const wasDefault = doc.bindings[idx]!.isDefault === true;
   doc.bindings.splice(idx, 1);
+
+  // If we removed the default binding, promote the next binding on this channel.
+  if (wasDefault) {
+    const nextOnChannel = doc.bindings.find((b) => b.channel === options.channel);
+    if (nextOnChannel) {
+      nextOnChannel.isDefault = true;
+    }
+  }
 
   await writeConfigAtomic(configPath, doc);
 

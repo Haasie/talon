@@ -125,6 +125,17 @@ describe('addMcp()', () => {
     })).rejects.toThrow(/--url is required/);
   });
 
+  it('rejects invalid transport value', async () => {
+    const skillsDir = createSkillDir('web-search');
+    await expect(addMcp({
+      skillName: 'web-search',
+      name: 'server',
+      transport: 'websocket' as 'stdio',
+      command: 'cmd',
+      skillsDir,
+    })).rejects.toThrow(/Invalid transport/);
+  });
+
   it('rejects invalid MCP server name', async () => {
     const skillsDir = createSkillDir('web-search');
     await expect(addMcp({

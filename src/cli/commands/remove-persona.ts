@@ -9,7 +9,6 @@ import { existsSync } from 'node:fs';
 
 import {
   DEFAULT_CONFIG_PATH,
-  validateName,
   readConfig,
   writeConfigAtomic,
 } from '../config-utils.js';
@@ -39,8 +38,9 @@ export async function removePersona(options: RemovePersonaOptions): Promise<{ wa
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
   const personasDir = options.personasDir ?? 'personas';
 
-  const nameError = validateName(options.name, 'Persona');
-  if (nameError) throw new Error(nameError);
+  if (!options.name || options.name.trim().length === 0) {
+    throw new Error('Persona name is required.');
+  }
 
   const doc = await readConfig(configPath);
 

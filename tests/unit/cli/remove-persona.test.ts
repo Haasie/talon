@@ -65,9 +65,18 @@ describe('removePersona()', () => {
       .rejects.toThrow(/not found/);
   });
 
-  it('rejects invalid name', async () => {
+  it('rejects empty name', async () => {
     const p = writeYaml('personas: []\n');
-    await expect(removePersona({ name: 'bad name', configPath: p }))
-      .rejects.toThrow(/invalid/);
+    await expect(removePersona({ name: '', configPath: p }))
+      .rejects.toThrow(/required/);
+  });
+
+  it('allows removing personas with legacy names (dots, spaces)', async () => {
+    const p = writeYaml('personas:\n  - name: old.persona\n    model: claude-sonnet-4-6\n');
+    await removePersona({ name: 'old.persona', configPath: p });
+
+    const doc = readYaml(p);
+    const personas = doc.personas as Array<Record<string, unknown>>;
+    expect(personas).toHaveLength(0);
   });
 });

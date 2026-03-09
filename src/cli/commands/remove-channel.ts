@@ -7,7 +7,6 @@
 
 import {
   DEFAULT_CONFIG_PATH,
-  validateName,
   readConfig,
   writeConfigAtomic,
 } from '../config-utils.js';
@@ -33,8 +32,9 @@ export interface RemoveChannelOptions {
 export async function removeChannel(options: RemoveChannelOptions): Promise<{ warnings: string[] }> {
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
 
-  const nameError = validateName(options.name, 'Channel');
-  if (nameError) throw new Error(nameError);
+  if (!options.name || options.name.trim().length === 0) {
+    throw new Error('Channel name is required.');
+  }
 
   const doc = await readConfig(configPath);
 

@@ -66,9 +66,18 @@ describe('removeChannel()', () => {
       .rejects.toThrow(/not found/);
   });
 
-  it('rejects invalid name', async () => {
+  it('rejects empty name', async () => {
     const p = writeYaml('channels: []\n');
-    await expect(removeChannel({ name: 'bad name', configPath: p }))
-      .rejects.toThrow(/invalid/);
+    await expect(removeChannel({ name: '', configPath: p }))
+      .rejects.toThrow(/required/);
+  });
+
+  it('allows removing channels with legacy names (dots, spaces)', async () => {
+    const p = writeYaml('channels:\n  - name: my.old.channel\n    type: telegram\n');
+    await removeChannel({ name: 'my.old.channel', configPath: p });
+
+    const doc = readYaml(p);
+    const channels = doc.channels as Array<Record<string, unknown>>;
+    expect(channels).toHaveLength(0);
   });
 });

@@ -127,4 +127,19 @@ describe('unbind()', () => {
     await expect(unbind({ persona: 'assistant', channel: 'my-telegram', configPath: p }))
       .rejects.toThrow(/No binding exists/);
   });
+
+  it('promotes next binding to default when removing default', async () => {
+    const p = writeYaml(fullConfig);
+    await bind({ persona: 'assistant', channel: 'my-telegram', configPath: p });
+    await bind({ persona: 'coder', channel: 'my-telegram', configPath: p });
+
+    // assistant is default, coder is not
+    await unbind({ persona: 'assistant', channel: 'my-telegram', configPath: p });
+
+    const doc = readYaml(p);
+    const bindings = doc.bindings as Array<Record<string, unknown>>;
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]!.persona).toBe('coder');
+    expect(bindings[0]!.isDefault).toBe(true);
+  });
 });

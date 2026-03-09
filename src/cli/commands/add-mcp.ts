@@ -55,6 +55,12 @@ export async function addMcp(options: AddMcpOptions): Promise<AddMcpResult> {
   const skillError = validateName(options.skillName, 'Skill');
   if (skillError) throw new Error(skillError);
 
+  // Validate transport value.
+  const validTransports = ['stdio', 'sse', 'http'] as const;
+  if (!validTransports.includes(options.transport as (typeof validTransports)[number])) {
+    throw new Error(`Invalid transport "${options.transport}". Must be one of: ${validTransports.join(', ')}.`);
+  }
+
   // Validate transport-specific requirements.
   if (options.transport === 'stdio' && !options.command) {
     throw new Error('--command is required for stdio transport.');
