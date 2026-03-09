@@ -1,6 +1,6 @@
 # Talon — Project Board
 
-> Last updated: 2026-03-08
+> Last updated: 2026-03-09
 
 ## ✅ Done
 
@@ -36,6 +36,7 @@
 | TASK-039 | Systemd service unit with install script (PR #2) | merged |
 | TASK-040 | Per-persona tool restrictions (PR #3) | merged |
 | FIX-016 | Re-enable session resume for conversation memory | `cc3449c` |
+| TASK-060 | GPT-5.4 code review fixes (all 10 items) | PR #4 |
 
 ---
 
@@ -51,7 +52,7 @@ _Nothing currently in progress._
 |----|-------|-------------|
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
 | TASK-038 | talonctl as single source of truth | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. All config mutations (channels, personas, MCP, skills, bindings) should go through CLI. The setup skill should only call CLI commands, never write YAML. Needs: `add-channel`, `add-persona`, `add-mcp`, `add-skill`, `bind`, `env-check`. |
-| TASK-060 | GPT-5.4 code review fixes | Address actionable feedback from GPT-5.4 review (see `GPT5.4-feedback.md`). High: db.query persona scoping, net.http empty allowedDomains, bridge double-respond on timeout, MCP client error swallowing. Medium: queue backoff config ignored, lint errors. Low: unused repo refs, bootstrap null-cast, sendTyping fire-and-forget. |
+| TASK-062 | Terminal channel connector | WebSocket-based channel for remote CLI access. Design: `docs/plans/2026-03-09-terminal-channel-design.md`. Server: TerminalConnector (WS server, token auth, persistent threads per clientId, persona override). Client: `talonctl chat --host --persona`. Rendered markdown output via marked-terminal. |
 
 ---
 
@@ -62,7 +63,6 @@ _Nothing currently in progress._
 | TASK-041 | Multi-persona support | Test multiple personas bound to different channels (e.g. a "coder" persona for Slack, an "assistant" persona for Telegram). Verify routing and isolation. |
 | TASK-042 | Slack channel connector | Test and fix the Slack connector end-to-end. Add a Slack channel, bind a persona, verify message flow. |
 | TASK-043 | Discord channel connector | Test and fix the Discord connector end-to-end. |
-| TASK-044 | ~~Scheduled tasks~~ | Done — tested end-to-end on VM. Cron schedules fire, agent sends via channel_send, timezone uses system local. |
 | TASK-045 | `talonctl add-mcp` command | Add MCP servers to skills or personas via CLI: `talonctl add-mcp --skill web-research --name brave-search --transport stdio --command npx --args "-y @modelcontextprotocol/server-brave-search" --env BRAVE_API_KEY=\${BRAVE_API_KEY}`. Should create the skill directory structure and MCP JSON config. The setup skill should expose this as a conversational flow. |
 | TASK-046 | Setup skill cleanup | Rewrite the `/talon-setup` skill to use `talonctl` commands exclusively. Add flows for: adding MCP servers to skills, adding skills to personas, managing env vars. Remove all direct YAML editing. |
 | TASK-047 | Cost tracking & limits | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command. |
@@ -83,7 +83,6 @@ _Nothing currently in progress._
 | TASK-055 | Graceful shutdown | Verify SIGTERM handling: drain queue, finish active runs, close channels, then exit. |
 | TASK-056 | Fix pre-existing test failures | 30 test files / 359 tests failing (pre-existing, mostly tool-result-repository setup issues). |
 | TASK-058 | Connector plugin/factory pattern | Refactor channel connectors into a plugin or factory pattern so new connectors can be added without touching core code. Currently connectors are hardcoded by type string in channel registration. Move to a registry where connectors self-register or are loaded from a config-driven factory. |
-| TASK-062 | Terminal channel connector | A `terminal` channel type that reads from stdin and writes to stdout — enables local testing without Telegram/Slack. Run `talonctl chat` or similar to start a session. Useful for feature testing, debugging, and demos. Essentially a new `ChannelConnector` implementation with readline input and console output. |
 | TASK-061 | Dynamic code generation & execution | When Talon lacks a tool for a user's request, it should be able to generate code, deploy it safely (Sprites.dev sandbox or Docker container), and execute it. Saved snippets can be reused later. Code generation via Claude Code or OpenAI API with GPT-5.3-spark (optimized for speed). Key differentiator — turns Talon from a fixed-tool agent into a self-extending one. Needs: code-gen prompt pipeline, sandbox execution runtime (Sprites.dev preferred, Docker fallback), snippet storage/retrieval, capability gating so only authorized personas can generate+run code. |
 
 ---
