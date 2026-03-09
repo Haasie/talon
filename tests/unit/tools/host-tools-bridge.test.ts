@@ -100,7 +100,9 @@ describe('HostToolsBridge', () => {
         queue: {} as any,
         thread: {} as any,
         channel: {} as any,
-        persona: {} as any,
+        persona: {
+          findById: vi.fn().mockReturnValue(ok({ id: 'test-persona', name: 'test' })),
+        } as any,
         audit: {} as any,
         message: {} as any,
         run: {} as any,
@@ -116,7 +118,14 @@ describe('HostToolsBridge', () => {
       channelRegistry: mockChannelRegistry,
       queueManager: {} as any,
       scheduler: {} as any,
-      personaLoader: {} as any,
+      personaLoader: {
+        getByName: vi.fn().mockReturnValue(ok({
+          resolvedCapabilities: {
+            allow: ['schedule.manage', 'channel.send:*', 'memory.access', 'net.http', 'db.query'],
+            requireApproval: [],
+          },
+        })),
+      } as any,
       sessionTracker: {} as any,
       threadWorkspace: {} as any,
       auditLogger: {} as any,
@@ -206,7 +215,7 @@ describe('HostToolsBridge', () => {
       });
 
       expect((response.result as any)?.status).toBe('error');
-      expect((response.result as any)?.error).toContain('Unknown tool');
+      expect((response.result as any)?.error).toContain('not allowed');
     });
 
     it('returns error for malformed JSON', async () => {

@@ -24,14 +24,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
-/** Tool name mapping from MCP (underscores) to handler (dots). */
-const TOOL_NAME_MAP: Record<string, string> = {
-  schedule_manage: 'schedule.manage',
-  channel_send: 'channel.send',
-  memory_access: 'memory.access',
-  net_http: 'net.http',
-  db_query: 'db.query',
-};
+import { MCP_TO_INTERNAL } from './tool-filter.js';
+
+/** Tool name mapping from MCP (underscores) to handler (dots). Derived from HOST_TOOL_REGISTRY. */
+const TOOL_NAME_MAP = Object.fromEntries(MCP_TO_INTERNAL);
 
 /** NDJSON request to bridge. */
 interface BridgeRequest {
@@ -352,7 +348,6 @@ async function main(): Promise<void> {
   // appear in TALOND_ALLOWED_TOOLS are listed and callable.
   const allowedSet = parseAllowedTools();
   const filteredTools = TOOLS.filter((t) => allowedSet.has(t.name));
-  const allowedToolNames = new Set(filteredTools.map((t) => t.name));
 
   console.error('[host-tools-mcp] Starting with socket:', socketPath);
   console.error(
@@ -390,7 +385,7 @@ async function main(): Promise<void> {
     const { name, arguments: args } = request.params;
 
     // Enforce tool restrictions: reject calls to tools not in the allowed set.
-    if (!allowedToolNames.has(name)) {
+    if (!allowedSet.has(name)) {
       return {
         content: [
           {

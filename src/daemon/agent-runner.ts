@@ -170,7 +170,9 @@ export class AgentRunner {
       }
 
       // Determine which host tools this persona may use based on capabilities.
-      const allowedMcpTools = filterAllowedMcpTools(loadedPersona.resolvedCapabilities);
+      const allowedMcpTools = filterAllowedMcpTools(
+        loadedPersona.resolvedCapabilities ?? { allow: [], requireApproval: [] },
+      );
 
       // Add built-in host-tools MCP server (schedule, channel, memory, http, db).
       // Only tools allowed by persona capabilities are exposed via TALOND_ALLOWED_TOOLS.

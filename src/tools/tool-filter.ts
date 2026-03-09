@@ -54,6 +54,11 @@ const TOOL_TO_MCP = new Map(
   HOST_TOOL_REGISTRY.map((e) => [e.internalName, e.mcpName]),
 );
 
+/** Derived lookup: MCP tool name → internal tool name. Used by bridge and MCP server. */
+export const MCP_TO_INTERNAL = new Map(
+  HOST_TOOL_REGISTRY.map((e) => [e.mcpName, e.internalName]),
+);
+
 /** All known host tool names (internal format). */
 export const ALL_HOST_TOOLS = HOST_TOOL_REGISTRY.map((e) => e.internalName);
 
@@ -145,9 +150,21 @@ export function filterAllowedTools(capabilities: ResolvedCapabilities): string[]
 
 /**
  * Checks whether a specific tool (internal dot-notation name) is allowed
- * by the given capabilities.
+ * by the given capabilities. Uses direct lookup instead of recomputing the
+ * full allowed set on each call.
  */
 export function isToolAllowed(toolName: string, capabilities: ResolvedCapabilities): boolean {
-  const allowedTools = filterAllowedTools(capabilities);
-  return allowedTools.includes(toolName);
+  const allLabels = [...capabilities.allow, ...capabilities.requireApproval];
+
+  for (const label of allLabels) {
+    const prefix = extractCapabilityPrefix(label);
+    if (prefix === null) continue;
+
+    const mappedToolName = CAPABILITY_TO_TOOL.get(prefix);
+    if (mappedToolName === toolName) {
+      return true;
+    }
+  }
+
+  return false;
 }

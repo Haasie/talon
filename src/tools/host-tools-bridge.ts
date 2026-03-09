@@ -17,7 +17,7 @@ import { ChannelSendHandler, type ChannelSendArgs } from './host-tools/channel-s
 import { HttpProxyHandler, type HttpProxyArgs } from './host-tools/http-proxy.js';
 import { DbQueryHandler, type DbQueryArgs } from './host-tools/db-query.js';
 import { MemoryAccessHandler, type MemoryAccessArgs } from './host-tools/memory-access.js';
-import { isToolAllowed } from './tool-filter.js';
+import { isToolAllowed, MCP_TO_INTERNAL } from './tool-filter.js';
 import type { ResolvedCapabilities } from '../personas/persona-types.js';
 
 /** NDJSON request shape from MCP server. */
@@ -35,14 +35,8 @@ interface BridgeResponse {
   error?: string;
 }
 
-/** Tool name mapping from MCP (underscores) to handler (dots). */
-const TOOL_NAME_MAP: Record<string, string> = {
-  schedule_manage: 'schedule.manage',
-  channel_send: 'channel.send',
-  memory_access: 'memory.access',
-  net_http: 'net.http',
-  db_query: 'db.query',
-};
+/** Tool name mapping from MCP (underscores) to handler (dots). Derived from HOST_TOOL_REGISTRY. */
+const TOOL_NAME_MAP = Object.fromEntries(MCP_TO_INTERNAL);
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -240,26 +234,34 @@ export class HostToolsBridge {
    * defense-in-depth measure.
    */
   private resolvePersonaCapabilities(personaId: string): ResolvedCapabilities {
-    const personaRowResult = this.ctx.repos.persona.findById(personaId);
-    if (personaRowResult.isErr() || personaRowResult.value === null) {
-      this.ctx.logger.warn(
-        { personaId },
-        'host-tools-bridge: persona not found in DB, failing closed (no tools allowed)',
+    try {
+      const personaRowResult = this.ctx.repos.persona.findById(personaId);
+      if (personaRowResult.isErr() || personaRowResult.value === null) {
+        this.ctx.logger.warn(
+          { personaId },
+          'host-tools-bridge: persona not found in DB, failing closed (no tools allowed)',
+        );
+        return { allow: [], requireApproval: [] };
+      }
+
+      const personaName = personaRowResult.value.name;
+      const loadedResult = this.ctx.personaLoader.getByName(personaName);
+      if (loadedResult.isErr() || loadedResult.value === undefined) {
+        this.ctx.logger.warn(
+          { personaId, personaName },
+          'host-tools-bridge: loaded persona not found, failing closed (no tools allowed)',
+        );
+        return { allow: [], requireApproval: [] };
+      }
+
+      return loadedResult.value.resolvedCapabilities;
+    } catch (err) {
+      this.ctx.logger.error(
+        { personaId, err },
+        'host-tools-bridge: error resolving persona capabilities, failing closed (no tools allowed)',
       );
       return { allow: [], requireApproval: [] };
     }
-
-    const personaName = personaRowResult.value.name;
-    const loadedResult = this.ctx.personaLoader.getByName(personaName);
-    if (loadedResult.isErr() || loadedResult.value === undefined) {
-      this.ctx.logger.warn(
-        { personaId, personaName },
-        'host-tools-bridge: loaded persona not found, failing closed (no tools allowed)',
-      );
-      return { allow: [], requireApproval: [] };
-    }
-
-    return loadedResult.value.resolvedCapabilities;
   }
 
   private async dispatch(

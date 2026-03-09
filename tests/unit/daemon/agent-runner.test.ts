@@ -114,6 +114,10 @@ function makeMockContext(): DaemonContext {
           capabilities: { allow: [] },
         },
         systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*', 'memory.access', 'schedule.manage'],
+          requireApproval: [],
+        },
       })),
     } as any,
     sessionTracker: {
