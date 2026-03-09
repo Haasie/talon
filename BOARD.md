@@ -34,6 +34,8 @@
 | TASK-044 | Scheduled tasks — tested end-to-end on VM | `7de45de` |
 | TASK-059 | Native .env file loading (PR #1) | merged |
 | TASK-039 | Systemd service unit with install script (PR #2) | merged |
+| TASK-040 | Per-persona tool restrictions (PR #3) | merged |
+| FIX-016 | Re-enable session resume for conversation memory | `cc3449c` |
 
 ---
 
@@ -49,7 +51,6 @@ _Nothing currently in progress._
 |----|-------|-------------|
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
 | TASK-038 | talonctl as single source of truth | The `/talon-setup` skill edits YAML directly, duplicating config knowledge. Migrate to `talonctl` CLI commands as single source of truth. All config mutations (channels, personas, MCP, skills, bindings) should go through CLI. The setup skill should only call CLI commands, never write YAML. Needs: `add-channel`, `add-persona`, `add-mcp`, `add-skill`, `bind`, `env-check`. |
-| TASK-040 | Per-persona tool restrictions | Map persona `capabilities.allow` / `capabilities.requireApproval` to Agent SDK `allowedTools` / `disallowedTools` / `canUseTool`. Currently all tools are allowed via `bypassPermissions`. |
 | TASK-060 | GPT-5.4 code review fixes | Address actionable feedback from GPT-5.4 review (see `GPT5.4-feedback.md`). High: db.query persona scoping, net.http empty allowedDomains, bridge double-respond on timeout, MCP client error swallowing. Medium: queue backoff config ignored, lint errors. Low: unused repo refs, bootstrap null-cast, sendTyping fire-and-forget. |
 
 ---
@@ -95,7 +96,7 @@ _Nothing currently in progress._
 | BUG-003 | `zod` peer dep conflict: Agent SDK `@0.2.71` requires `zod@^4.0.0`, project uses `zod@3.25.76`. Upgrade zod to v4 — `@anthropic-ai/sdk` and `@modelcontextprotocol/sdk` both support v4 in their peer ranges. | Medium |
 | BUG-004 | ~~`schedule.manage` host tool dead code~~ — Fixed: wired via host-tools MCP bridge + Unix socket. All 5 tools work (schedule, channel, memory, http, db). | Resolved |
 | BUG-005 | ~~`schedule.manage` sets `next_run_at: null`~~ — Fixed: computes `next_run_at` from cron expression on create/update. | Resolved |
-| BUG-006 | Agent SDK session resume hangs when MCP servers are attached. Disabled for now. Revisit when SDK stabilizes. | Medium |
+| BUG-006 | ~~Agent SDK session resume hangs when MCP servers are attached.~~ Re-enabled and working. | Resolved |
 
 ---
 
@@ -107,4 +108,4 @@ _Nothing currently in progress._
 - **Architecture decision**: Agent SDK runs on host (not in Docker) for v1. Docker isolation deferred to TASK-037 for defense-in-depth against prompt injection from untrusted input.
 - **Host-tools MCP**: All 5 tools operational via Unix socket bridge — schedule_manage (CRUD+list), channel_send, memory_access, net_http, db_query.
 - **Cron timezone**: Cron expressions evaluate in system local time (CET on VM). Tests pin to UTC explicitly.
-- **Session resume**: Disabled — Agent SDK hangs with MCP servers attached. Each message starts a fresh session (BUG-006).
+- **Session resume**: Re-enabled — conversation memory works across messages in the same thread.
