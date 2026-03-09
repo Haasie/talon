@@ -308,19 +308,19 @@ export class ScheduleManageHandler {
     }
 
     const schedules = result.value.map((row) => {
-      const payload = (() => {
+      const payload = ((): Record<string, unknown> | null => {
         try {
-          return JSON.parse(row.payload);
+          return JSON.parse(row.payload) as Record<string, unknown>;
         } catch {
-          return row.payload;
+          return null;
         }
       })();
       return {
         scheduleId: row.id,
         type: row.type,
         expression: row.expression,
-        label: payload?.label ?? '',
-        prompt: payload?.prompt ?? '',
+        label: typeof payload?.label === 'string' ? payload.label : '',
+        prompt: typeof payload?.prompt === 'string' ? payload.prompt : '',
         enabled: row.enabled === 1,
         nextRunAt: row.next_run_at ? new Date(row.next_run_at).toISOString() : null,
         lastRunAt: row.last_run_at ? new Date(row.last_run_at).toISOString() : null,

@@ -257,7 +257,7 @@ export class AgentRunner {
 
       // Wrap the streaming loop in a timeout to prevent indefinite hangs
       // (e.g. stale session resume, SDK bugs, network issues).
-      const queryPromise = (async () => {
+      const queryPromise = (async (): Promise<void> => {
         for await (const message of agentQuery) {
           if (message.type === 'assistant' && message.message?.content) {
             for (const block of message.message.content) {

@@ -119,7 +119,7 @@ class SocketClient {
       }
 
       try {
-        const response: BridgeResponse = JSON.parse(line);
+        const response = JSON.parse(line) as BridgeResponse;
         const pending = this.pendingRequests.get(response.id);
         if (pending) {
           clearTimeout(pending.timeout);
@@ -382,7 +382,7 @@ async function main(): Promise<void> {
     },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
+  server.setRequestHandler(ListToolsRequestSchema, () => {
     return {
       tools: filteredTools,
     };

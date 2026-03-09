@@ -164,7 +164,7 @@ export class HostToolsBridge {
           continue;
         }
 
-        this.handleRequest(line, socket);
+        void this.handleRequest(line, socket);
       }
     });
 
@@ -177,7 +177,7 @@ export class HostToolsBridge {
     let request: BridgeRequest;
 
     try {
-      request = JSON.parse(line);
+      request = JSON.parse(line) as BridgeRequest;
     } catch {
       const errorResponse: BridgeResponse = {
         id: 'unknown',

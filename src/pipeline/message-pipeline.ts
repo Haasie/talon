@@ -64,7 +64,7 @@ export class MessagePipeline {
    * @param event - The inbound event emitted by a channel connector.
    * @returns Ok(PipelineResult) on all expected outcomes, Err(PipelineError) on unexpected failures.
    */
-  async handleInboundEvent(event: InboundEvent): Promise<Result<PipelineResult, PipelineError>> {
+  handleInboundEvent(event: InboundEvent): Result<PipelineResult, PipelineError> {
     this.statsCounters.processed++;
 
     try {

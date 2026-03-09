@@ -202,7 +202,7 @@ function applyInlineFormatting(text: string): string {
  */
 function escapeAndBreak(text: string): string {
   // Split on hard line breaks (two trailing spaces + newline).
-  const parts = text.split(/  \n/);
+  const parts = text.split(/ {2}\n/);
   return parts.map((part) => htmlEscape(part)).join('<br>\n');
 }
 

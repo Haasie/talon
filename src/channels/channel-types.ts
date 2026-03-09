@@ -124,7 +124,7 @@ export interface ChannelConnector {
    * Register a handler that will be called for every normalised inbound event.
    * Only one handler is supported; a second call replaces the previous one.
    */
-  onMessage(handler: (event: InboundEvent) => Promise<void>): void;
+  onMessage(handler: (event: InboundEvent) => void | Promise<void>): void;
 
   /**
    * Send an agent output to the given external thread.

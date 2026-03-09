@@ -101,7 +101,7 @@ export class DiscordConnector implements ChannelConnector {
   readonly type = 'discord';
   readonly name: string;
 
-  private handler?: (event: InboundEvent) => Promise<void>;
+  private handler?: (event: InboundEvent) => void | Promise<void>;
   private active = false;
 
   constructor(
@@ -119,31 +119,33 @@ export class DiscordConnector implements ChannelConnector {
   /**
    * Mark the connector as active. Idempotent — no-op if already active.
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
     if (this.active) {
       this.logger.debug({ channelName: this.name }, 'discord connector already active');
-      return;
+      return Promise.resolve();
     }
     this.active = true;
     this.logger.info({ channelName: this.name }, 'discord connector started');
+    return Promise.resolve();
   }
 
   /**
    * Mark the connector as inactive. Idempotent — no-op if already stopped.
    */
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     if (!this.active) {
-      return;
+      return Promise.resolve();
     }
     this.active = false;
     this.logger.info({ channelName: this.name }, 'discord connector stopped');
+    return Promise.resolve();
   }
 
   /**
    * Register the inbound message handler.
    * A second call replaces the previous handler.
    */
-  onMessage(handler: (event: InboundEvent) => Promise<void>): void {
+  onMessage(handler: (event: InboundEvent) => void | Promise<void>): void {
     this.handler = handler;
   }
 
@@ -317,21 +319,14 @@ export class DiscordConnector implements ChannelConnector {
       });
     } catch (fetchErr) {
       const cause = fetchErr instanceof Error ? fetchErr : undefined;
-      return err(
-        new ChannelError(
-          `Discord send network error: ${String(fetchErr)}`,
-          cause,
-        ),
-      );
+      return err(new ChannelError(`Discord send network error: ${String(fetchErr)}`, cause));
     }
 
     // Handle rate limiting (HTTP 429).
     if (response.status === 429) {
       if (retryCount >= MAX_RATE_LIMIT_RETRIES) {
         return err(
-          new ChannelError(
-            `Discord send rate limited after ${MAX_RATE_LIMIT_RETRIES} retries`,
-          ),
+          new ChannelError(`Discord send rate limited after ${MAX_RATE_LIMIT_RETRIES} retries`),
         );
       }
 

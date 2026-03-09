@@ -96,7 +96,7 @@ export function extractTableNames(sql: string): string[] {
   const joinRegex = /\bJOIN\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)/gi;
   let match;
   while ((match = joinRegex.exec(stripped)) !== null) {
-    const raw = match[1]!;
+    const raw = match[1];
     const name = raw.includes('.') ? raw.split('.').pop()! : raw;
     tables.add(name.toLowerCase());
   }

@@ -46,7 +46,7 @@ export class TelegramConnector implements ChannelConnector {
   readonly type = 'telegram';
   readonly name: string;
 
-  private handler?: (event: InboundEvent) => Promise<void>;
+  private handler?: (event: InboundEvent) => void | Promise<void>;
   private running = false;
   /** Offset for getUpdates: last seen update_id + 1. */
   private offset = 0;
@@ -69,15 +69,16 @@ export class TelegramConnector implements ChannelConnector {
   /**
    * Start long polling. Idempotent — no-op if already running.
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
     if (this.running) {
       this.logger.debug({ channelName: this.name }, 'telegram connector already running');
-      return;
+      return Promise.resolve();
     }
     this.running = true;
     this.logger.info({ channelName: this.name }, 'telegram connector starting');
     // Launch the poll loop in the background; store the promise for stop().
     this.pollLoopPromise = this.pollLoop();
+    return Promise.resolve();
   }
 
   /**
@@ -103,7 +104,7 @@ export class TelegramConnector implements ChannelConnector {
    * Register the inbound message handler.
    * A second call replaces the previous handler.
    */
-  onMessage(handler: (event: InboundEvent) => Promise<void>): void {
+  onMessage(handler: (event: InboundEvent) => void | Promise<void>): void {
     this.handler = handler;
   }
 
@@ -137,17 +138,14 @@ export class TelegramConnector implements ChannelConnector {
     } catch (fetchErr) {
       const cause = fetchErr instanceof Error ? fetchErr : undefined;
       return err(
-        new ChannelError(
-          `Telegram sendMessage network error: ${String(fetchErr)}`,
-          cause,
-        ),
+        new ChannelError(`Telegram sendMessage network error: ${String(fetchErr)}`, cause),
       );
     }
 
     let data: TelegramSendResult;
     try {
       data = (await response.json()) as TelegramSendResult;
-    } catch (parseErr) {
+    } catch {
       return err(
         new ChannelError(
           `Telegram sendMessage: could not parse response (HTTP ${response.status})`,
@@ -158,11 +156,7 @@ export class TelegramConnector implements ChannelConnector {
     if (!data.ok) {
       const description = data.description ?? 'unknown error';
       const code = data.error_code ?? response.status;
-      return err(
-        new ChannelError(
-          `Telegram sendMessage failed (${code}): ${description}`,
-        ),
-      );
+      return err(new ChannelError(`Telegram sendMessage failed (${code}): ${description}`));
     }
 
     return ok(undefined);
