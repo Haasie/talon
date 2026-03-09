@@ -4,14 +4,16 @@
  * Tests cover:
  *   - All 4 operations: read, write, delete, list
  *   - Arg validation failures (missing key, missing value, invalid operation)
- *   - Thread isolation (cross-thread access denied)
  *   - Repository error propagation
  *   - Namespace/type mapping
  *   - Write upsert behaviour (insert vs. update)
  *   - List filtering by namespace
+ *
+ * Thread isolation is enforced at the schema level (compound PK) and tested
+ * in the repository integration tests rather than here.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ok, err } from 'neverthrow';
 import { MemoryAccessHandler } from '../../../../src/tools/host-tools/memory-access.js';
 import type { MemoryAccessArgs } from '../../../../src/tools/host-tools/memory-access.js';
@@ -118,6 +120,16 @@ describe('MemoryAccessHandler — read', () => {
     });
   });
 
+  it('passes threadId and key to findById', async () => {
+    const findById = vi.fn().mockReturnValue(ok(null));
+    const repo = makeRepo({ findById });
+    const handler = new MemoryAccessHandler({ memoryRepository: repo, logger: makeLogger() });
+
+    await handler.execute(makeArgs({ operation: 'read', key: 'my-key' }), makeContext({ threadId: 'thread-xyz' }));
+
+    expect(findById).toHaveBeenCalledWith('thread-xyz', 'my-key');
+  });
+
   it('returns null result when key is not found', async () => {
     const repo = makeRepo({ findById: vi.fn().mockReturnValue(ok(null)) });
     const handler = new MemoryAccessHandler({ memoryRepository: repo, logger: makeLogger() });
@@ -146,18 +158,6 @@ describe('MemoryAccessHandler — read', () => {
 
     expect(result.status).toBe('error');
     expect(result.error).toMatch(/key is required/);
-  });
-
-  it('denies cross-thread access', async () => {
-    // Row belongs to a different thread
-    const row = makeMemoryRow({ thread_id: 'other-thread' });
-    const repo = makeRepo({ findById: vi.fn().mockReturnValue(ok(row)) });
-    const handler = new MemoryAccessHandler({ memoryRepository: repo, logger: makeLogger() });
-
-    const result = await handler.execute(makeArgs({ operation: 'read', key: 'my-key' }), makeContext({ threadId: 'thread-001' }));
-
-    expect(result.status).toBe('error');
-    expect(result.error).toMatch(/does not belong to thread/);
   });
 
   it('propagates repository errors', async () => {
@@ -210,7 +210,20 @@ describe('MemoryAccessHandler — write', () => {
     );
 
     expect(result.status).toBe('success');
-    expect(updateFn).toHaveBeenCalledWith('existing-key', { content: 'updated value' });
+    expect(updateFn).toHaveBeenCalledWith('thread-001', 'existing-key', { content: 'updated value' });
+  });
+
+  it('passes threadId to findById for write pre-check', async () => {
+    const findById = vi.fn().mockReturnValue(ok(null));
+    const repo = makeRepo({ findById, insert: vi.fn().mockReturnValue(ok(makeMemoryRow())) });
+    const handler = new MemoryAccessHandler({ memoryRepository: repo, logger: makeLogger() });
+
+    await handler.execute(
+      makeArgs({ operation: 'write', key: 'k', value: 'v' }),
+      makeContext({ threadId: 'thread-xyz' }),
+    );
+
+    expect(findById).toHaveBeenCalledWith('thread-xyz', 'k');
   });
 
   it('generates a key when none is provided', async () => {
@@ -317,10 +330,7 @@ describe('MemoryAccessHandler — write', () => {
 describe('MemoryAccessHandler — delete', () => {
   it('deletes an existing item successfully', async () => {
     const deleteFn = vi.fn().mockReturnValue(ok(undefined));
-    const repo = makeRepo({
-      findById: vi.fn().mockReturnValue(ok(makeMemoryRow())),
-      delete: deleteFn,
-    });
+    const repo = makeRepo({ delete: deleteFn });
     const handler = new MemoryAccessHandler({ memoryRepository: repo, logger: makeLogger() });
 
     const result = await handler.execute(
@@ -330,7 +340,7 @@ describe('MemoryAccessHandler — delete', () => {
 
     expect(result.status).toBe('success');
     expect(result.result).toEqual({ key: 'my-key', deleted: true });
-    expect(deleteFn).toHaveBeenCalledWith('my-key');
+    expect(deleteFn).toHaveBeenCalledWith('thread-001', 'my-key');
   });
 
   it('returns error when key is missing', async () => {
@@ -346,23 +356,8 @@ describe('MemoryAccessHandler — delete', () => {
     expect(result.error).toMatch(/key is required/);
   });
 
-  it('denies cross-thread delete', async () => {
-    const row = makeMemoryRow({ thread_id: 'other-thread' });
-    const repo = makeRepo({ findById: vi.fn().mockReturnValue(ok(row)) });
-    const handler = new MemoryAccessHandler({ memoryRepository: repo, logger: makeLogger() });
-
-    const result = await handler.execute(
-      makeArgs({ operation: 'delete', key: 'my-key' }),
-      makeContext({ threadId: 'thread-001' }),
-    );
-
-    expect(result.status).toBe('error');
-    expect(result.error).toMatch(/does not belong to thread/);
-  });
-
   it('propagates delete errors', async () => {
     const repo = makeRepo({
-      findById: vi.fn().mockReturnValue(ok(makeMemoryRow())),
       delete: vi.fn().mockReturnValue(err(new DbError('io error'))),
     });
     const handler = new MemoryAccessHandler({ memoryRepository: repo, logger: makeLogger() });

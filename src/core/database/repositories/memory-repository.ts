@@ -3,6 +3,9 @@
  *
  * Memory items capture facts, summaries, notes, and embedding references
  * scoped to a thread. They form the per-thread long-term memory layer.
+ *
+ * The primary key is compound: (thread_id, id). This allows different
+ * threads to use the same key (e.g. "user_name") without collisions.
  */
 
 import type Database from 'better-sqlite3';
@@ -49,7 +52,7 @@ export class MemoryRepository extends BaseRepository {
         (@id, @thread_id, @type, @content, @embedding_ref, @metadata, @created_at, @updated_at)
     `);
 
-    this.findByIdStmt = db.prepare(`SELECT * FROM memory_items WHERE id = ?`);
+    this.findByIdStmt = db.prepare(`SELECT * FROM memory_items WHERE thread_id = ? AND id = ?`);
 
     this.findByThreadStmt = db.prepare(`
       SELECT * FROM memory_items WHERE thread_id = ? ORDER BY created_at DESC
@@ -59,7 +62,7 @@ export class MemoryRepository extends BaseRepository {
       SELECT * FROM memory_items WHERE thread_id = ? AND type = ? ORDER BY created_at DESC
     `);
 
-    this.deleteStmt = db.prepare(`DELETE FROM memory_items WHERE id = ?`);
+    this.deleteStmt = db.prepare(`DELETE FROM memory_items WHERE thread_id = ? AND id = ?`);
   }
 
   /** Inserts a new memory item. */
@@ -74,10 +77,15 @@ export class MemoryRepository extends BaseRepository {
     }
   }
 
-  /** Finds a memory item by its primary key. */
-  findById(id: string): Result<MemoryItemRow | null, DbError> {
+  /**
+   * Finds a memory item by its compound key (thread_id, id).
+   *
+   * @param threadId - Thread the item belongs to.
+   * @param id       - Item key within the thread.
+   */
+  findById(threadId: string, id: string): Result<MemoryItemRow | null, DbError> {
     try {
-      const row = this.findByIdStmt.get(id) as MemoryItemRow | undefined;
+      const row = this.findByIdStmt.get(threadId, id) as MemoryItemRow | undefined;
       return ok(row ?? null);
     } catch (cause) {
       return err(new DbError(`Failed to find memory item by id: ${String(cause)}`, cause instanceof Error ? cause : undefined));
@@ -104,29 +112,40 @@ export class MemoryRepository extends BaseRepository {
     }
   }
 
-  /** Updates mutable fields on an existing memory item. */
-  update(id: string, fields: UpdateMemoryItemInput): Result<MemoryItemRow | null, DbError> {
+  /**
+   * Updates mutable fields on an existing memory item.
+   *
+   * @param threadId - Thread the item belongs to.
+   * @param id       - Item key within the thread.
+   * @param fields   - Fields to update.
+   */
+  update(threadId: string, id: string, fields: UpdateMemoryItemInput): Result<MemoryItemRow | null, DbError> {
     try {
       const setClause = Object.keys(fields)
         .map((k) => `${k} = @${k}`)
         .join(', ');
       if (!setClause) {
-        return this.findById(id);
+        return this.findById(threadId, id);
       }
       const stmt = this.db.prepare(
-        `UPDATE memory_items SET ${setClause}, updated_at = @updated_at WHERE id = @id`,
+        `UPDATE memory_items SET ${setClause}, updated_at = @updated_at WHERE thread_id = @thread_id AND id = @id`,
       );
-      stmt.run({ ...fields, updated_at: this.now(), id });
-      return this.findById(id);
+      stmt.run({ ...fields, updated_at: this.now(), thread_id: threadId, id });
+      return this.findById(threadId, id);
     } catch (cause) {
       return err(new DbError(`Failed to update memory item: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
   }
 
-  /** Deletes a memory item by id. */
-  delete(id: string): Result<void, DbError> {
+  /**
+   * Deletes a memory item by its compound key.
+   *
+   * @param threadId - Thread the item belongs to.
+   * @param id       - Item key within the thread.
+   */
+  delete(threadId: string, id: string): Result<void, DbError> {
     try {
-      this.deleteStmt.run(id);
+      this.deleteStmt.run(threadId, id);
       return ok(undefined);
     } catch (cause) {
       return err(new DbError(`Failed to delete memory item: ${String(cause)}`, cause instanceof Error ? cause : undefined));
