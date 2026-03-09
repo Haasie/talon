@@ -35,7 +35,7 @@ export async function chatCommand(options: ChatOptions): Promise<void> {
 
   // Dynamic imports for ESM-only packages.
   const { Marked } = await import('marked');
-  const markedTerminal = (await import('marked-terminal')).default;
+  const { markedTerminal } = await import('marked-terminal');
   const { default: ora } = await import('ora');
 
   const marked = new Marked(markedTerminal());
