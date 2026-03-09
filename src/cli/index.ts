@@ -170,7 +170,8 @@ program
   .option('--token <token>', 'Authentication token (or set TERMINAL_TOKEN env var)')
   .option('--client-id <id>', 'Client identity for persistent threads')
   .option('--persona <name>', 'Persona to connect to (overrides channel default)')
-  .action(async (opts: { host: string; port: string; token?: string; clientId?: string; persona?: string }) => {
+  .option('--tls', 'Use wss:// (TLS) instead of ws://')
+  .action(async (opts: { host: string; port: string; token?: string; clientId?: string; persona?: string; tls?: boolean }) => {
     const token = opts.token ?? process.env.TERMINAL_TOKEN;
     if (!token) {
       console.error('Error: --token is required (or set TERMINAL_TOKEN env var).');
@@ -182,6 +183,7 @@ program
       token,
       clientId: opts.clientId,
       persona: opts.persona,
+      tls: opts.tls,
     });
   });
 

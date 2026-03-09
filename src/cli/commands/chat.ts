@@ -16,6 +16,7 @@ interface ChatOptions {
   token: string;
   clientId?: string;
   persona?: string;
+  tls?: boolean;
 }
 
 interface ServerMessage {
@@ -27,7 +28,8 @@ interface ServerMessage {
 
 export async function chatCommand(options: ChatOptions): Promise<void> {
   const clientId = options.clientId ?? `${hostname()}-${randomUUID().slice(0, 8)}`;
-  const url = `ws://${options.host}:${options.port}`;
+  const protocol = options.tls ? 'wss' : 'ws';
+  const url = `${protocol}://${options.host}:${options.port}`;
 
   // Load ESM-only deps BEFORE opening the WebSocket to avoid race conditions
   // where 'open'/'error' events fire before handlers are registered.
@@ -64,7 +66,13 @@ export async function chatCommand(options: ChatOptions): Promise<void> {
   });
 
   ws.on('message', (data: Buffer) => {
-    const msg = JSON.parse(String(data)) as ServerMessage;
+    let msg: ServerMessage;
+    try {
+      msg = JSON.parse(String(data)) as ServerMessage;
+    } catch {
+      console.error('Received malformed message from server.');
+      return;
+    }
 
     switch (msg.type) {
       case 'auth_ok':
