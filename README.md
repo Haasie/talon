@@ -20,7 +20,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Self-hosted**: runs on your own hardware, your data stays with you
 - **Resilient**: durable message queue survives crashes, automatic retry with exponential backoff, dead-letter handling
 - **Secure**: agents run inside sandboxed containers with no ambient authority — every capability is explicitly granted
-- **Multi-channel**: one daemon handles Telegram, Slack, Discord, WhatsApp, and email simultaneously
+- **Multi-channel**: one daemon handles Telegram, Slack, Discord, WhatsApp, email, and terminal simultaneously
 - **Multi-persona**: different agents with different personalities, tools, and permissions on different channels
 
 ---
@@ -34,6 +34,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Discord** — Gateway events with REST API, rate limit handling
 - **WhatsApp** — Cloud API with webhook inbound
 - **Email** — IMAP polling + SMTP send, thread tracking via In-Reply-To headers
+- **Terminal** — WebSocket server with `talonctl chat` client, rendered markdown output, persistent threads
 
 ### Agent System
 
@@ -379,6 +380,50 @@ channels:
 - **Thread mapping**: `In-Reply-To` / `References` headers
 - **Format**: Markdown to HTML conversion
 
+### Terminal
+
+WebSocket-based connector for direct CLI access to any persona. Connect from any machine with `talonctl chat`.
+
+```yaml
+channels:
+  - name: my-terminal
+    type: terminal
+    enabled: true
+    config:
+      port: 7700
+      host: 0.0.0.0
+      token: ${TERMINAL_TOKEN}
+```
+
+- **Inbound**: WebSocket JSON messages from `talonctl chat`
+- **Outbound**: JSON response over WebSocket, client renders with `marked-terminal`
+- **Auth**: Shared token with constant-time comparison, 64KB max payload, 10s auth timeout
+- **Thread mapping**: `clientId` — same client always gets the same conversation thread
+- **Persona override**: `--persona` flag switches persona at connect time
+- **Format**: Raw markdown passthrough (client handles rendering)
+
+#### Connecting
+
+```bash
+# Set token via env var or --token flag
+export TERMINAL_TOKEN=your-secret-token
+
+# Connect to a running Talon instance
+talonctl chat --host 10.0.1.95 --port 7700 --persona assistant
+
+# Or with explicit token
+talonctl chat --host 10.0.1.95 --port 7700 --token your-secret-token
+
+# Custom client ID for persistent thread identity
+talonctl chat --host 10.0.1.95 --port 7700 --client-id my-laptop
+```
+
+The client provides:
+- Rendered markdown output via `marked-terminal`
+- Typing spinner (`ora`) while the agent works
+- Persistent conversation — reconnecting with the same `clientId` resumes the thread
+- Graceful disconnect on Ctrl+C
+
 ---
 
 ## Personas
@@ -496,6 +541,7 @@ Skills with unmet capabilities produce a warning at startup and are skipped.
 | ----------------- | ------------------------------------------------------------- |
 | `talonctl status` | Show daemon health, active channels, queue depth, token usage |
 | `talonctl reload` | Hot-reload config without restarting the daemon               |
+| `talonctl chat`   | Connect to a persona via the terminal channel                 |
 
 ```bash
 # Check daemon status
@@ -917,6 +963,7 @@ talon/
         discord/                 # Discord Gateway + REST connector
         whatsapp/                # WhatsApp Cloud API connector
         email/                   # IMAP + SMTP connector
+        terminal/                # WebSocket terminal connector
       channel-registry.ts        # Connector lifecycle management
       channel-router.ts          # Thread -> persona routing
       channel-types.ts           # ChannelConnector interface
