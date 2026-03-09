@@ -272,12 +272,14 @@ describe('HttpProxyHandler — domain allowlist', () => {
     expect(result.error).toMatch(/not in the allowed domains list/);
   });
 
-  it('denies all domains when allowlist is empty', async () => {
+  it('allows all domains when allowlist is empty (capability is the gate)', async () => {
     const handler = new HttpProxyHandler({ logger: makeLogger(), allowedDomains: [] });
+    // With empty allowlist, requests are permitted — the capability system gates access.
+    // The actual fetch will fail in tests (no network), but it should pass domain validation.
     const result = await handler.execute(makeArgs(), makeContext());
 
-    expect(result.status).toBe('error');
-    expect(result.error).toMatch(/not in the allowed domains list/);
+    // Should NOT be a domain error — it either succeeds or fails on the fetch itself.
+    expect(result.error).not.toMatch(/not in the allowed domains list/);
   });
 });
 
