@@ -697,6 +697,20 @@ Agents have no ambient authority. Every tool call goes through:
 3. **Approval Gate** — For `require_approval` capabilities, prompts the user in-channel
 4. **Audit Log** — Records the decision and result regardless of outcome
 
+### Database Query Isolation
+
+Agents can query the database via the `db.query` tool, but are constrained by five independent security layers:
+
+| Layer | Mechanism | What it prevents |
+|-------|-----------|-----------------|
+| 1. Regex pre-check | Rejects non-SELECT statements and forbidden keywords (INSERT, DROP, etc.) | Write operations via SQL |
+| 2. Table whitelist | Only 4 approved tables (`memory_items`, `schedules`, `messages`, `threads`) | Access to sensitive tables (personas, audit_log, queue_items) |
+| 3. Thread/persona scoping | Auto-injects `WHERE thread_id = ? AND persona_id = ?` clauses | Cross-tenant data leakage between personas or threads |
+| 4. Row limit | Hard cap at 1,000 rows per query | Resource exhaustion via large result sets |
+| 5. Read-only connection | Separate SQLite connection opened with `{ readonly: true }` | Any write operation, even if all other layers are bypassed |
+
+Complex SQL patterns (UNION, subqueries, CTEs, INTERSECT, EXCEPT) are rejected to prevent whitelist bypass via query composition. User-supplied WHERE conditions are wrapped in parentheses to prevent OR-based scoping escapes.
+
 ### Secrets Management
 
 - Secrets live on the host (environment variables, OS keychain, secret store)
