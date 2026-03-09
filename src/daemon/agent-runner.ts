@@ -128,7 +128,20 @@ export class AgentRunner {
       // ----------------------------------------------------------------
 
       // Look up existing session for this thread to enable conversation memory.
-      const existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
+      // First check in-memory tracker; if empty (e.g. after daemon restart),
+      // fall back to the most recent session_id persisted in the runs table.
+      let existingSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
+      if (!existingSessionId) {
+        const dbSessionResult = this.ctx.repos.run.getLatestSessionId(item.threadId);
+        if (dbSessionResult.isOk() && dbSessionResult.value) {
+          existingSessionId = dbSessionResult.value;
+          this.ctx.sessionTracker.setSessionId(item.threadId, existingSessionId);
+          this.ctx.logger.info(
+            { threadId: item.threadId, sessionId: existingSessionId },
+            'agent-sdk: restored session from DB after restart',
+          );
+        }
+      }
 
       this.ctx.logger.info(
         {
