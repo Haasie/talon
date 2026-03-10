@@ -4,6 +4,8 @@ import { ScheduleRepository } from '../../../src/core/database/repositories/sche
 import { PersonaRepository } from '../../../src/core/database/repositories/persona-repository.js';
 import { ChannelRepository } from '../../../src/core/database/repositories/channel-repository.js';
 import { addSchedule } from '../../../src/cli/commands/add-schedule.js';
+import { listSchedules } from '../../../src/cli/commands/list-schedules.js';
+import { removeSchedule } from '../../../src/cli/commands/remove-schedule.js';
 import { createTestDb, uuid } from '../core/database/repositories/helpers.js';
 
 describe('ScheduleRepository — findAll / findById', () => {
@@ -241,5 +243,196 @@ describe('addSchedule()', () => {
         db,
       }),
     ).toThrow('Invalid cron expression: "not-a-cron"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listSchedules()
+// ---------------------------------------------------------------------------
+
+describe('listSchedules()', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = createTestDb();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Seeds a persona and channel, returning their names. */
+  function seedPersonaAndChannel(
+    personaName = 'test-bot',
+    channelName = 'test-channel',
+  ): { personaName: string; channelName: string } {
+    const personas = new PersonaRepository(db);
+    personas.insert({
+      id: uuid(),
+      name: personaName,
+      model: 'claude-sonnet-4-6',
+      system_prompt_file: null,
+      skills: '[]',
+      capabilities: '{}',
+      mounts: '[]',
+      max_concurrent: null,
+    });
+
+    const channels = new ChannelRepository(db);
+    channels.insert({
+      id: uuid(),
+      type: 'telegram',
+      name: channelName,
+      config: '{}',
+      credentials_ref: null,
+      enabled: 1,
+    });
+
+    return { personaName, channelName };
+  }
+
+  it('returns empty array when no schedules exist', () => {
+    const result = listSchedules({ db });
+    expect(result).toEqual([]);
+  });
+
+  it('returns schedules with persona names resolved', () => {
+    const { personaName, channelName } = seedPersonaAndChannel();
+
+    addSchedule({
+      persona: personaName,
+      channel: channelName,
+      cron: '0 9 * * *',
+      label: 'morning-report',
+      prompt: 'Generate a morning report',
+      db,
+    });
+
+    addSchedule({
+      persona: personaName,
+      channel: channelName,
+      cron: '0 18 * * *',
+      label: 'evening-report',
+      prompt: 'Generate an evening report',
+      db,
+    });
+
+    const result = listSchedules({ db });
+    expect(result).toHaveLength(2);
+    expect(result[0].personaName).toBe(personaName);
+    expect(result[0].label).toBe('morning-report');
+    expect(result[0].prompt).toBe('Generate a morning report');
+    expect(result[0].expression).toBe('0 9 * * *');
+    expect(result[0].enabled).toBe(true);
+    expect(result[0].nextRunAt).not.toBeNull();
+    expect(result[1].label).toBe('evening-report');
+  });
+
+  it('filters by persona name', () => {
+    const { channelName } = seedPersonaAndChannel('bot-alpha', 'shared-channel');
+    seedPersonaAndChannel('bot-beta', 'other-channel');
+
+    addSchedule({
+      persona: 'bot-alpha',
+      channel: channelName,
+      cron: '0 9 * * *',
+      label: 'alpha-task',
+      prompt: 'Alpha prompt',
+      db,
+    });
+
+    addSchedule({
+      persona: 'bot-beta',
+      channel: 'other-channel',
+      cron: '0 18 * * *',
+      label: 'beta-task',
+      prompt: 'Beta prompt',
+      db,
+    });
+
+    const filtered = listSchedules({ db, persona: 'bot-alpha' });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].label).toBe('alpha-task');
+    expect(filtered[0].personaName).toBe('bot-alpha');
+
+    const all = listSchedules({ db });
+    expect(all).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removeSchedule()
+// ---------------------------------------------------------------------------
+
+describe('removeSchedule()', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = createTestDb();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Seeds a persona and channel, returning their names. */
+  function seedPersonaAndChannel(
+    personaName = 'test-bot',
+    channelName = 'test-channel',
+  ): { personaName: string; channelName: string } {
+    const personas = new PersonaRepository(db);
+    personas.insert({
+      id: uuid(),
+      name: personaName,
+      model: 'claude-sonnet-4-6',
+      system_prompt_file: null,
+      skills: '[]',
+      capabilities: '{}',
+      mounts: '[]',
+      max_concurrent: null,
+    });
+
+    const channels = new ChannelRepository(db);
+    channels.insert({
+      id: uuid(),
+      type: 'telegram',
+      name: channelName,
+      config: '{}',
+      credentials_ref: null,
+      enabled: 1,
+    });
+
+    return { personaName, channelName };
+  }
+
+  it('disables a schedule by ID', () => {
+    const { personaName, channelName } = seedPersonaAndChannel();
+
+    const created = addSchedule({
+      persona: personaName,
+      channel: channelName,
+      cron: '0 9 * * *',
+      label: 'to-remove',
+      prompt: 'Will be removed',
+      db,
+    });
+
+    // Verify it starts enabled
+    const schedRepo = new ScheduleRepository(db);
+    const before = schedRepo.findById(created.id)._unsafeUnwrap();
+    expect(before!.enabled).toBe(1);
+
+    // Remove (disable) it
+    removeSchedule({ scheduleId: created.id, db });
+
+    // Verify it is now disabled
+    const after = schedRepo.findById(created.id)._unsafeUnwrap();
+    expect(after!.enabled).toBe(0);
+  });
+
+  it('throws for unknown schedule ID', () => {
+    expect(() =>
+      removeSchedule({ scheduleId: uuid(), db }),
+    ).toThrow('not found');
   });
 });
