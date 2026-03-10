@@ -1,6 +1,6 @@
 # Talon — Project Board
 
-> Last updated: 2026-03-09
+> Last updated: 2026-03-10
 
 ## ✅ Done
 
@@ -41,6 +41,7 @@
 | BUG-007 | Compound PK (thread_id, id) for memory_items | PR #6 |
 | BUG-008 | Session resume across daemon restarts | PR #7 |
 | TASK-038 | talonctl CLI cleanup (20/20 subtasks, 213 tests) | PR #8 |
+| FEAT-008 | Personality folder for persona enhancement | PR #9 |
 
 ---
 
