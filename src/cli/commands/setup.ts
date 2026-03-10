@@ -450,7 +450,6 @@ function buildDefaultConfigObject(dataDir: string): Record<string, unknown> {
     },
     channels: [],
     personas: [],
-    schedules: [],
   };
 }
 
