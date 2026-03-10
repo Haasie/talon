@@ -40,6 +40,7 @@ export class ScheduleRepository extends BaseRepository {
   private readonly findDueStmt: Database.Statement;
   private readonly findByPersonaStmt: Database.Statement;
   private readonly findByIdStmt: Database.Statement;
+  private readonly findAllStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     super(db);
@@ -65,6 +66,7 @@ export class ScheduleRepository extends BaseRepository {
     `);
 
     this.findByIdStmt = db.prepare(`SELECT * FROM schedules WHERE id = ?`);
+    this.findAllStmt = db.prepare(`SELECT * FROM schedules ORDER BY created_at ASC`);
   }
 
   /** Inserts a new schedule row. */
@@ -122,6 +124,26 @@ export class ScheduleRepository extends BaseRepository {
       return ok(rows);
     } catch (cause) {
       return err(new DbError(`Failed to find schedules by persona: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /** Returns all schedules ordered by created_at. */
+  findAll(): Result<ScheduleRow[], DbError> {
+    try {
+      const rows = this.findAllStmt.all() as ScheduleRow[];
+      return ok(rows);
+    } catch (cause) {
+      return err(new DbError(`Failed to list all schedules: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /** Finds a schedule by its primary key. */
+  findById(id: string): Result<ScheduleRow | null, DbError> {
+    try {
+      const row = this.findByIdStmt.get(id) as ScheduleRow | undefined;
+      return ok(row ?? null);
+    } catch (cause) {
+      return err(new DbError(`Failed to find schedule by id: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
   }
 
