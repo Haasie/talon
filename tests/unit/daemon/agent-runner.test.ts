@@ -519,6 +519,37 @@ describe('AgentRunner', () => {
       expect(systemPrompt).toContain('You are a test bot.');
       expect(systemPrompt).toContain('Available channels');
     });
+
+    it('includes personalityContent between system prompt and channel context', async () => {
+      // Override personaLoader to return a persona with personalityContent.
+      (runner as any).ctx.personaLoader.getByName.mockReturnValue(ok({
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: [],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        personalityContent: 'Be witty and concise.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*', 'memory.access', 'schedule.manage'],
+          requireApproval: [],
+        },
+      }));
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as { options: { systemPrompt: string } };
+      const systemPrompt = queryCall.options.systemPrompt;
+
+      expect(systemPrompt).toContain('Be witty and concise.');
+      // Verify ordering: system prompt → personality → channel context
+      const sysIdx = systemPrompt.indexOf('You are a test bot.');
+      const persIdx = systemPrompt.indexOf('Be witty and concise.');
+      const chanIdx = systemPrompt.indexOf('Available channels');
+      expect(sysIdx).toBeLessThan(persIdx);
+      expect(persIdx).toBeLessThan(chanIdx);
+    });
   });
 
   // -------------------------------------------------------------------------

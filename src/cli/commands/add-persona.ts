@@ -101,25 +101,23 @@ export async function addPersona(options: AddPersonaOptions): Promise<AddPersona
     throw new Error(`Error creating persona directory "${personaDir}": ${String(cause)}`);
   }
 
-  // Write system prompt template if it doesn't already exist.
-  if (!existsSync(systemPromptFile)) {
+  // Write system prompt template and personality scaffold only for new personas.
+  const isNewPersona = !existsSync(systemPromptFile);
+  if (isNewPersona) {
     try {
       await fs.writeFile(systemPromptFile, buildSystemPromptTemplate(options.name), 'utf-8');
     } catch (cause) {
       throw new Error(`Error writing system prompt file "${systemPromptFile}": ${String(cause)}`);
     }
-  }
 
-  // Scaffold personality folder with example file.
-  const personalityDir = path.join(personaDir, 'personality');
-  try {
-    await fs.mkdir(personalityDir, { recursive: true });
-    const exampleFile = path.join(personalityDir, '01-tone.md');
-    if (!existsSync(exampleFile)) {
-      await fs.writeFile(exampleFile, buildExamplePersonalityFile(), 'utf-8');
+    // Scaffold personality folder with example file.
+    const personalityDir = path.join(personaDir, 'personality');
+    try {
+      await fs.mkdir(personalityDir, { recursive: true });
+      await fs.writeFile(path.join(personalityDir, '01-tone.md'), buildExamplePersonalityFile(), 'utf-8');
+    } catch (cause) {
+      throw new Error(`Error creating personality folder "${personalityDir}": ${String(cause)}`);
     }
-  } catch (cause) {
-    throw new Error(`Error creating personality folder "${personalityDir}": ${String(cause)}`);
   }
 
   // Build persona entry.

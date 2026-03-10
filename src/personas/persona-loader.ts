@@ -193,8 +193,10 @@ export class PersonaLoader {
     const contents: string[] = [];
     for (const file of mdFiles) {
       try {
-        const content = await readFile(join(personalityDir, file), 'utf-8');
-        contents.push(content.trim());
+        const trimmed = (await readFile(join(personalityDir, file), 'utf-8')).trim();
+        if (trimmed.length > 0) {
+          contents.push(trimmed);
+        }
       } catch (cause) {
         this.logger.warn(
           { persona: personaName, file, err: cause },
