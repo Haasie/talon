@@ -120,6 +120,34 @@ describe('addPersona()', () => {
     expect(content).toBe('# Custom content\n');
   });
 
+  it('creates a personality directory with example file', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    await addPersona({ name: 'alfred', configPath: p, personasDir });
+
+    const personalityDir = join(personasDir, 'alfred', 'personality');
+    const example = readFileSync(join(personalityDir, '01-tone.md'), 'utf-8');
+    expect(example).toContain('Tone');
+  });
+
+  it('does not scaffold personality for existing persona directories', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    // Pre-create persona dir with system.md (simulates existing persona)
+    const { mkdirSync } = await import('node:fs');
+    const personaDir = join(personasDir, 'custom-agent');
+    mkdirSync(personaDir, { recursive: true });
+    writeFileSync(join(personaDir, 'system.md'), '# Existing prompt\n');
+
+    await addPersona({ name: 'custom-agent', configPath: p, personasDir });
+
+    // Personality folder should NOT have been created for existing persona
+    const { existsSync } = await import('node:fs');
+    expect(existsSync(join(personaDir, 'personality'))).toBe(false);
+  });
+
   it('creates personas array if missing from config', async () => {
     const p = writeYaml('logLevel: info\n');
     const personasDir = join(tmpDir, 'personas');

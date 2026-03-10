@@ -5,7 +5,8 @@
  *
  * Creates:
  *   personas/{name}/
- *   personas/{name}/system.md   — default system prompt template
+ *   personas/{name}/system.md              — default system prompt template
+ *   personas/{name}/personality/01-tone.md — example personality file
  *
  * Adds a persona entry to the `personas` array in talond.yaml with:
  *   - name
@@ -100,12 +101,22 @@ export async function addPersona(options: AddPersonaOptions): Promise<AddPersona
     throw new Error(`Error creating persona directory "${personaDir}": ${String(cause)}`);
   }
 
-  // Write system prompt template if it doesn't already exist.
-  if (!existsSync(systemPromptFile)) {
+  // Write system prompt template and personality scaffold only for new personas.
+  const isNewPersona = !existsSync(systemPromptFile);
+  if (isNewPersona) {
     try {
       await fs.writeFile(systemPromptFile, buildSystemPromptTemplate(options.name), 'utf-8');
     } catch (cause) {
       throw new Error(`Error writing system prompt file "${systemPromptFile}": ${String(cause)}`);
+    }
+
+    // Scaffold personality folder with example file.
+    const personalityDir = path.join(personaDir, 'personality');
+    try {
+      await fs.mkdir(personalityDir, { recursive: true });
+      await fs.writeFile(path.join(personalityDir, '01-tone.md'), buildExamplePersonalityFile(), 'utf-8');
+    } catch (cause) {
+      throw new Error(`Error creating personality folder "${personalityDir}": ${String(cause)}`);
     }
   }
 
@@ -143,8 +154,10 @@ export async function addPersonaCommand(options: AddPersonaOptions): Promise<voi
     const entry = await addPersona(options);
     console.log(`Created persona directory: ${path.dirname(entry.systemPromptFile)}`);
     console.log(`Created system prompt:     ${entry.systemPromptFile}`);
+    console.log(`Created personality folder: ${path.join(path.dirname(entry.systemPromptFile), 'personality')}`);
     console.log(`Added persona "${entry.name}" to "${options.configPath ?? DEFAULT_CONFIG_PATH}".`);
     console.log(`Edit "${entry.systemPromptFile}" to customise the system prompt.`);
+    console.log(`Add .md files to the personality/ folder to enhance the agent's personality.`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
@@ -154,6 +167,24 @@ export async function addPersonaCommand(options: AddPersonaOptions): Promise<voi
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns an example personality file to get users started.
+ */
+function buildExamplePersonalityFile(): string {
+  return [
+    '# Tone & Style',
+    '',
+    '<!-- This file is optional. Add as many .md files as you like to this folder. -->',
+    '<!-- They are loaded alphabetically and appended to the system prompt. -->',
+    '<!-- Delete this file or edit it to match your agent\'s personality. -->',
+    '',
+    '- Be concise and direct.',
+    '- Use a professional but approachable tone.',
+    '- Avoid jargon unless the user uses it first.',
+    '',
+  ].join('\n');
+}
 
 /**
  * Returns a default system prompt markdown template for the given persona name.
