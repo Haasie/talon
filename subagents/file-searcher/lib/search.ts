@@ -91,7 +91,9 @@ async function listFiles(dir: string, extensions: string[]): Promise<string[]> {
     if (!entry.isFile()) continue;
     const ext = extname(entry.name).toLowerCase();
     if (!extensions.includes(ext)) continue;
-    const fullPath = join(entry.parentPath ?? entry.path, entry.name);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parent: string = (entry as any).parentPath ?? (entry as any).path;
+    const fullPath = join(parent, entry.name);
     results.push(fullPath);
   }
 
