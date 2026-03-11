@@ -274,6 +274,8 @@ export class AgentRunner {
       let totalCostUsd = 0;
       let inputTokens = 0;
       let outputTokens = 0;
+      let cacheReadTokens = 0;
+      let cacheWriteTokens = 0;
 
       // Wrap the streaming loop in a timeout to prevent indefinite hangs
       // (e.g. stale session resume, SDK bugs, network issues).
@@ -291,13 +293,15 @@ export class AgentRunner {
               result?: string;
               session_id?: string;
               total_cost_usd?: number;
-              usage?: { input_tokens?: number; output_tokens?: number };
+              usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
               is_error?: boolean;
             };
             resultSessionId = result.session_id;
             totalCostUsd = result.total_cost_usd ?? 0;
             inputTokens = result.usage?.input_tokens ?? 0;
             outputTokens = result.usage?.output_tokens ?? 0;
+            cacheReadTokens = result.usage?.cache_read_input_tokens ?? 0;
+            cacheWriteTokens = result.usage?.cache_creation_input_tokens ?? 0;
 
             // Use the result text if we didn't capture streaming content.
             if (!outputText && result.result) {
@@ -349,9 +353,21 @@ export class AgentRunner {
       if (typingInterval) clearInterval(typingInterval);
 
       this.ctx.logger.info(
-        { runId, inputTokens, outputTokens, totalCostUsd, sessionId: resultSessionId },
+        { runId, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, totalCostUsd, sessionId: resultSessionId },
         'agent-sdk: query completed',
       );
+
+      // Persist token usage to the run record.
+      const tokenResult = this.ctx.repos.run.updateTokens(runId, {
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_read_tokens: cacheReadTokens,
+        cache_write_tokens: cacheWriteTokens,
+        cost_usd: totalCostUsd,
+      });
+      if (tokenResult.isErr()) {
+        this.ctx.logger.error({ runId, err: tokenResult.error }, 'agent-sdk: failed to persist token usage');
+      }
 
       if (item.type === 'schedule') {
         this.ctx.logger.info(
