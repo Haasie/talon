@@ -516,7 +516,11 @@ Skills with unmet capabilities produce a warning at startup and are skipped.
 
 ## Sub-Agents
 
-Sub-agents are lightweight, single-purpose AI agents that handle mechanical LLM tasks using cheap models (e.g. Haiku) instead of routing everything through the main Claude agent. They reduce token costs and keep the main agent focused on conversation.
+### Why Sub-Agents?
+
+The main agent (Claude Sonnet) is powerful but expensive. Many tasks it performs are mechanical — searching files, retrieving memories, grooming stale data, summarizing transcripts. These don't need Sonnet-level reasoning; a cheaper model like Haiku can handle them in a fraction of the cost and time.
+
+Sub-agents solve this by offloading specific, well-scoped tasks to cheap models. The main agent stays focused on conversation and decision-making, while sub-agents handle the grunt work and return structured results. This keeps per-message costs low without sacrificing capability.
 
 ### How Sub-Agents Work
 
@@ -525,6 +529,11 @@ Sub-agents are lightweight, single-purpose AI agents that handle mechanical LLM 
 3. The **ModelResolver** creates a Vercel AI SDK model instance for the sub-agent's configured provider
 4. The sub-agent's `run()` function executes with a system prompt, model, and injected services
 5. Results flow back to the main agent as structured data
+
+Sub-agents are loaded from three locations at startup (later overrides earlier):
+1. **Built-in** (`dist/subagents/default/`) — ships with the daemon
+2. **Project-level** (`cwd()/subagents/`) — custom agents in the project directory
+3. **Data directory** (`dataDir/subagents/`) — deployment-specific agents
 
 ### Sub-Agent Structure
 
@@ -538,12 +547,67 @@ src/subagents/default/<agent_name>/    # built-in agents (compiled with daemon)
 
 ### Built-in Sub-Agents
 
-| Sub-Agent | Purpose | Required Capabilities |
-|-----------|---------|----------------------|
-| `session-summarizer` | Compresses conversation transcripts into structured summaries | none |
-| `memory-groomer` | Consolidates duplicates and prunes stale memory items | `memory.access:*` |
-| `file-searcher` | Searches files with keyword matching and optional LLM ranking | `fs.read:*` |
-| `memory-retriever` | Finds relevant memories via keyword filter and LLM reranking | `memory.access:*` |
+#### `file-searcher`
+
+**Problem:** The main agent has no filesystem access outside its sandbox. When a user asks "find my notes about deployment," the agent would need to read every file itself — slow, expensive, and context-heavy.
+
+**Solution:** Uses a cascading search backend (`rg` → `grep` → Node.js `readdir`/`readFile`) to find matches by content, then optionally ranks results with an LLM when there are too many hits. Returns ranked file paths with relevant snippets.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | `fs.read:*` |
+| **Timeout** | 30s |
+| **Input** | `{ query, rootPaths?, extensions?, maxFileSize?, maxResultsWithoutLlm? }` |
+| **Output** | Ranked list of `{ path, snippet, relevance }` |
+
+The search cascade tries `rg --json` first (fastest, with `--ignore-case`, `--max-filesize`, context lines), falls back to `grep -rni` if rg isn't installed, and finally to a pure Node.js implementation as a last resort. If fewer than 20 matches are found, they're returned directly without LLM ranking.
+
+#### `memory-retriever`
+
+**Problem:** As threads accumulate memory items (facts, summaries, notes), finding the right ones for context becomes a search problem. Loading all memories into the main agent's context is wasteful when only a few are relevant.
+
+**Solution:** Reads all memory items for the current thread, applies a keyword pre-filter, then uses an LLM to rank the remaining candidates by relevance to the query. Returns the top-K results with relevance scores and reasoning.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | `memory.access:*` |
+| **Timeout** | 30s |
+| **Input** | `{ query, topK?, threshold? }` |
+| **Output** | Ranked list of `{ id, type, content, relevance, reason }` |
+
+If fewer than 10 keyword matches are found, they're returned directly without LLM ranking. The LLM filters out items with relevance below 0.3.
+
+#### `memory-groomer`
+
+**Problem:** Memory items accumulate over time — duplicates, outdated facts, superseded summaries. Without grooming, context assembly pulls in stale data that confuses the main agent.
+
+**Solution:** Reads memory items for the current thread (optionally filtered by time window), sends them to an LLM that classifies each as `prune` (delete), `consolidate` (merge duplicates into one), or `keep`. Executes the recommended actions against the database. Consolidation inserts the merged entry before deleting sources to prevent data loss.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | `memory.access:*` |
+| **Timeout** | 30s |
+| **Input** | `{ periodMs? }` (optional: only groom items from the last N ms) |
+| **Output** | `{ pruned, consolidated, kept }` counts |
+
+Uses `generateObject` with a Zod discriminated union schema to ensure the LLM returns valid, typed actions.
+
+#### `session-summarizer`
+
+**Problem:** Long conversations consume context window space. When the agent resumes a thread, it needs the key facts without replaying the entire transcript.
+
+**Solution:** Takes a raw conversation transcript and compresses it into a structured summary using `generateObject` with a Zod schema. Returns key facts (important decisions and information), open threads (unresolved topics), and a narrative summary.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | none |
+| **Timeout** | 30s |
+| **Input** | `{ transcript }` |
+| **Output** | `{ keyFacts: string[], openThreads: string[], summary: string }` |
 
 ### Provider Support
 
@@ -551,7 +615,6 @@ Sub-agents can use any supported AI provider. Configure API keys in `talond.yaml
 
 ```yaml
 auth:
-  mode: subscription
   providers:
     anthropic:
       apiKey: ${ANTHROPIC_API_KEY}
@@ -563,9 +626,9 @@ auth:
       baseURL: http://localhost:11434/v1
 ```
 
-### Persona Assignment
+### Persona Configuration
 
-Personas declare which sub-agents they can invoke:
+Personas must declare which sub-agents they can invoke and have the `subagent.invoke:*` capability:
 
 ```yaml
 personas:
@@ -575,18 +638,39 @@ personas:
       - session-summarizer
       - memory-groomer
       - memory-retriever
+      - file-searcher
     capabilities:
       allow:
-        - subagent.invoke
-        - memory.access
+        - subagent.invoke:*
+        - memory.access:*
+        - fs.read:*
+```
+
+The agent also needs to know about its sub-agents in the system prompt. Add a section describing the available sub-agents and their input schemas so the agent knows when and how to use them.
+
+### Testing Sub-Agents
+
+Use `talonctl run-subagent` to test sub-agents without a running daemon:
+
+```bash
+# File search (no DB needed)
+npx talonctl run-subagent --name file-searcher --input '{"query": "deployment"}'
+
+# Session summarizer (no DB needed)
+npx talonctl run-subagent --name session-summarizer --input '{"transcript": "User: hello\nAssistant: hi"}'
+
+# memory-retriever and memory-groomer require a running daemon (they need DB access)
 ```
 
 ### Creating a Custom Sub-Agent
 
 1. Create a directory under `subagents/` (in cwd or dataDir) with a `subagent.yaml` manifest
-2. Write an `index.ts` with an exported `run(ctx, input)` function returning `Result<SubAgentResult, SubAgentError>`
+2. Write an `index.ts` (dev) or `index.js` (production) with an exported `run(ctx, input)` function returning `Result<SubAgentResult, SubAgentError>`
 3. Add prompt fragments in `prompts/` (numbered for ordering: `01-system.md`, `02-examples.md`)
-4. Test with `talonctl run-subagent --name your-agent --input '{}'`
+4. Declare required capabilities in the manifest — the daemon validates these against the persona at invocation time
+5. Test with `talonctl run-subagent --name your-agent --input '{}'`
+
+Custom sub-agents override built-in ones if they share the same name (dataDir takes precedence over cwd, which takes precedence over built-in).
 
 ---
 
