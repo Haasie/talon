@@ -22,9 +22,13 @@
     "migrate": "node dist/cli/index.js migrate"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.58",
+    "@ai-sdk/google": "^3.0.43",
+    "@ai-sdk/openai": "^3.0.41",
     "@anthropic-ai/claude-agent-sdk": "^0.2.71",
     "@anthropic-ai/sdk": "^0.78.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "ai": "^6.0.116",
     "better-sqlite3": "^12.6.2",
     "commander": "^12.1.0",
     "cron-parser": "^4.9.0",
@@ -33,6 +37,7 @@
     "marked": "^17.0.4",
     "marked-terminal": "^7.3.0",
     "neverthrow": "^8.0.0",
+    "ollama-ai-provider": "^1.2.0",
     "ora": "^9.3.0",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2",
