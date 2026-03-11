@@ -3,10 +3,10 @@ import { ok, err } from 'neverthrow';
 import { DbError } from '../../../src/core/errors/index.js';
 import type { MemoryItemRow } from '../../../src/core/database/repositories/memory-repository.js';
 
-const generateTextMock = vi.fn();
+const generateObjectMock = vi.fn();
 
 vi.mock('ai', () => ({
-  generateText: (...args: unknown[]) => generateTextMock(...args),
+  generateObject: (...args: unknown[]) => generateObjectMock(...args),
 }));
 
 import { run } from '../../../subagents/memory-groomer/index.js';
@@ -28,6 +28,7 @@ const makeCtx = (memoryOverrides: Record<string, unknown> = {}) => ({
   personaId: 'persona-1',
   systemPrompt: 'You are a memory grooming agent.',
   model: {} as any,
+  maxOutputTokens: 8192,
   services: {
     memory: {
       findByThread: vi.fn().mockReturnValue(ok([])),
@@ -59,7 +60,7 @@ describe('memory-groomer', () => {
     const value = result._unsafeUnwrap();
     expect(value.summary).toContain('No memory items');
     expect(value.data).toEqual({ pruned: 0, consolidated: 0, kept: 0 });
-    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(generateObjectMock).not.toHaveBeenCalled();
   });
 
   it('returns error when memory read fails', async () => {
@@ -78,8 +79,8 @@ describe('memory-groomer', () => {
       findByThread: vi.fn().mockReturnValue(ok(items)),
     });
 
-    generateTextMock.mockResolvedValueOnce({
-      text: JSON.stringify({ actions: [] }),
+    generateObjectMock.mockResolvedValueOnce({
+      object: { actions: [] },
       usage: { inputTokens: 200, outputTokens: 50 },
     });
 
@@ -101,8 +102,8 @@ describe('memory-groomer', () => {
       findByThread: vi.fn().mockReturnValue(ok(items)),
     });
 
-    generateTextMock.mockResolvedValueOnce({
-      text: JSON.stringify({
+    generateObjectMock.mockResolvedValueOnce({
+      object: {
         actions: [
           {
             type: 'consolidate',
@@ -116,7 +117,7 @@ describe('memory-groomer', () => {
             reason: 'Feature no longer exists',
           },
         ],
-      }),
+      },
       usage: { inputTokens: 400, outputTokens: 150 },
     });
 
@@ -157,8 +158,8 @@ describe('memory-groomer', () => {
       findByThread: vi.fn().mockReturnValue(ok(items)),
     });
 
-    generateTextMock.mockResolvedValueOnce({
-      text: JSON.stringify({
+    generateObjectMock.mockResolvedValueOnce({
+      object: {
         actions: [
           {
             type: 'keep',
@@ -166,7 +167,7 @@ describe('memory-groomer', () => {
             reason: 'Still relevant',
           },
         ],
-      }),
+      },
       usage: { inputTokens: 200, outputTokens: 50 },
     });
 
@@ -180,22 +181,6 @@ describe('memory-groomer', () => {
     expect(ctx.services.memory.insert).not.toHaveBeenCalled();
   });
 
-  it('handles model response wrapped in markdown code fences', async () => {
-    const items = [makeMemoryItem({ id: 'mem-1' })];
-    const ctx = makeCtx({
-      findByThread: vi.fn().mockReturnValue(ok(items)),
-    });
-
-    generateTextMock.mockResolvedValueOnce({
-      text: '```json\n{"actions": [{"type": "keep", "ids": ["mem-1"], "reason": "still good"}]}\n```',
-      usage: { inputTokens: 200, outputTokens: 50 },
-    });
-
-    const result = await run(ctx, {});
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().data!.kept).toBe(1);
-  });
-
   it('skips consolidation when insert fails (no data loss)', async () => {
     const items = [
       makeMemoryItem({ id: 'mem-1', content: 'Fact A' }),
@@ -206,8 +191,8 @@ describe('memory-groomer', () => {
       insert: vi.fn().mockReturnValue(err(new DbError('UNIQUE constraint failed'))),
     });
 
-    generateTextMock.mockResolvedValueOnce({
-      text: JSON.stringify({
+    generateObjectMock.mockResolvedValueOnce({
+      object: {
         actions: [
           {
             type: 'consolidate',
@@ -216,7 +201,7 @@ describe('memory-groomer', () => {
             mergedContent: 'Fact A',
           },
         ],
-      }),
+      },
       usage: { inputTokens: 200, outputTokens: 50 },
     });
 
@@ -227,44 +212,19 @@ describe('memory-groomer', () => {
     expect(result._unsafeUnwrap().data!.consolidated).toBe(0);
   });
 
-  it('filters out malformed actions from model response', async () => {
-    const items = [makeMemoryItem({ id: 'mem-1' })];
-    const ctx = makeCtx({
-      findByThread: vi.fn().mockReturnValue(ok(items)),
-    });
-
-    generateTextMock.mockResolvedValueOnce({
-      text: JSON.stringify({
-        actions: [
-          { type: 'invalid', ids: ['mem-1'], reason: 'bad type' },
-          { type: 'prune', ids: [], reason: 'empty ids' },
-          { type: 'consolidate', ids: ['mem-1'], reason: 'missing mergedContent' },
-          { type: 'keep', ids: ['mem-1'], reason: 'valid' },
-        ],
-      }),
-      usage: { inputTokens: 200, outputTokens: 50 },
-    });
-
-    const result = await run(ctx, {});
-    expect(result.isOk()).toBe(true);
-    // Only the valid keep action should survive validation.
-    expect(result._unsafeUnwrap().data!.kept).toBe(1);
-    expect(ctx.services.memory.delete).not.toHaveBeenCalled();
-  });
-
   it('skips actions referencing unknown memory IDs', async () => {
     const items = [makeMemoryItem({ id: 'mem-1' })];
     const ctx = makeCtx({
       findByThread: vi.fn().mockReturnValue(ok(items)),
     });
 
-    generateTextMock.mockResolvedValueOnce({
-      text: JSON.stringify({
+    generateObjectMock.mockResolvedValueOnce({
+      object: {
         actions: [
           { type: 'prune', ids: ['hallucinated-id'], reason: 'does not exist' },
           { type: 'keep', ids: ['mem-1'], reason: 'still valid' },
         ],
-      }),
+      },
       usage: { inputTokens: 200, outputTokens: 50 },
     });
 
@@ -282,11 +242,52 @@ describe('memory-groomer', () => {
       findByThread: vi.fn().mockReturnValue(ok(items)),
     });
 
-    generateTextMock.mockRejectedValueOnce(new Error('API rate limit exceeded'));
+    generateObjectMock.mockRejectedValueOnce(new Error('API rate limit exceeded'));
 
     const result = await run(ctx, {});
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().message).toContain('Memory grooming failed');
     expect(result._unsafeUnwrapErr().message).toContain('API rate limit exceeded');
+  });
+
+  it('filters items by periodMs when provided', async () => {
+    const now = Date.now();
+    const items = [
+      makeMemoryItem({ id: 'mem-old', content: 'Old item', created_at: now - 200_000 }),
+      makeMemoryItem({ id: 'mem-new', content: 'New item', created_at: now - 10_000 }),
+    ];
+    const ctx = makeCtx({
+      findByThread: vi.fn().mockReturnValue(ok(items)),
+    });
+
+    generateObjectMock.mockResolvedValueOnce({
+      object: {
+        actions: [
+          { type: 'keep', ids: ['mem-new'], reason: 'Recent' },
+        ],
+      },
+      usage: { inputTokens: 100, outputTokens: 30 },
+    });
+
+    // Only review items from the last 60 seconds
+    const result = await run(ctx, { periodMs: 60_000 });
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().data!.kept).toBe(1);
+  });
+
+  it('reviews all items when periodMs is 0', async () => {
+    const items = [makeMemoryItem({ id: 'mem-1' })];
+    const ctx = makeCtx({
+      findByThread: vi.fn().mockReturnValue(ok(items)),
+    });
+
+    generateObjectMock.mockResolvedValueOnce({
+      object: { actions: [{ type: 'keep', ids: ['mem-1'], reason: 'good' }] },
+      usage: { inputTokens: 100, outputTokens: 30 },
+    });
+
+    const result = await run(ctx, { periodMs: 0 });
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().data!.kept).toBe(1);
   });
 });

@@ -128,6 +128,42 @@ describe('runSubAgent()', () => {
     ).rejects.toThrow('Sub-agent execution failed');
   });
 
+  it('throws for non-object JSON input (array)', async () => {
+    writeSubAgent(root, 'test-agent', `
+      export async function run() {
+        const { ok } = await import('neverthrow');
+        return ok({ summary: 'ok' });
+      }
+    `);
+
+    await expect(
+      runSubAgent({
+        name: 'test-agent',
+        input: '[1, 2, 3]',
+        subagentsDir: root,
+        providers: { anthropic: { apiKey: 'test' } },
+      }),
+    ).rejects.toThrow('must be a JSON object');
+  });
+
+  it('throws for non-object JSON input (string)', async () => {
+    writeSubAgent(root, 'test-agent', `
+      export async function run() {
+        const { ok } = await import('neverthrow');
+        return ok({ summary: 'ok' });
+      }
+    `);
+
+    await expect(
+      runSubAgent({
+        name: 'test-agent',
+        input: '"just a string"',
+        subagentsDir: root,
+        providers: { anthropic: { apiKey: 'test' } },
+      }),
+    ).rejects.toThrow('must be a JSON object');
+  });
+
   it('throws for empty subagents directory', async () => {
     await expect(
       runSubAgent({

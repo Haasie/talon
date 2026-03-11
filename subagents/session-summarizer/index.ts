@@ -1,8 +1,15 @@
-import { generateText } from 'ai';
+import { generateObject } from 'ai';
+import { z } from 'zod';
 import { ok, err } from 'neverthrow';
 import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../src/subagents/subagent-types.js';
 import { SubAgentError } from '../../src/core/errors/index.js';
 import type { Result } from 'neverthrow';
+
+const SummarySchema = z.object({
+  keyFacts: z.array(z.string()).describe('Key facts and decisions from the conversation'),
+  openThreads: z.array(z.string()).describe('Unresolved topics or pending items'),
+  summary: z.string().describe('Concise narrative summary of the conversation'),
+});
 
 export async function run(
   ctx: SubAgentContext,
@@ -15,31 +22,17 @@ export async function run(
   }
 
   try {
-    const { text, usage } = await generateText({
+    const { object, usage } = await generateObject({
       model: ctx.model,
       system: ctx.systemPrompt,
       prompt: `Summarize this conversation transcript:\n\n${transcript}`,
-      maxOutputTokens: 4096,
+      schema: SummarySchema,
+      maxOutputTokens: ctx.maxOutputTokens,
     });
 
-    // Parse the structured response, guarding against non-object JSON values.
-    let data: Record<string, unknown> = {};
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        data = parsed as Record<string, unknown>;
-      } else {
-        data = { rawSummary: text };
-      }
-    } catch {
-      data = { rawSummary: text };
-    }
-
     return ok({
-      summary: typeof data.oneSentenceSummary === 'string'
-        ? data.oneSentenceSummary
-        : 'Session summarized successfully',
-      data,
+      summary: object.summary || 'Session summarized successfully',
+      data: object as unknown as Record<string, unknown>,
       usage: {
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,

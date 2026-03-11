@@ -30,6 +30,7 @@ const makeCtx = (memories: ReturnType<typeof makeMemoryItem>[] = []) => ({
   personaId: 'persona-1',
   systemPrompt: 'You are a memory relevance ranking agent.',
   model: {} as any,
+  maxOutputTokens: 4096,
   services: {
     memory: {
       findByThread: vi.fn().mockReturnValue({ isErr: () => false, isOk: () => true, value: memories }),
@@ -98,8 +99,8 @@ describe('memory-retriever', () => {
   });
 
   it('uses LLM ranking when candidates exceed threshold', async () => {
-    // Create > 5 memories that all match the keyword
-    const memories = Array.from({ length: 8 }, (_, i) =>
+    // Create > 10 memories that all match the keyword (default threshold is 10)
+    const memories = Array.from({ length: 15 }, (_, i) =>
       makeMemoryItem(`mem-${i + 1}`, `Memory entry ${i + 1} about deployment topic`),
     );
     const ctx = makeCtx(memories);
@@ -122,7 +123,7 @@ describe('memory-retriever', () => {
       usage: { inputTokens: 200, outputTokens: 50 },
     });
 
-    const memories = Array.from({ length: 8 }, (_, i) =>
+    const memories = Array.from({ length: 15 }, (_, i) =>
       makeMemoryItem(`mem-${i + 1}`, `Memory about deployment step ${i + 1}`),
     );
     const ctx = makeCtx(memories);
@@ -167,7 +168,7 @@ describe('memory-retriever', () => {
       usage: { inputTokens: 300, outputTokens: 100 },
     });
 
-    const memories = Array.from({ length: 8 }, (_, i) =>
+    const memories = Array.from({ length: 15 }, (_, i) =>
       makeMemoryItem(`mem-${i + 1}`, `Deploy note number ${i + 1}`),
     );
     const ctx = makeCtx(memories);
@@ -183,7 +184,7 @@ describe('memory-retriever', () => {
     const { generateText } = await import('ai');
     (generateText as any).mockRejectedValueOnce(new Error('Network timeout'));
 
-    const memories = Array.from({ length: 8 }, (_, i) =>
+    const memories = Array.from({ length: 15 }, (_, i) =>
       makeMemoryItem(`mem-${i + 1}`, `Deploy note number ${i + 1}`),
     );
     const ctx = makeCtx(memories);
@@ -205,7 +206,7 @@ describe('memory-retriever', () => {
       usage: { inputTokens: 300, outputTokens: 100 },
     });
 
-    const memories = Array.from({ length: 8 }, (_, i) =>
+    const memories = Array.from({ length: 15 }, (_, i) =>
       makeMemoryItem(`mem-${i + 1}`, `Deploy note number ${i + 1}`),
     );
     const ctx = makeCtx(memories);
@@ -216,5 +217,18 @@ describe('memory-retriever', () => {
     expect(resultIds).toContain('mem-1');
     expect(resultIds).toContain('mem-3');
     expect(resultIds).not.toContain('hallucinated-id');
+  });
+
+  it('uses custom threshold when provided via input', async () => {
+    // With threshold=3, 4 matching items should trigger LLM
+    const memories = Array.from({ length: 4 }, (_, i) =>
+      makeMemoryItem(`mem-${i + 1}`, `Deploy note number ${i + 1}`),
+    );
+    const ctx = makeCtx(memories);
+    const result = await run(ctx, { query: 'deploy', threshold: 3 });
+    expect(result.isOk()).toBe(true);
+    const value = result._unsafeUnwrap();
+    // LLM was used (ranked path)
+    expect(value.usage).toBeDefined();
   });
 });

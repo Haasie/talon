@@ -67,6 +67,7 @@ _Nothing currently in progress._
 | TASK-042 | Slack channel connector + multi-agent swarm | Test and fix the Slack connector end-to-end. **Design needed**: `bot_id` filter (line 220) drops ALL bot messages — blocks agent-to-agent communication. Need echo prevention that allows cross-channel bot messages while preventing self-reply loops. Also: shared workspace between agents, persona-per-channel routing. Target: multiple domain-specific agents collaborating in Slack. |
 | TASK-043 | Discord channel connector | Test and fix the Discord connector end-to-end. |
 | TASK-047 | Cost tracking & limits | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command. |
+| TASK-063 | Memory-retriever vector search | Reimplement the `memory-retriever` sub-agent to use embeddings and a vector store (e.g. `sqlite-vec`, Chroma, or Qdrant) instead of keyword pre-filter + LLM reranking. Current approach reads all memories and does string matching, which won't scale. Needs: embedding generation on memory write, vector similarity search on retrieval, fallback to current keyword path if vector store is unavailable. |
 | TASK-048 | Thread memory | Use the thread workspace's `memory/` directory for persistent agent memory across sessions. Explore Agent SDK file persistence. |
 
 ---
@@ -109,6 +110,6 @@ _Nothing currently in progress._
 - **VM**: 10.0.1.95, user `talon`, Debian 13, Node.js 22, Claude Code 2.1.71
 - **Security**: Telegram bot restricted to chat ID `74575531` via `allowedChatIds`
 - **Architecture decision**: Agent SDK runs on host (not in Docker) for v1. Docker isolation deferred to TASK-037 for defense-in-depth against prompt injection from untrusted input.
-- **Host-tools MCP**: All 5 tools operational via Unix socket bridge — schedule_manage (CRUD+list), channel_send, memory_access, net_http, db_query.
+- **Host-tools MCP**: All 6 tools operational via Unix socket bridge — schedule_manage (CRUD+list), channel_send, memory_access, net_http, db_query, subagent_invoke.
 - **Cron timezone**: Cron expressions evaluate in system local time (CET on VM). Tests pin to UTC explicitly.
 - **Session resume**: Re-enabled — conversation memory works across messages in the same thread.

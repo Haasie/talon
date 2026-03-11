@@ -31,8 +31,8 @@ import { SubAgentError } from '../core/errors/index.js';
 // Capability label validation
 // ---------------------------------------------------------------------------
 
-/** Fully-qualified label: `domain.action:scope` */
-const CAPABILITY_WITH_SCOPE_RE = /^\w+\.\w+:\w+$/;
+/** Fully-qualified label: `domain.action:scope` (scope may be `*` wildcard) */
+const CAPABILITY_WITH_SCOPE_RE = /^\w+\.\w+:[\w*]+$/;
 /** Minimal label: `domain.action` (scope-less, accepted with warning) */
 const CAPABILITY_WITHOUT_SCOPE_RE = /^\w+\.\w+$/;
 

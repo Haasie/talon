@@ -67,6 +67,7 @@ const makeCtx = () => ({
   personaId: 'persona-1',
   systemPrompt: 'You are a search ranking assistant.',
   model: {} as any,
+  maxOutputTokens: 4096,
   services: {
     memory: {} as any,
     schedules: {} as any,

@@ -5,10 +5,10 @@ description: "Finds relevant memories for a query using keyword pre-filter and L
 model:
   provider: anthropic
   name: claude-haiku-4-5
-  maxTokens: 2048
+  maxTokens: 4096
 
 requiredCapabilities:
-  - memory.read:thread
+  - memory.access
 
 rootPaths: []
 

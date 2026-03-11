@@ -11,7 +11,7 @@ const DEFAULT_ROOT_PATHS = [
   '/home/talon/personal-notes',
 ];
 
-const MAX_RESULTS_WITHOUT_LLM = 20;
+const DEFAULT_MAX_RESULTS_WITHOUT_LLM = 20;
 const MAX_RAW_RESULTS = 50;
 
 /**
@@ -22,7 +22,10 @@ const MAX_RAW_RESULTS = 50;
 function validateRootPaths(requested: string[], allowed: string[]): boolean {
   return requested.every((req) => {
     const resolved = resolve(req);
-    return allowed.some((allow) => resolved.startsWith(resolve(allow)));
+    return allowed.some((allow) => {
+      const resolvedAllow = resolve(allow);
+      return resolved === resolvedAllow || resolved.startsWith(resolvedAllow + '/');
+    });
   });
 }
 
@@ -35,6 +38,10 @@ export async function run(
   if (!query) {
     return err(new SubAgentError('Cannot search with empty query'));
   }
+
+  const maxResultsWithoutLlm = typeof input.maxResultsWithoutLlm === 'number' && input.maxResultsWithoutLlm > 0
+    ? input.maxResultsWithoutLlm
+    : DEFAULT_MAX_RESULTS_WITHOUT_LLM;
 
   let rootPaths = DEFAULT_ROOT_PATHS;
 
@@ -49,9 +56,15 @@ export async function run(
   }
 
   try {
+    const MAX_FILE_SIZE_LIMIT = 8 * 1024 * 1024; // 8 MB hard cap
+    const maxFileSize = typeof input.maxFileSize === 'number' && input.maxFileSize > 0
+      ? Math.min(input.maxFileSize, MAX_FILE_SIZE_LIMIT)
+      : undefined;
+
     const matches = await searchFiles(rootPaths, query, {
       maxResults: MAX_RAW_RESULTS,
       extensions: Array.isArray(input.extensions) ? (input.extensions as string[]) : undefined,
+      maxFileSize,
     });
 
     if (matches.length === 0) {
@@ -62,7 +75,7 @@ export async function run(
     }
 
     // If few enough matches, return directly without LLM ranking
-    if (matches.length <= MAX_RESULTS_WITHOUT_LLM) {
+    if (matches.length <= maxResultsWithoutLlm) {
       const results = matches.map((m) => ({
         path: m.path,
         snippet: m.context,
@@ -84,7 +97,7 @@ export async function run(
       model: ctx.model,
       system: ctx.systemPrompt,
       prompt: `Query: "${query}"\n\nMatches:\n\n${matchSummary}`,
-      maxOutputTokens: 2048,
+      maxOutputTokens: ctx.maxOutputTokens,
     });
 
     let ranked: Array<{ path: string; snippet: string; relevance: number }> = [];

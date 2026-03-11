@@ -17,8 +17,8 @@ interface RankResponse {
   ranked: RankedItem[];
 }
 
-/** Number of memories below which we skip LLM ranking and do keyword-only. */
-const LLM_THRESHOLD = 5;
+/** Default number of memories below which we skip LLM ranking and do keyword-only. */
+const DEFAULT_LLM_THRESHOLD = 10;
 
 /** Default max results to return. */
 const DEFAULT_TOP_K = 10;
@@ -90,6 +90,10 @@ export async function run(
     ? Math.min(input.topK, 50)
     : DEFAULT_TOP_K;
 
+  const llmThreshold = typeof input.threshold === 'number' && input.threshold > 0
+    ? input.threshold
+    : DEFAULT_LLM_THRESHOLD;
+
   const { memory, logger } = ctx.services;
 
   // 1. Read all memory items for this thread.
@@ -117,7 +121,7 @@ export async function run(
   }
 
   // 3. If few enough candidates, return directly without LLM.
-  if (candidates.length <= LLM_THRESHOLD) {
+  if (candidates.length <= llmThreshold) {
     const results = candidates.slice(0, topK).map((item) => ({
       id: item.id,
       type: item.type,
@@ -140,7 +144,7 @@ export async function run(
       model: ctx.model,
       system: ctx.systemPrompt,
       prompt,
-      maxOutputTokens: 2048,
+      maxOutputTokens: ctx.maxOutputTokens,
     });
 
     const ranked = parseResponse(text);

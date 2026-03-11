@@ -126,6 +126,7 @@ export class SubAgentRunner {
         personaId: ctx.personaId,
         systemPrompt,
         model,
+        maxOutputTokens: agent.manifest.model.maxTokens,
         services: { ...this.services, logger: childLogger },
       };
 

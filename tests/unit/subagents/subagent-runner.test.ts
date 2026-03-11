@@ -92,9 +92,10 @@ describe('SubAgentRunner', () => {
     expect(value.data).toEqual({});
     expect(agent.run).toHaveBeenCalledOnce();
 
-    // Verify the context passed to run has the assembled system prompt
+    // Verify the context passed to run has the assembled system prompt and maxOutputTokens
     const callArgs = (agent.run as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(callArgs[0].systemPrompt).toBe('You are a test agent.\n\nBe helpful.');
+    expect(callArgs[0].maxOutputTokens).toBe(2048);
     expect(callArgs[1]).toEqual({ key: 'value' });
   });
 

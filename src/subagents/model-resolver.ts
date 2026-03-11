@@ -60,7 +60,7 @@ export class ModelResolver {
       }
       case 'openai': {
         const { createOpenAI } = await import('@ai-sdk/openai');
-        return createOpenAI({ apiKey: creds.apiKey! })(modelName);
+        return createOpenAI({ apiKey: creds.apiKey!, baseURL: creds.baseURL })(modelName);
       }
       case 'google': {
         const { createGoogleGenerativeAI } = await import('@ai-sdk/google');

@@ -154,13 +154,46 @@ export async function bootstrap(
   }
 
   // 8b. Load sub-agents (optional — if the directory does not exist, skip)
+  //     Load from both dataDir/subagents and cwd()/subagents, merging results.
+  //     dataDir agents take precedence (override) if names collide.
   const subAgentLoader = new SubAgentLoader(logger);
-  const subAgentsDir = join(dataDir, 'subagents');
-  const loadedSubAgentsResult = await subAgentLoader.loadAll(subAgentsDir);
+  const cwdSubAgentsDir = join(process.cwd(), 'subagents');
+  const dataDirSubAgentsDir = join(dataDir, 'subagents');
+
+  const cwdSubAgentsResult = await subAgentLoader.loadAll(cwdSubAgentsDir);
+  const dataDirSubAgentsResult = await subAgentLoader.loadAll(dataDirSubAgentsDir);
+
+  // Merge: start with cwd agents, then override with dataDir agents
+  const mergedAgentMap = new Map<string, import('../subagents/subagent-types.js').LoadedSubAgent>();
+  if (cwdSubAgentsResult.isOk()) {
+    for (const a of cwdSubAgentsResult.value) {
+      mergedAgentMap.set(a.manifest.name, a);
+    }
+  }
+  if (dataDirSubAgentsResult.isOk()) {
+    for (const a of dataDirSubAgentsResult.value) {
+      mergedAgentMap.set(a.manifest.name, a);
+    }
+  }
+
   let subAgentRunner: SubAgentRunner | null = null;
 
-  if (loadedSubAgentsResult.isOk() && loadedSubAgentsResult.value.length > 0) {
-    const agentMap = new Map(loadedSubAgentsResult.value.map((a) => [a.manifest.name, a]));
+  // Log any partial load errors regardless of whether agents were found.
+  if (cwdSubAgentsResult.isErr()) {
+    logger.warn(
+      { error: cwdSubAgentsResult.error.message, dir: cwdSubAgentsDir },
+      'bootstrap: failed to load sub-agents from cwd',
+    );
+  }
+  if (dataDirSubAgentsResult.isErr()) {
+    logger.warn(
+      { error: dataDirSubAgentsResult.error.message, dir: dataDirSubAgentsDir },
+      'bootstrap: failed to load sub-agents from dataDir',
+    );
+  }
+
+  if (mergedAgentMap.size > 0) {
+    const agentMap = mergedAgentMap;
     const modelResolver = new ModelResolver(config.auth.providers ?? {});
     subAgentRunner = new SubAgentRunner(
       agentMap,
@@ -179,11 +212,8 @@ export async function bootstrap(
       logger,
     );
     logger.info({ subagents: [...agentMap.keys()] }, 'bootstrap: loaded sub-agents');
-  } else if (loadedSubAgentsResult.isErr()) {
-    logger.warn(
-      { error: loadedSubAgentsResult.error.message },
-      'bootstrap: failed to load sub-agents, continuing without them',
-    );
+  } else {
+    logger.info('bootstrap: no sub-agents found, continuing without them');
   }
 
   // 9. Session tracker

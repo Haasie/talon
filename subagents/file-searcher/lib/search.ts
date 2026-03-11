@@ -9,13 +9,14 @@ export interface SearchMatch {
 }
 
 const DEFAULT_EXTENSIONS = ['.md', '.txt', '.ts', '.js'];
-const MAX_FILE_SIZE = 1_048_576; // 1 MB
+const DEFAULT_MAX_FILE_SIZE = 1_048_576; // 1 MB
 const NULL_BYTE_CHECK_SIZE = 512;
 
 interface SearchOptions {
   extensions?: string[];
   maxResults?: number;
   contextLines?: number;
+  maxFileSize?: number;
 }
 
 /**
@@ -30,6 +31,7 @@ export async function searchFiles(
   const extensions = options?.extensions ?? DEFAULT_EXTENSIONS;
   const maxResults = options?.maxResults ?? 50;
   const contextLines = options?.contextLines ?? 2;
+  const maxFileSize = options?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
   const matches: SearchMatch[] = [];
 
   const pattern = new RegExp(escapeRegExp(query), 'i');
@@ -49,7 +51,7 @@ export async function searchFiles(
       if (matches.length >= maxResults) break;
 
       try {
-        const content = await readFileSafe(filePath);
+        const content = await readFileSafe(filePath, maxFileSize);
         if (content === null) continue;
 
         const lines = content.split('\n');
@@ -104,11 +106,11 @@ async function listFiles(dir: string, extensions: string[]): Promise<string[]> {
  * Read a file safely: skip if too large or if it appears to be binary.
  * Returns null if the file should be skipped.
  */
-async function readFileSafe(filePath: string): Promise<string | null> {
+async function readFileSafe(filePath: string, maxFileSize: number = DEFAULT_MAX_FILE_SIZE): Promise<string | null> {
   try {
     // Check size before reading to avoid loading huge files into memory
     const st = await stat(filePath);
-    if (st.size > MAX_FILE_SIZE) return null;
+    if (st.size > maxFileSize) return null;
 
     const buf = await readFile(filePath);
 

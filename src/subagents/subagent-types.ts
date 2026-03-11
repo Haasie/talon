@@ -114,6 +114,8 @@ export interface SubAgentContext {
   systemPrompt: string;
   /** Resolved AI SDK model instance ready for generation. */
   model: LanguageModel;
+  /** Maximum output tokens per generation, from the manifest's model.maxTokens. */
+  maxOutputTokens: number;
   /** Injected repository and infrastructure services. */
   services: SubAgentServices;
 }

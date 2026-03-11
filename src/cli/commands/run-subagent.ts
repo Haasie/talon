@@ -49,6 +49,10 @@ export async function runSubAgent(options: RunSubAgentOptions): Promise<SubAgent
     throw new Error(`Invalid JSON input: ${inputStr}`);
   }
 
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('Invalid JSON input: must be a JSON object');
+  }
+
   // Load sub-agents.
   const logger = makeStderrLogger();
   const loader = new SubAgentLoader(logger);
@@ -78,6 +82,7 @@ export async function runSubAgent(options: RunSubAgentOptions): Promise<SubAgent
       personaId: 'cli-test',
       systemPrompt,
       model: modelResult.value,
+      maxOutputTokens: agent.manifest.model.maxTokens,
       services: {
         memory: {} as any,
         schedules: {} as any,
