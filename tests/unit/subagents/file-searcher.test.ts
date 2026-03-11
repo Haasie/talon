@@ -69,6 +69,7 @@ const makeCtx = () => ({
   systemPrompt: 'You are a search ranking assistant.',
   model: {} as any,
   maxOutputTokens: 4096,
+  rootPaths: ['/home/talon/cf-notes', '/home/talon/personal-notes'],
   services: {
     memory: {} as any,
     schedules: {} as any,

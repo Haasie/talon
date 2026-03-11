@@ -6,17 +6,12 @@ import { SubAgentError } from '../../src/core/errors/index.js';
 import type { Result } from 'neverthrow';
 import { searchFiles } from './lib/search.js';
 
-const DEFAULT_ROOT_PATHS = [
-  '/home/talon/cf-notes',
-  '/home/talon/personal-notes',
-];
-
 const DEFAULT_MAX_RESULTS_WITHOUT_LLM = 20;
 const MAX_RAW_RESULTS = 50;
 
 /**
  * Validate that all caller-supplied rootPaths are sub-paths of at least one
- * allowed default root. This prevents callers from reading arbitrary
+ * allowed root from the manifest. This prevents callers from reading arbitrary
  * filesystem locations via input overrides.
  */
 function validateRootPaths(requested: string[], allowed: string[]): boolean {
@@ -39,15 +34,21 @@ export async function run(
     return err(new SubAgentError('Cannot search with empty query'));
   }
 
+  // Allowed roots come from the manifest (ctx.rootPaths), not hardcoded defaults.
+  const allowedRoots = ctx.rootPaths;
+  if (allowedRoots.length === 0) {
+    return err(new SubAgentError('No rootPaths configured in sub-agent manifest'));
+  }
+
   const maxResultsWithoutLlm = typeof input.maxResultsWithoutLlm === 'number' && input.maxResultsWithoutLlm > 0
     ? input.maxResultsWithoutLlm
     : DEFAULT_MAX_RESULTS_WITHOUT_LLM;
 
-  let rootPaths = DEFAULT_ROOT_PATHS;
+  let rootPaths = allowedRoots;
 
   if (Array.isArray(input.rootPaths) && input.rootPaths.length > 0) {
     const candidates = input.rootPaths.filter((p): p is string => typeof p === 'string');
-    if (candidates.length === 0 || !validateRootPaths(candidates, DEFAULT_ROOT_PATHS)) {
+    if (candidates.length === 0 || !validateRootPaths(candidates, allowedRoots)) {
       return err(new SubAgentError(
         'Requested rootPaths are outside the allowed search scope',
       ));

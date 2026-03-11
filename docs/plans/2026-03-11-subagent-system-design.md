@@ -138,8 +138,6 @@ export interface SubAgentInput {
 }
 
 export interface SubAgentResult {
-  /** Whether the sub-agent succeeded */
-  success: boolean;
   /** Human-readable summary of what happened */
   summary: string;
   /** Structured output (task-specific) */
@@ -152,11 +150,11 @@ export interface SubAgentResult {
   };
 }
 
-/** The function every sub-agent must export */
+/** The function every sub-agent must export (returns Result for typed error handling) */
 export type SubAgentRunFn = (
   ctx: SubAgentContext,
   input: SubAgentInput,
-) => Promise<SubAgentResult>;
+) => Promise<Result<SubAgentResult, SubAgentError>>;
 ```
 
 ## Auth Configuration

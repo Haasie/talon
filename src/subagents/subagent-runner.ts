@@ -127,6 +127,7 @@ export class SubAgentRunner {
         systemPrompt,
         model,
         maxOutputTokens: agent.manifest.model.maxTokens,
+        rootPaths: agent.manifest.rootPaths,
         services: { ...this.services, logger: childLogger },
       };
 

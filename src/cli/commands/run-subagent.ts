@@ -83,6 +83,7 @@ export async function runSubAgent(options: RunSubAgentOptions): Promise<SubAgent
       systemPrompt,
       model: modelResult.value,
       maxOutputTokens: agent.manifest.model.maxTokens,
+      rootPaths: agent.manifest.rootPaths,
       services: {
         memory: {} as any,
         schedules: {} as any,

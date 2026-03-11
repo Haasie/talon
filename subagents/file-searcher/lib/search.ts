@@ -91,7 +91,7 @@ export async function searchFiles(
     maxResults: options?.maxResults ?? 50,
     contextLines: options?.contextLines ?? 2,
     extensions: options?.extensions ?? DEFAULT_EXTENSIONS,
-    maxFileSize: options?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
+    maxFileSize: options?.maxFileSize,
   };
 
   const cascade: SearchBackend[] =

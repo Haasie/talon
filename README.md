@@ -541,9 +541,9 @@ subagents/<agent_name>/
 | Sub-Agent | Purpose | Required Capabilities |
 |-----------|---------|----------------------|
 | `session-summarizer` | Compresses conversation transcripts into structured summaries | none |
-| `memory-groomer` | Consolidates duplicates and prunes stale memory items | `memory.read:thread`, `memory.write:thread` |
-| `file-searcher` | Searches files with keyword matching and optional LLM ranking | none |
-| `memory-retriever` | Finds relevant memories via keyword filter and LLM reranking | `memory.read:thread` |
+| `memory-groomer` | Consolidates duplicates and prunes stale memory items | `memory.access:*` |
+| `file-searcher` | Searches files with keyword matching and optional LLM ranking | `fs.read:*` |
+| `memory-retriever` | Finds relevant memories via keyword filter and LLM reranking | `memory.access:*` |
 
 ### Provider Support
 

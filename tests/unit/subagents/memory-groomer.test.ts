@@ -29,6 +29,7 @@ const makeCtx = (memoryOverrides: Record<string, unknown> = {}) => ({
   systemPrompt: 'You are a memory grooming agent.',
   model: {} as any,
   maxOutputTokens: 8192,
+  rootPaths: [],
   services: {
     memory: {
       findByThread: vi.fn().mockReturnValue(ok([])),

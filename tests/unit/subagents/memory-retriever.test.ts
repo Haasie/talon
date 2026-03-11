@@ -31,6 +31,7 @@ const makeCtx = (memories: ReturnType<typeof makeMemoryItem>[] = []) => ({
   systemPrompt: 'You are a memory relevance ranking agent.',
   model: {} as any,
   maxOutputTokens: 4096,
+  rootPaths: [],
   services: {
     memory: {
       findByThread: vi.fn().mockReturnValue({ isErr: () => false, isOk: () => true, value: memories }),

@@ -19,6 +19,7 @@ const makeCtx = () => ({
   systemPrompt: 'You are a session summarizer.',
   model: {} as any,
   maxOutputTokens: 8192,
+  rootPaths: [],
   services: {
     memory: {} as any,
     schedules: {} as any,

@@ -8,7 +8,7 @@ model:
   maxTokens: 4096
 
 requiredCapabilities:
-  - fs.read
+  - fs.read:*
 
 rootPaths:
   - /home/talon/cf-notes
