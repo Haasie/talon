@@ -117,9 +117,15 @@ export const SchedulerConfigSchema = z.object({
 // Auth
 // ---------------------------------------------------------------------------
 
+export const ProviderAuthSchema = z.object({
+  apiKey: z.string().optional(),
+  baseURL: z.string().optional(),
+});
+
 export const AuthConfigSchema = z.object({
   mode: z.enum(['subscription', 'api_key']).default('subscription'),
   apiKey: z.string().optional(),
+  providers: z.record(z.string(), ProviderAuthSchema).default({}),
 });
 
 // ---------------------------------------------------------------------------
