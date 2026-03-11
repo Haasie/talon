@@ -1,6 +1,6 @@
 # Talon — Project Board
 
-> Last updated: 2026-03-10
+> Last updated: 2026-03-11
 
 ## ✅ Done
 
@@ -42,6 +42,8 @@
 | BUG-008 | Session resume across daemon restarts | PR #7 |
 | TASK-038 | talonctl CLI cleanup (20/20 subtasks, 213 tests) | PR #8 |
 | FEAT-008 | Personality folder for persona enhancement | PR #9 |
+| FEAT-009 | Sub-agent system (loader, runner, 4 built-in agents) | PR #12 |
+| FIX-017 | Remove Zod .min() constraints incompatible with Haiku | PR #12 |
 
 ---
 
@@ -56,6 +58,7 @@ _Nothing currently in progress._
 | ID | Title | Description |
 |----|-------|-------------|
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
+| TASK-065 | Rolling context window | Daemon-side context rotation that keeps token usage below 100K without jarring session resets. Monitor `cacheReadTokens`, proactively summarize via session-summarizer sub-agent, store summary as memory, clear session, inject summary + recent messages into fresh session. Plan written: `docs/superpowers/plans/2026-03-11-rolling-context-window.md`. |
 
 ---
 
@@ -69,6 +72,7 @@ _Nothing currently in progress._
 | TASK-047 | Cost tracking & limits | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command. |
 | TASK-063 | Memory-retriever vector search | Reimplement the `memory-retriever` sub-agent to use embeddings and a vector store (e.g. `sqlite-vec`, Chroma, or Qdrant) instead of keyword pre-filter + LLM reranking. Current approach reads all memories and does string matching, which won't scale. Needs: embedding generation on memory write, vector similarity search on retrieval, fallback to current keyword path if vector store is unavailable. |
 | TASK-048 | Thread memory | Use the thread workspace's `memory/` directory for persistent agent memory across sessions. Explore Agent SDK file persistence. |
+| TASK-064 | Semantic search over messages | Add embedding-based semantic search across the `messages` table so the agent can recall past conversations by meaning, not just keywords. Big ticket: (1) choose an embedding model (local like `nomic-embed-text` or API-based), (2) generate embeddings on message ingest, (3) extend SQLite with `sqlite-vec` or stand up a separate vector DB (Qdrant, Chroma), (4) build a search interface (sub-agent or host tool) that returns relevant past messages with thread context, (5) backfill existing messages. This gives the agent long-term conversational memory — it can reference what was discussed days/weeks ago, recognize recurring topics, and build genuine continuity across interactions. Related: TASK-063 (memory-retriever vector search) could share the embedding infrastructure. |
 
 ---
 
