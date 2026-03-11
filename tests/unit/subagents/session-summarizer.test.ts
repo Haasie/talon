@@ -11,7 +11,7 @@ vi.mock('ai', () => ({
   }),
 }));
 
-import { run } from '../../../subagents/session-summarizer/index.js';
+import { run } from '../../../src/subagents/default/session-summarizer/index.js';
 
 const makeCtx = () => ({
   threadId: 'thread-1',

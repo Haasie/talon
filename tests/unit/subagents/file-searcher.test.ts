@@ -60,8 +60,8 @@ vi.mock('ai', () => ({
   }),
 }));
 
-import { searchFiles, detectBackend, resetBackendCache, setBackendForTest } from '../../../subagents/file-searcher/lib/search.js';
-import { run } from '../../../subagents/file-searcher/index.js';
+import { searchFiles, detectBackend, resetBackendCache, setBackendForTest } from '../../../src/subagents/default/file-searcher/lib/search.js';
+import { run } from '../../../src/subagents/default/file-searcher/index.js';
 
 const makeCtx = () => ({
   threadId: 'thread-1',
@@ -348,7 +348,7 @@ describe('searchFiles (rg backend, real fs)', () => {
     // Search for a known string in the project's own test files
     const projectRoot = join(import.meta.dirname, '../../..');
     const results = await searchFiles(
-      [join(projectRoot, 'subagents/file-searcher')],
+      [join(projectRoot, 'src/subagents/default/file-searcher')],
       'DEFAULT_EXTENSIONS',
       { extensions: ['.ts'], maxResults: 5 },
     );

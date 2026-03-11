@@ -1,9 +1,9 @@
 import { generateText } from 'ai';
 import { ok, err } from 'neverthrow';
 import type { Result } from 'neverthrow';
-import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../src/subagents/subagent-types.js';
-import { SubAgentError } from '../../src/core/errors/index.js';
-import type { MemoryItemRow } from '../../src/core/database/repositories/memory-repository.js';
+import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../subagent-types.js';
+import { SubAgentError } from '../../../core/errors/index.js';
+import type { MemoryItemRow } from '../../../core/database/repositories/memory-repository.js';
 
 /** Shape of a single ranked result from the model. */
 interface RankedItem {

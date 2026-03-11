@@ -529,7 +529,7 @@ Sub-agents are lightweight, single-purpose AI agents that handle mechanical LLM 
 ### Sub-Agent Structure
 
 ```
-subagents/<agent_name>/
+src/subagents/default/<agent_name>/    # built-in agents (compiled with daemon)
   subagent.yaml          # manifest: model, capabilities, timeout
   index.ts               # entry point: run(ctx, input) -> Result<SubAgentResult>
   prompts/*.md           # system prompt fragments (concatenated in order)
@@ -583,7 +583,7 @@ personas:
 
 ### Creating a Custom Sub-Agent
 
-1. Create a directory under `subagents/` with a `subagent.yaml` manifest
+1. Create a directory under `subagents/` (in cwd or dataDir) with a `subagent.yaml` manifest
 2. Write an `index.ts` with an exported `run(ctx, input)` function returning `Result<SubAgentResult, SubAgentError>`
 3. Add prompt fragments in `prompts/` (numbered for ordering: `01-system.md`, `02-examples.md`)
 4. Test with `talonctl run-subagent --name your-agent --input '{}'`
@@ -1121,6 +1121,11 @@ talon/
       model-resolver.ts          # Vercel AI SDK provider factory
       subagent-runner.ts         # Execution engine with timeout
       index.ts                   # Barrel export
+      default/                   # Built-in sub-agents
+        session-summarizer/      # Transcript compression
+        memory-groomer/          # Memory consolidation
+        memory-retriever/        # Memory search + LLM reranking
+        file-searcher/           # File search (rg/grep/node cascade)
     tools/
       host-tools/                # Host-side tool handlers
         channel-send.ts          # Send via channel connector

@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { ok, err } from 'neverthrow';
 import type { Result } from 'neverthrow';
-import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../src/subagents/subagent-types.js';
-import { SubAgentError } from '../../src/core/errors/index.js';
-import type { MemoryItemRow, InsertMemoryItemInput } from '../../src/core/database/repositories/memory-repository.js';
+import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../subagent-types.js';
+import { SubAgentError } from '../../../core/errors/index.js';
+import type { MemoryItemRow, InsertMemoryItemInput } from '../../../core/database/repositories/memory-repository.js';
 
 const GroomActionSchema = z.discriminatedUnion('type', [
   z.object({

@@ -145,13 +145,13 @@ Currently active skills:
 - **web-research** — Brave Search MCP for web search
 - **picnic** — Picnic grocery shopping MCP
 
-### 10. Sub-Agent System (`src/subagents/`, `subagents/`)
+### 10. Sub-Agent System (`src/subagents/`)
 
 Sub-agents are lightweight, single-purpose AI agents that handle mechanical LLM tasks (summarization, memory grooming, file search) using cheap models instead of the main Claude agent.
 
 **How it works:**
 
-- Each sub-agent is a folder under `subagents/` containing a `subagent.yaml` manifest, `prompts/*.md` fragments, and an `index.ts` entry point
+- Built-in sub-agents live under `src/subagents/default/`, each containing a `subagent.yaml` manifest, `prompts/*.md` fragments, and an `index.ts` entry point. Custom sub-agents can be placed in `cwd()/subagents/` or `dataDir/subagents/`
 - The **SubAgentLoader** discovers and validates them at daemon startup
 - The **ModelResolver** maps `{provider, name}` to a Vercel AI SDK `LanguageModel` (supports Anthropic, OpenAI, Google, Ollama)
 - The **SubAgentRunner** validates capability grants, resolves the model, assembles the system prompt, and executes with a timeout
@@ -213,7 +213,7 @@ SQLite with WAL mode. 12 tables, repository pattern:
 ├─ dist/                   # Compiled JavaScript (built from src/)
 ├─ personas/assistant/     # My system prompt lives here
 ├─ skills/                 # web-research, picnic, etc.
-├─ subagents/              # Built-in sub-agents (session-summarizer, etc.)
+├─ src/subagents/default/  # Built-in sub-agents (session-summarizer, etc.)
 ├─ config/                 # Example configs
 ├─ deploy/                 # systemd units, Dockerfiles
 ├─ specs/                  # Functional specifications

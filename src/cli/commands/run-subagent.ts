@@ -143,11 +143,15 @@ export async function runSubAgentCommand(options: {
 
   const config = configResult.value;
 
-  // When no explicit dir is given, search both cwd/subagents and dataDir/subagents
-  // (same dual-source loading as daemon-bootstrap).
+  // When no explicit dir is given, search built-in, cwd/subagents, and dataDir/subagents
+  // (same three-source loading as daemon-bootstrap).
   const subagentsDirs = options.subagentsDir
     ? [options.subagentsDir]
-    : [join(process.cwd(), 'subagents'), join(config.dataDir, 'subagents')];
+    : [
+        join(import.meta.dirname, '../../subagents/default'),
+        join(process.cwd(), 'subagents'),
+        join(config.dataDir, 'subagents'),
+      ];
 
   try {
     // Try each directory in order until we find the requested sub-agent.

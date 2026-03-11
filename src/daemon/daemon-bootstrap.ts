@@ -154,17 +154,26 @@ export async function bootstrap(
   }
 
   // 8b. Load sub-agents (optional — if the directory does not exist, skip)
-  //     Load from both dataDir/subagents and cwd()/subagents, merging results.
-  //     dataDir agents take precedence (override) if names collide.
+  //     Load from three sources in priority order (later overrides earlier):
+  //       1. Built-in default sub-agents (compiled alongside daemon code)
+  //       2. cwd()/subagents (project-level custom agents)
+  //       3. dataDir/subagents (deployment-level custom agents)
   const subAgentLoader = new SubAgentLoader(logger);
+  const builtinSubAgentsDir = join(import.meta.dirname, '../subagents/default');
   const cwdSubAgentsDir = join(process.cwd(), 'subagents');
   const dataDirSubAgentsDir = join(dataDir, 'subagents');
 
+  const builtinSubAgentsResult = await subAgentLoader.loadAll(builtinSubAgentsDir);
   const cwdSubAgentsResult = await subAgentLoader.loadAll(cwdSubAgentsDir);
   const dataDirSubAgentsResult = await subAgentLoader.loadAll(dataDirSubAgentsDir);
 
-  // Merge: start with cwd agents, then override with dataDir agents
+  // Merge: built-in first, then cwd, then dataDir (later overrides earlier)
   const mergedAgentMap = new Map<string, import('../subagents/subagent-types.js').LoadedSubAgent>();
+  if (builtinSubAgentsResult.isOk()) {
+    for (const a of builtinSubAgentsResult.value) {
+      mergedAgentMap.set(a.manifest.name, a);
+    }
+  }
   if (cwdSubAgentsResult.isOk()) {
     for (const a of cwdSubAgentsResult.value) {
       mergedAgentMap.set(a.manifest.name, a);
@@ -179,6 +188,12 @@ export async function bootstrap(
   let subAgentRunner: SubAgentRunner | null = null;
 
   // Log any partial load errors regardless of whether agents were found.
+  if (builtinSubAgentsResult.isErr()) {
+    logger.warn(
+      { error: builtinSubAgentsResult.error.message, dir: builtinSubAgentsDir },
+      'bootstrap: failed to load built-in sub-agents',
+    );
+  }
   if (cwdSubAgentsResult.isErr()) {
     logger.warn(
       { error: cwdSubAgentsResult.error.message, dir: cwdSubAgentsDir },

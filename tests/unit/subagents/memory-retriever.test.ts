@@ -12,7 +12,7 @@ vi.mock('ai', () => ({
   }),
 }));
 
-import { run } from '../../../subagents/memory-retriever/index.js';
+import { run } from '../../../src/subagents/default/memory-retriever/index.js';
 
 const makeMemoryItem = (id: string, content: string, type = 'fact' as const) => ({
   id,

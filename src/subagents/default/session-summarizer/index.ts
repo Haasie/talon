@@ -1,8 +1,8 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { ok, err } from 'neverthrow';
-import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../src/subagents/subagent-types.js';
-import { SubAgentError } from '../../src/core/errors/index.js';
+import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../subagent-types.js';
+import { SubAgentError } from '../../../core/errors/index.js';
 import type { Result } from 'neverthrow';
 
 const SummarySchema = z.object({

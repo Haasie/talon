@@ -9,7 +9,7 @@ vi.mock('ai', () => ({
   generateObject: (...args: unknown[]) => generateObjectMock(...args),
 }));
 
-import { run } from '../../../subagents/memory-groomer/index.js';
+import { run } from '../../../src/subagents/default/memory-groomer/index.js';
 
 const makeMemoryItem = (overrides: Partial<MemoryItemRow> = {}): MemoryItemRow => ({
   id: 'mem-1',
