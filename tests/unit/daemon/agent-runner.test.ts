@@ -125,7 +125,7 @@ function makeMockContext(): DaemonContext {
       getSessionId: vi.fn().mockReturnValue(undefined),
       setSessionId: vi.fn(),
       wasRotated: vi.fn().mockReturnValue(false),
-      clearRotated: vi.fn(),
+      rotateSession: vi.fn(),
     } as any,
     contextRoller: null,
     contextAssembler: {

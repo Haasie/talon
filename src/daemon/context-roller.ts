@@ -31,16 +31,14 @@ export type SummarizerRunFn = (
 ) => Promise<Result<SubAgentResult, SubAgentError>>;
 
 export interface ContextRollerDeps {
-  messageRepo: Pick<MessageRepository, 'findByThread'>;
+  messageRepo: Pick<MessageRepository, 'findLatestByThread'>;
   memoryRepo: Pick<MemoryRepository, 'insert'>;
-  sessionTracker: Pick<SessionTracker, 'clearSession'>;
+  sessionTracker: Pick<SessionTracker, 'rotateSession'>;
   /** The session-summarizer's run function, called directly (no runner validation). */
   summarizerRun: SummarizerRunFn;
   logger: pino.Logger;
   /** Token count threshold for triggering rotation. Default: 80_000. */
   thresholdTokens: number;
-  /** Number of recent messages to keep as context breadcrumb. Default: 10. */
-  recentMessageCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,8 +72,8 @@ export class ContextRoller {
       'context-roller: threshold exceeded, rotating session',
     );
 
-    // 1. Reconstruct transcript from messages.
-    const messagesResult = this.deps.messageRepo.findByThread(threadId, 10_000, 0);
+    // 1. Reconstruct transcript from the most recent messages.
+    const messagesResult = this.deps.messageRepo.findLatestByThread(threadId, 10_000);
     if (messagesResult.isErr()) {
       this.deps.logger.error(
         { threadId, error: messagesResult.error.message },
@@ -165,7 +163,7 @@ export class ContextRoller {
     }
 
     // 4. Clear session — next run starts fresh.
-    this.deps.sessionTracker.clearSession(threadId);
+    this.deps.sessionTracker.rotateSession(threadId);
 
     this.deps.logger.info(
       { threadId, messageCount: messages.length, summaryLength: summaryContent.length },

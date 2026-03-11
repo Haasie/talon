@@ -355,7 +355,6 @@ export class AgentRunner {
       // Store session ID for future conversation resumption (memory + DB).
       if (resultSessionId) {
         this.ctx.sessionTracker.setSessionId(item.threadId, resultSessionId);
-        this.ctx.sessionTracker.clearRotated(item.threadId);
         this.ctx.repos.run.updateSessionId(runId, resultSessionId);
       }
 

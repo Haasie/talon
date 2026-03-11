@@ -262,7 +262,6 @@ export async function bootstrap(
         summarizerRun: boundRun,
         logger,
         thresholdTokens: 80_000,
-        recentMessageCount: 10,
       });
 
       logger.info('bootstrap: context roller initialized (threshold: 80K tokens)');

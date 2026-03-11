@@ -91,9 +91,29 @@ export class SessionTracker {
    * dispatch creates a fresh session rather than attempting to resume a
    * session whose process no longer exists.
    *
+   * Does NOT set the rotation flag — use `rotateSession()` for context
+   * roller rotations that should block DB session restoration.
+   *
    * @param threadId - The thread whose session should be cleared.
    */
   clearSession(threadId: string): void {
+    this.sessions.delete(threadId);
+  }
+
+  /**
+   * Clear the session AND mark the thread as rotated.
+   *
+   * Called by ContextRoller after storing a summary. The rotation flag
+   * prevents the DB fallback from restoring the stale session ID on the
+   * next run. The flag is consumed (deleted) on read via `wasRotated()`.
+   *
+   * If the daemon restarts before a new session is established, the flag
+   * is lost — but `cacheReadTokens` will still be high on the resumed
+   * session, triggering rotation again.
+   *
+   * @param threadId - The thread whose session was rotated.
+   */
+  rotateSession(threadId: string): void {
     this.sessions.delete(threadId);
     this.rotated.add(threadId);
   }
@@ -101,17 +121,13 @@ export class SessionTracker {
   /**
    * Check if a thread's session was explicitly rotated (cleared by ContextRoller).
    * Prevents the DB fallback from restoring a stale session ID.
-   * The flag is consumed (removed) on read so it only blocks the next resolve.
+   *
+   * The flag is consumed (deleted) on read so it only blocks the next resolve.
    */
   wasRotated(threadId: string): boolean {
-    return this.rotated.has(threadId);
-  }
-
-  /**
-   * Clear the rotation flag for a thread after a fresh session is established.
-   */
-  clearRotated(threadId: string): void {
-    this.rotated.delete(threadId);
+    const was = this.rotated.has(threadId);
+    if (was) this.rotated.delete(threadId);
+    return was;
   }
 
   /**
@@ -121,6 +137,7 @@ export class SessionTracker {
    */
   clearAll(): void {
     this.sessions.clear();
+    this.rotated.clear();
   }
 
   /**

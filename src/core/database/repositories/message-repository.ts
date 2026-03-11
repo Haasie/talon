@@ -59,9 +59,9 @@ export class MessageRepository extends BaseRepository {
       SELECT * FROM (
         SELECT * FROM messages
         WHERE thread_id = ?
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ?
-      ) sub ORDER BY created_at ASC
+      ) sub ORDER BY created_at ASC, id ASC
     `);
 
     this.findByIdempotencyKeyStmt = db.prepare(`

@@ -7,13 +7,13 @@ const mockSummarizerRun = vi.fn();
 
 const makeDeps = (overrides: Partial<ContextRollerDeps> = {}): ContextRollerDeps => ({
   messageRepo: {
-    findByThread: vi.fn().mockReturnValue(ok([])),
+    findLatestByThread: vi.fn().mockReturnValue(ok([])),
   } as any,
   memoryRepo: {
     insert: vi.fn().mockReturnValue(ok({})),
   } as any,
   sessionTracker: {
-    clearSession: vi.fn(),
+    rotateSession: vi.fn(),
   } as any,
   summarizerRun: mockSummarizerRun,
   logger: {
@@ -21,7 +21,6 @@ const makeDeps = (overrides: Partial<ContextRollerDeps> = {}): ContextRollerDeps
     child: vi.fn().mockReturnThis(),
   } as any,
   thresholdTokens: 80_000,
-  recentMessageCount: 10,
   ...overrides,
 });
 
@@ -36,7 +35,7 @@ describe('ContextRoller', () => {
 
     await roller.checkAndRotate('thread-1', 'persona-1', 50_000);
 
-    expect(deps.messageRepo.findByThread).not.toHaveBeenCalled();
+    expect(deps.messageRepo.findLatestByThread).not.toHaveBeenCalled();
     expect(mockSummarizerRun).not.toHaveBeenCalled();
   });
 
@@ -57,17 +56,17 @@ describe('ContextRoller', () => {
 
     const deps = makeDeps({
       messageRepo: {
-        findByThread: vi.fn().mockReturnValue(ok(messages)),
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
       } as any,
     });
     const roller = new ContextRoller(deps);
 
     await roller.checkAndRotate('thread-1', 'persona-1', 90_000);
 
-    expect(deps.messageRepo.findByThread).toHaveBeenCalledWith('thread-1', 10000, 0);
+    expect(deps.messageRepo.findLatestByThread).toHaveBeenCalledWith('thread-1', 10000);
     expect(mockSummarizerRun).toHaveBeenCalled();
     expect(deps.memoryRepo.insert).toHaveBeenCalled();
-    expect(deps.sessionTracker.clearSession).toHaveBeenCalledWith('thread-1');
+    expect(deps.sessionTracker.rotateSession).toHaveBeenCalledWith('thread-1');
   });
 
   it('stores summary as memory item with type summary', async () => {
@@ -85,7 +84,7 @@ describe('ContextRoller', () => {
 
     const deps = makeDeps({
       messageRepo: {
-        findByThread: vi.fn().mockReturnValue(ok(messages)),
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
       } as any,
     });
     const roller = new ContextRoller(deps);
@@ -113,14 +112,14 @@ describe('ContextRoller', () => {
 
     const deps = makeDeps({
       messageRepo: {
-        findByThread: vi.fn().mockReturnValue(ok(messages)),
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
       } as any,
     });
     const roller = new ContextRoller(deps);
 
     await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
 
-    expect(deps.sessionTracker.clearSession).not.toHaveBeenCalled();
+    expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
   });
 
   it('handles empty message history gracefully', async () => {
@@ -130,7 +129,7 @@ describe('ContextRoller', () => {
     await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
 
     expect(mockSummarizerRun).not.toHaveBeenCalled();
-    expect(deps.sessionTracker.clearSession).not.toHaveBeenCalled();
+    expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
   });
 
   it('does not clear session if memory insert fails', async () => {
@@ -144,7 +143,7 @@ describe('ContextRoller', () => {
 
     const deps = makeDeps({
       messageRepo: {
-        findByThread: vi.fn().mockReturnValue(ok(messages)),
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
       } as any,
       memoryRepo: {
         insert: vi.fn().mockReturnValue(err(new Error('DB full'))),
@@ -154,7 +153,7 @@ describe('ContextRoller', () => {
 
     await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
 
-    expect(deps.sessionTracker.clearSession).not.toHaveBeenCalled();
+    expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
   });
 
   it('handles non-JSON message content gracefully', async () => {
@@ -168,7 +167,7 @@ describe('ContextRoller', () => {
 
     const deps = makeDeps({
       messageRepo: {
-        findByThread: vi.fn().mockReturnValue(ok(messages)),
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
       } as any,
     });
     const roller = new ContextRoller(deps);
