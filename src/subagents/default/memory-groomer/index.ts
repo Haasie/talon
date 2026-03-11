@@ -7,21 +7,23 @@ import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../subag
 import { SubAgentError } from '../../../core/errors/index.js';
 import type { MemoryItemRow, InsertMemoryItemInput } from '../../../core/database/repositories/memory-repository.js';
 
+// Note: no .min() on arrays — Haiku's structured output doesn't support minItems.
+// Empty/insufficient arrays are handled at runtime (validIds check + consolidate guard).
 const GroomActionSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('prune'),
-    ids: z.array(z.string().min(1)).min(1),
+    ids: z.array(z.string()),
     reason: z.string(),
   }),
   z.object({
     type: z.literal('consolidate'),
-    ids: z.array(z.string().min(1)).min(2),
+    ids: z.array(z.string()),
     reason: z.string(),
-    mergedContent: z.string().min(1),
+    mergedContent: z.string(),
   }),
   z.object({
     type: z.literal('keep'),
-    ids: z.array(z.string().min(1)).min(1),
+    ids: z.array(z.string()),
     reason: z.string(),
   }),
 ]);
