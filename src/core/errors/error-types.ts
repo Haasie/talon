@@ -113,3 +113,8 @@ export class CollaborationError extends TalonError {
 export class SkillError extends TalonError {
   readonly code = 'SKILL_ERROR' as const;
 }
+
+/** Sub-agent loading, execution, or timeout error. */
+export class SubAgentError extends TalonError {
+  readonly code = 'SUBAGENT_ERROR' as const;
+}

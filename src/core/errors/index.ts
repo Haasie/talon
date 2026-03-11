@@ -25,6 +25,7 @@ export {
   PipelineError,
   CollaborationError,
   SkillError,
+  SubAgentError,
 } from './error-types.js';
 
 export { ErrorCodes } from './error-codes.js';
