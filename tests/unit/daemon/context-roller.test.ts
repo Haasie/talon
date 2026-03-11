@@ -175,7 +175,8 @@ describe('ContextRoller', () => {
     await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
 
     // Should have called summarizer with the plain text content
-    const callArgs = mockSummarizerRun.mock.calls[0][1];
+    // New signature: summarizerRun(threadId, personaId, input)
+    const callArgs = mockSummarizerRun.mock.calls[0][2];
     expect(callArgs.transcript).toContain('User: plain text message');
   });
 });

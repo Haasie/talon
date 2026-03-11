@@ -171,7 +171,7 @@ describe('Rolling context window integration', () => {
 
     // 5. Verify: summarizer was called with reconstructed transcript
     expect(mockSummarizerRun).toHaveBeenCalledOnce();
-    const summarizerInput = mockSummarizerRun.mock.calls[0][1];
+    const summarizerInput = mockSummarizerRun.mock.calls[0][2];
     expect(summarizerInput.transcript).toContain('User: Can you help me deploy');
     expect(summarizerInput.transcript).toContain('Assistant: Production deployment complete');
 

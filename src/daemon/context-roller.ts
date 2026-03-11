@@ -18,23 +18,41 @@ import type pino from 'pino';
 import type { MessageRepository, MessageRow } from '../core/database/repositories/message-repository.js';
 import type { MemoryRepository } from '../core/database/repositories/memory-repository.js';
 import type { SessionTracker } from '../sandbox/session-tracker.js';
-import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../subagents/subagent-types.js';
+import type { SubAgentResult } from '../subagents/subagent-types.js';
 import type { SubAgentError } from '../core/errors/index.js';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum character budget for the transcript sent to the summarizer.
+ * ~100K chars ≈ ~25K tokens — well within most model context windows.
+ * We take the newest messages first, so recent context is always preserved.
+ */
+const MAX_TRANSCRIPT_CHARS = 100_000;
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Simplified summarizer function signature for the context roller.
+ *
+ * The caller (bootstrap) pre-binds the model, system prompt, and services
+ * so the roller only needs to provide threadId, personaId, and the transcript.
+ */
 export type SummarizerRunFn = (
-  ctx: SubAgentContext,
-  input: SubAgentInput,
+  threadId: string,
+  personaId: string,
+  input: { transcript: string },
 ) => Promise<Result<SubAgentResult, SubAgentError>>;
 
 export interface ContextRollerDeps {
   messageRepo: Pick<MessageRepository, 'findLatestByThread'>;
   memoryRepo: Pick<MemoryRepository, 'insert'>;
   sessionTracker: Pick<SessionTracker, 'rotateSession'>;
-  /** The session-summarizer's run function, called directly (no runner validation). */
+  /** Pre-bound summarizer function. Model, prompt, and services are captured at bootstrap. */
   summarizerRun: SummarizerRunFn;
   logger: pino.Logger;
   /** Token count threshold for triggering rotation. Default: 80_000. */
@@ -88,29 +106,12 @@ export class ContextRoller {
       return;
     }
 
-    const transcript = this.buildTranscript(messages);
+    const transcript = this.buildTranscript(messages, MAX_TRANSCRIPT_CHARS);
 
-    // 2. Call session-summarizer directly (bypass runner validation).
+    // 2. Call pre-bound summarizer (model, prompt, and services captured at bootstrap).
     const summaryResult = await this.deps.summarizerRun(
-      {
-        threadId,
-        personaId,
-        systemPrompt: 'You are a conversation summarizer. Extract key facts, open threads, and a concise summary.',
-        model: {} as any, // Model is resolved by the caller when wiring deps
-        maxOutputTokens: 4096,
-        rootPaths: [],
-        services: {
-          memory: this.deps.memoryRepo as any,
-          messages: this.deps.messageRepo as any,
-          logger: this.deps.logger,
-          schedules: {} as any,
-          personas: {} as any,
-          channels: {} as any,
-          threads: {} as any,
-          runs: {} as any,
-          queue: {} as any,
-        },
-      },
+      threadId,
+      personaId,
       { transcript },
     );
 
@@ -172,21 +173,35 @@ export class ContextRoller {
   }
 
   /**
-   * Reconstruct a human-readable transcript from stored messages.
+   * Reconstruct a human-readable transcript from stored messages,
+   * capped at `maxChars` characters. Takes the newest messages first
+   * so recent context is always preserved.
    */
-  private buildTranscript(messages: MessageRow[]): string {
-    return messages
-      .map((msg) => {
-        const role = msg.direction === 'inbound' ? 'User' : 'Assistant';
-        let body: string;
-        try {
-          const parsed = JSON.parse(msg.content);
-          body = typeof parsed.body === 'string' ? parsed.body : msg.content;
-        } catch {
-          body = msg.content;
-        }
-        return `${role}: ${body}`;
-      })
-      .join('\n');
+  private buildTranscript(messages: MessageRow[], maxChars: number): string {
+    // Build lines from newest to oldest, stop when budget is exhausted.
+    const lines: string[] = [];
+    let totalChars = 0;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      const role = msg.direction === 'inbound' ? 'User' : 'Assistant';
+      let body: string;
+      try {
+        const parsed = JSON.parse(msg.content);
+        body = typeof parsed.body === 'string' ? parsed.body : msg.content;
+      } catch {
+        body = msg.content;
+      }
+      const line = `${role}: ${body}`;
+
+      if (totalChars + line.length > maxChars && lines.length > 0) {
+        break;
+      }
+      lines.push(line);
+      totalChars += line.length + 1; // +1 for newline
+    }
+
+    // Reverse back to chronological order.
+    return lines.reverse().join('\n');
   }
 }

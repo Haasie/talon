@@ -252,14 +252,40 @@ export async function bootstrap(
     if (summarizerModelResult.isOk()) {
       const summarizerModel = summarizerModelResult.value;
       const summarizerPrompt = summarizerAgent.promptContents.join('\n\n');
-      const boundRun: typeof summarizerAgent.run = (ctx, input) =>
-        summarizerAgent.run({ ...ctx, model: summarizerModel, systemPrompt: summarizerPrompt }, input);
+
+      // Pre-bind model, prompt, and services so the roller's SummarizerRunFn
+      // only needs threadId, personaId, and the transcript input.
+      const boundSummarizer: import('./context-roller.js').SummarizerRunFn = (
+        threadId, personaId, input,
+      ) =>
+        summarizerAgent.run(
+          {
+            threadId,
+            personaId,
+            model: summarizerModel,
+            systemPrompt: summarizerPrompt,
+            maxOutputTokens: 4096,
+            rootPaths: [],
+            services: {
+              memory: repos.memory,
+              schedules: repos.schedule,
+              personas: repos.persona,
+              channels: repos.channel,
+              threads: repos.thread,
+              messages: repos.message,
+              runs: repos.run,
+              queue: repos.queue,
+              logger,
+            },
+          },
+          input,
+        );
 
       contextRoller = new ContextRoller({
         messageRepo: repos.message,
         memoryRepo: repos.memory,
         sessionTracker,
-        summarizerRun: boundRun,
+        summarizerRun: boundSummarizer,
         logger,
         thresholdTokens: config.context.thresholdTokens,
       });
