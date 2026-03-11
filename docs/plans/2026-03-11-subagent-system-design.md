@@ -113,10 +113,17 @@ export interface SubAgentContext {
   systemPrompt: string;
   /** Model instance (pre-configured by runner from subagent.yaml + auth) */
   model: LanguageModel;      // From Vercel AI SDK
-  /** Access to Talon internals */
+  /** Access to all Talon internals — gated by requiredCapabilities */
   services: {
     memory: MemoryManager;
-    db: Database.Database;
+    schedules: ScheduleRepository;
+    personas: PersonaRepository;
+    channels: ChannelRepository;
+    threads: ThreadRepository;
+    messages: MessageRepository;
+    runs: RunRepository;
+    queue: QueueRepository;
+    db: Database.Database;         // Escape hatch for direct queries
     logger: pino.Logger;
   };
 }
@@ -199,6 +206,28 @@ personas:
         - subagent.invoke:*
 ```
 
+## Service Access & Capability Gating
+
+Sub-agents receive a `services` object with access to **all** Talon repositories and managers. This gives sub-agents the same power as the daemon itself — they can read/write memory, create schedules, query messages, enqueue work, etc.
+
+Access is controlled at two levels:
+
+1. **Manifest declaration** — `requiredCapabilities` in `subagent.yaml` declares what the sub-agent needs. The runner refuses to load a sub-agent if the invoking persona doesn't grant those capabilities.
+
+2. **Persona assignment** — only sub-agents listed in a persona's `subagents` array can be invoked. A persona with `subagents: [memory-groomer]` cannot invoke `web-searcher`.
+
+The services object is **not filtered** at runtime — if a sub-agent has the capabilities, it gets the full repository. This is intentional: sub-agents are authored code (not user prompts), so we trust them to use only what they declared. The capability check prevents misconfiguration, not malicious code. Docker sandboxing (Phase 4) adds the hard isolation layer.
+
+Example capability mappings:
+
+| Capability | Services unlocked |
+|------------|-------------------|
+| `memory.read:thread` | `services.memory` (read methods) |
+| `memory.write:thread` | `services.memory` (write methods) |
+| `schedule.write:own` | `services.schedules` |
+| `channel.send:*` | `services.channels`, `services.messages` |
+| `db.query` | `services.db` (direct SQL) |
+
 ## Host Tool: `subagent_invoke`
 
 The main persona calls sub-agents via a new host tool:
@@ -278,13 +307,14 @@ class SubAgentRunner {
 
 ### 2. `memory-groomer`
 
-**Purpose**: Review recent memory entries, consolidate patterns, prune stale items.
+**Purpose**: Review recent memory entries, consolidate patterns, prune stale items. Can create schedules for recurring patterns it discovers.
 
 - **Model**: Haiku 4.5
 - **Input**: All memory items for a thread
-- **Output**: List of actions (consolidate, prune, create-schedule)
+- **Output**: List of actions taken (consolidate, prune, create-schedule)
 - **Trigger**: Scheduled (e.g., twice daily via `add-schedule`)
-- **Capabilities needed**: `memory.read:thread`, `memory.write:thread`
+- **Capabilities needed**: `memory.read:thread`, `memory.write:thread`, `schedule.write:own`
+- **Services used**: `memory` for read/write, `schedules` to create follow-up schedules for discovered patterns
 
 ### 3. `web-searcher`
 
