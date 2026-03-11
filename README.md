@@ -2,7 +2,7 @@
 
 **Resilient, secure, extensible autonomous agent daemon.**
 
-[![Tests](https://img.shields.io/badge/tests-2425%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-2128%20passing-brightgreen)](#testing)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-blue)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-blue)](https://www.typescriptlang.org)
@@ -411,6 +411,7 @@ talonctl chat --host 10.0.1.95 --port 7700 --client-id my-laptop
 ```
 
 The client provides:
+
 - Rendered markdown output via `marked-terminal`
 - Typing spinner (`ora`) while the agent works
 - Persistent conversation — reconnecting with the same `clientId` resumes the thread
@@ -454,14 +455,14 @@ bindings:
 
 Tools are gated by scoped capability labels. Capabilities are listed in `allow` or `requireApproval` arrays — anything not listed is denied by default.
 
-| Capability                 | Description                              |
-| -------------------------- | ---------------------------------------- |
-| `channel.send:<channel>`   | Send messages to a specific channel      |
-| `schedule.manage`          | Create/modify/delete scheduled tasks     |
-| `memory.access`            | Read/write per-thread structured memory  |
-| `net.http`                 | Fetch external URLs                      |
-| `db.query`                 | Execute read-only database queries       |
-| `subagent.invoke`          | Invoke sub-agents for delegated tasks    |
+| Capability               | Description                             |
+| ------------------------ | --------------------------------------- |
+| `channel.send:<channel>` | Send messages to a specific channel     |
+| `schedule.manage`        | Create/modify/delete scheduled tasks    |
+| `memory.access`          | Read/write per-thread structured memory |
+| `net.http`               | Fetch external URLs                     |
+| `db.query`               | Execute read-only database queries      |
+| `subagent.invoke`        | Invoke sub-agents for delegated tasks   |
 
 ### Capability Resolution
 
@@ -532,6 +533,7 @@ Sub-agents solve this by offloading specific, well-scoped tasks to cheap models.
 5. Results flow back to the main agent as structured data
 
 Sub-agents are loaded from three locations at startup (later overrides earlier):
+
 1. **Built-in** (`dist/subagents/default/`) — ships with the daemon
 2. **Project-level** (`cwd()/subagents/`) — custom agents in the project directory
 3. **Data directory** (`dataDir/subagents/`) — deployment-specific agents
@@ -554,13 +556,13 @@ src/subagents/default/<agent_name>/    # built-in agents (compiled with daemon)
 
 **Solution:** Uses a cascading search backend (`rg` → `grep` → Node.js `readdir`/`readFile`) to find matches by content, then optionally ranks results with an LLM when there are too many hits. Returns ranked file paths with relevant snippets.
 
-| | |
-|---|---|
-| **Model** | Haiku 4.5 |
-| **Required capabilities** | `fs.read:*` |
-| **Timeout** | 30s |
-| **Input** | `{ query, rootPaths?, extensions?, maxFileSize?, maxResultsWithoutLlm? }` |
-| **Output** | Ranked list of `{ path, snippet, relevance }` |
+|                           |                                                                           |
+| ------------------------- | ------------------------------------------------------------------------- |
+| **Model**                 | Haiku 4.5                                                                 |
+| **Required capabilities** | `fs.read:*`                                                               |
+| **Timeout**               | 30s                                                                       |
+| **Input**                 | `{ query, rootPaths?, extensions?, maxFileSize?, maxResultsWithoutLlm? }` |
+| **Output**                | Ranked list of `{ path, snippet, relevance }`                             |
 
 The search cascade tries `rg --json` first (fastest, with `--ignore-case`, `--max-filesize`, context lines), falls back to `grep -rni` if rg isn't installed, and finally to a pure Node.js implementation as a last resort. If fewer than 20 matches are found, they're returned directly without LLM ranking.
 
@@ -570,13 +572,13 @@ The search cascade tries `rg --json` first (fastest, with `--ignore-case`, `--ma
 
 **Solution:** Reads all memory items for the current thread, applies a keyword pre-filter, then uses an LLM to rank the remaining candidates by relevance to the query. Returns the top-K results with relevance scores and reasoning.
 
-| | |
-|---|---|
-| **Model** | Haiku 4.5 |
-| **Required capabilities** | `memory.access:*` |
-| **Timeout** | 30s |
-| **Input** | `{ query, topK?, threshold? }` |
-| **Output** | Ranked list of `{ id, type, content, relevance, reason }` |
+|                           |                                                           |
+| ------------------------- | --------------------------------------------------------- |
+| **Model**                 | Haiku 4.5                                                 |
+| **Required capabilities** | `memory.access:*`                                         |
+| **Timeout**               | 30s                                                       |
+| **Input**                 | `{ query, topK?, threshold? }`                            |
+| **Output**                | Ranked list of `{ id, type, content, relevance, reason }` |
 
 If fewer than 10 keyword matches are found, they're returned directly without LLM ranking. The LLM filters out items with relevance below 0.3.
 
@@ -586,13 +588,13 @@ If fewer than 10 keyword matches are found, they're returned directly without LL
 
 **Solution:** Reads memory items for the current thread (optionally filtered by time window), sends them to an LLM that classifies each as `prune` (delete), `consolidate` (merge duplicates into one), or `keep`. Executes the recommended actions against the database. Consolidation inserts the merged entry before deleting sources to prevent data loss.
 
-| | |
-|---|---|
-| **Model** | Haiku 4.5 |
-| **Required capabilities** | `memory.access:*` |
-| **Timeout** | 30s |
-| **Input** | `{ periodMs? }` (optional: only groom items from the last N ms) |
-| **Output** | `{ pruned, consolidated, kept }` counts |
+|                           |                                                                 |
+| ------------------------- | --------------------------------------------------------------- |
+| **Model**                 | Haiku 4.5                                                       |
+| **Required capabilities** | `memory.access:*`                                               |
+| **Timeout**               | 30s                                                             |
+| **Input**                 | `{ periodMs? }` (optional: only groom items from the last N ms) |
+| **Output**                | `{ pruned, consolidated, kept }` counts                         |
 
 Uses `generateObject` with a Zod discriminated union schema to ensure the LLM returns valid, typed actions.
 
@@ -602,13 +604,13 @@ Uses `generateObject` with a Zod discriminated union schema to ensure the LLM re
 
 **Solution:** Takes a raw conversation transcript and compresses it into a structured summary using `generateObject` with a Zod schema. Returns key facts (important decisions and information), open threads (unresolved topics), and a narrative summary.
 
-| | |
-|---|---|
-| **Model** | Haiku 4.5 |
-| **Required capabilities** | none |
-| **Timeout** | 30s |
-| **Input** | `{ transcript }` |
-| **Output** | `{ keyFacts: string[], openThreads: string[], summary: string }` |
+|                           |                                                                  |
+| ------------------------- | ---------------------------------------------------------------- |
+| **Model**                 | Haiku 4.5                                                        |
+| **Required capabilities** | none                                                             |
+| **Timeout**               | 30s                                                              |
+| **Input**                 | `{ transcript }`                                                 |
+| **Output**                | `{ keyFacts: string[], openThreads: string[], summary: string }` |
 
 This sub-agent is called automatically by the **rolling context window** (see below) — it is not invoked manually by the agent.
 
@@ -750,18 +752,18 @@ npx talonctl add-skill --name web-search --persona researcher
 
 ### Channel & Persona Management
 
-| Command                                           | Description                                              |
-| ------------------------------------------------- | -------------------------------------------------------- |
-| `talonctl list-channels`                          | List all configured channels                             |
-| `talonctl list-personas`                          | List all configured personas                             |
-| `talonctl list-skills`                            | List all configured skills across personas               |
-| `talonctl bind --persona <p> --channel <c>`       | Bind a persona to a channel (first binding becomes default) |
-| `talonctl unbind --persona <p> --channel <c>`     | Remove a persona-channel binding                         |
-| `talonctl remove-channel --name <n>`              | Remove a channel and its bindings                        |
-| `talonctl remove-persona --name <n>`              | Remove a persona, its directory, and bindings            |
-| `talonctl add-mcp --name <n> --command <cmd>`     | Add an MCP server to a persona                           |
-| `talonctl env-check`                              | Audit config for `${ENV_VAR}` placeholders and report missing env vars |
-| `talonctl config-show`                            | Display resolved config with secrets masked              |
+| Command                                       | Description                                                            |
+| --------------------------------------------- | ---------------------------------------------------------------------- |
+| `talonctl list-channels`                      | List all configured channels                                           |
+| `talonctl list-personas`                      | List all configured personas                                           |
+| `talonctl list-skills`                        | List all configured skills across personas                             |
+| `talonctl bind --persona <p> --channel <c>`   | Bind a persona to a channel (first binding becomes default)            |
+| `talonctl unbind --persona <p> --channel <c>` | Remove a persona-channel binding                                       |
+| `talonctl remove-channel --name <n>`          | Remove a channel and its bindings                                      |
+| `talonctl remove-persona --name <n>`          | Remove a persona, its directory, and bindings                          |
+| `talonctl add-mcp --name <n> --command <cmd>` | Add an MCP server to a persona                                         |
+| `talonctl env-check`                          | Audit config for `${ENV_VAR}` placeholders and report missing env vars |
+| `talonctl config-show`                        | Display resolved config with secrets masked                            |
 
 ```bash
 # List what's configured
@@ -788,8 +790,8 @@ npx talonctl config-show
 
 ### Sub-Agent Testing
 
-| Command | Description |
-| ------- | ----------- |
+| Command                                           | Description                                      |
+| ------------------------------------------------- | ------------------------------------------------ |
 | `talonctl run-subagent --name <n> --input <json>` | Invoke a sub-agent directly (no daemon required) |
 
 ```bash
@@ -807,12 +809,12 @@ npx talonctl run-subagent --name my-agent --input '{}' --subagents-dir ./subagen
 
 ### Database and Operations
 
-| Command                 | Description                                                    |
-| ----------------------- | -------------------------------------------------------------- |
-| `talonctl migrate`      | Apply pending database migrations                              |
-| `talonctl backup`       | Snapshot SQLite database and data directory                    |
-| `talonctl doctor`       | Run diagnostic checks on environment, config, and dependencies |
-| `talonctl queue-purge`  | Purge queue items by status                                    |
+| Command                | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| `talonctl migrate`     | Apply pending database migrations                              |
+| `talonctl backup`      | Snapshot SQLite database and data directory                    |
+| `talonctl doctor`      | Run diagnostic checks on environment, config, and dependencies |
+| `talonctl queue-purge` | Purge queue items by status                                    |
 
 ```bash
 # Run migrations
@@ -898,15 +900,15 @@ Default: wakes every 5 minutes. Adjust `OnUnitActiveSec` in `talond.timer`.
 
 ### Deployment Files
 
-| File                                                           | Purpose                                           |
-| -------------------------------------------------------------- | ------------------------------------------------- |
-| [`deploy/talond.service`](deploy/talond.service)               | systemd service unit template                     |
-| [`deploy/install-service.sh`](deploy/install-service.sh)       | Install script (generates unit, enables service)  |
-| [`deploy/Dockerfile`](deploy/Dockerfile)                       | Multi-stage talond container image (node:22-slim) |
-| [`deploy/Dockerfile.sandbox`](deploy/Dockerfile.sandbox)       | Agent sandbox image with SDK runtime              |
-| [`deploy/docker-compose.yaml`](deploy/docker-compose.yaml)     | Example Compose setup                             |
-| [`deploy/talond.timer`](deploy/talond.timer)                   | systemd timer (wake-only mode)                    |
-| [`deploy/talond-wake.service`](deploy/talond-wake.service)     | systemd oneshot for timer-triggered wake          |
+| File                                                       | Purpose                                           |
+| ---------------------------------------------------------- | ------------------------------------------------- |
+| [`deploy/talond.service`](deploy/talond.service)           | systemd service unit template                     |
+| [`deploy/install-service.sh`](deploy/install-service.sh)   | Install script (generates unit, enables service)  |
+| [`deploy/Dockerfile`](deploy/Dockerfile)                   | Multi-stage talond container image (node:22-slim) |
+| [`deploy/Dockerfile.sandbox`](deploy/Dockerfile.sandbox)   | Agent sandbox image with SDK runtime              |
+| [`deploy/docker-compose.yaml`](deploy/docker-compose.yaml) | Example Compose setup                             |
+| [`deploy/talond.timer`](deploy/talond.timer)               | systemd timer (wake-only mode)                    |
+| [`deploy/talond-wake.service`](deploy/talond-wake.service) | systemd oneshot for timer-triggered wake          |
 
 ---
 
@@ -918,14 +920,14 @@ Talon implements defense in depth through capability-based access control, host-
 
 Agents interact with the host through 5 MCP tools exposed over a Unix socket. The daemon mediates all side effects — agents cannot access channels, databases, or the network directly.
 
-| Tool               | Purpose                              |
-| ------------------ | ------------------------------------ |
-| `schedule_manage`  | CRUD + list scheduled tasks          |
-| `channel_send`     | Send messages to channel connectors  |
-| `memory_access`    | Read/write per-thread memory         |
-| `net_http`         | Fetch external URLs                  |
-| `db_query`         | Read-only database queries           |
-| `subagent_invoke`  | Invoke a sub-agent by name           |
+| Tool              | Purpose                             |
+| ----------------- | ----------------------------------- |
+| `schedule_manage` | CRUD + list scheduled tasks         |
+| `channel_send`    | Send messages to channel connectors |
+| `memory_access`   | Read/write per-thread memory        |
+| `net_http`        | Fetch external URLs                 |
+| `db_query`        | Read-only database queries          |
+| `subagent_invoke` | Invoke a sub-agent by name          |
 
 ### Capability System
 
@@ -965,13 +967,13 @@ Every MCP tool call goes through:
 
 Agents can query the database via the `db.query` tool, but are constrained by five independent security layers:
 
-| Layer | Mechanism | What it prevents |
-|-------|-----------|-----------------|
-| 1. Regex pre-check | Rejects non-SELECT statements and forbidden keywords (INSERT, DROP, etc.) | Write operations via SQL |
-| 2. Table whitelist | Only 4 approved tables (`memory_items`, `schedules`, `messages`, `threads`) | Access to sensitive tables (personas, audit_log, queue_items) |
-| 3. Thread/persona scoping | Auto-injects `WHERE thread_id = ? AND persona_id = ?` clauses | Cross-tenant data leakage between personas or threads |
-| 4. Row limit | Hard cap at 1,000 rows per query | Resource exhaustion via large result sets |
-| 5. Read-only connection | Separate SQLite connection opened with `{ readonly: true }` | Any write operation, even if all other layers are bypassed |
+| Layer                     | Mechanism                                                                   | What it prevents                                              |
+| ------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 1. Regex pre-check        | Rejects non-SELECT statements and forbidden keywords (INSERT, DROP, etc.)   | Write operations via SQL                                      |
+| 2. Table whitelist        | Only 4 approved tables (`memory_items`, `schedules`, `messages`, `threads`) | Access to sensitive tables (personas, audit_log, queue_items) |
+| 3. Thread/persona scoping | Auto-injects `WHERE thread_id = ? AND persona_id = ?` clauses               | Cross-tenant data leakage between personas or threads         |
+| 4. Row limit              | Hard cap at 1,000 rows per query                                            | Resource exhaustion via large result sets                     |
+| 5. Read-only connection   | Separate SQLite connection opened with `{ readonly: true }`                 | Any write operation, even if all other layers are bypassed    |
 
 Complex SQL patterns (UNION, subqueries, CTEs, INTERSECT, EXCEPT) are rejected to prevent whitelist bypass via query composition. User-supplied WHERE conditions are wrapped in parentheses to prevent OR-based scoping escapes.
 
@@ -992,7 +994,7 @@ capabilities:
     - channel.send:telegram
     - memory.access
   requireApproval:
-    - db.query   # prompts user in-channel before executing
+    - db.query # prompts user in-channel before executing
 ```
 
 Approval prompts are sent to the originating channel with a configurable timeout.
