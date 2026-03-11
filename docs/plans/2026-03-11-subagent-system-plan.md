@@ -21,7 +21,7 @@
 
 **Step 1: Install packages**
 
-Run: `npm install ai @ai-sdk/anthropic @ai-sdk/openai`
+Run: `npm install ai @ai-sdk/anthropic @ai-sdk/openai @ai-sdk/google ollama-ai-provider`
 
 Expected: packages added to dependencies in package.json
 
@@ -35,7 +35,7 @@ Expected: prints "ok"
 
 ```bash
 git add package.json package-lock.json
-git commit -m "chore: install Vercel AI SDK dependencies (ai, @ai-sdk/anthropic, @ai-sdk/openai)"
+git commit -m "chore: install Vercel AI SDK dependencies (ai, @ai-sdk/anthropic, @ai-sdk/openai, @ai-sdk/google, ollama-ai-provider)"
 ```
 
 ---
@@ -115,7 +115,8 @@ In `src/core/config/config-schema.ts`, update the Auth section:
 // ---------------------------------------------------------------------------
 
 const ProviderAuthSchema = z.object({
-  apiKey: z.string(),
+  apiKey: z.string().optional(),
+  baseURL: z.string().optional(),
 });
 
 export const AuthConfigSchema = z.object({
@@ -827,6 +828,24 @@ describe('ModelResolver', () => {
     expect(result._unsafeUnwrap()).toBeTruthy();
   });
 
+  it('resolves a google model', () => {
+    const resolver = new ModelResolver({
+      google: { apiKey: 'google-test' },
+    });
+    const result = resolver.resolve({ provider: 'google', name: 'gemini-2.0-flash', maxTokens: 2048 });
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toBeTruthy();
+  });
+
+  it('resolves an ollama model (no apiKey needed)', () => {
+    const resolver = new ModelResolver({
+      ollama: { baseURL: 'http://localhost:11434/api' },
+    });
+    const result = resolver.resolve({ provider: 'ollama', name: 'llama3', maxTokens: 2048 });
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toBeTruthy();
+  });
+
   it('returns error for unknown provider', () => {
     const resolver = new ModelResolver({});
     const result = resolver.resolve({ provider: 'unknown', name: 'model', maxTokens: 2048 });
@@ -866,7 +885,8 @@ import { ConfigError } from '../core/errors/index.js';
 
 /** Provider credentials from auth.providers config. */
 interface ProviderCredentials {
-  apiKey: string;
+  apiKey?: string;
+  baseURL?: string;
 }
 
 /** Model config from sub-agent manifest. */
@@ -906,7 +926,7 @@ export class ModelResolver {
     if (!factory) {
       return err(
         new ConfigError(
-          `Unsupported model provider: "${config.provider}". Supported: anthropic, openai`,
+          `Unsupported model provider: "${config.provider}". Supported: anthropic, openai, google, ollama`,
         ),
       );
     }
@@ -927,16 +947,23 @@ export class ModelResolver {
     switch (provider) {
       case 'anthropic':
         return (apiKey, modelName) => {
-          // Lazy import to avoid loading SDK at startup when not used.
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { createAnthropic } = require('@ai-sdk/anthropic');
           return createAnthropic({ apiKey })(modelName);
         };
       case 'openai':
         return (apiKey, modelName) => {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { createOpenAI } = require('@ai-sdk/openai');
           return createOpenAI({ apiKey })(modelName);
+        };
+      case 'google':
+        return (apiKey, modelName) => {
+          const { createGoogleGenerativeAI } = require('@ai-sdk/google');
+          return createGoogleGenerativeAI({ apiKey })(modelName);
+        };
+      case 'ollama':
+        return (_apiKey, modelName) => {
+          const { ollama } = require('ollama-ai-provider');
+          return ollama(modelName);
         };
       default:
         return null;
@@ -960,15 +987,23 @@ export class ModelResolver {
     }
   }
 
-  private async createModel(provider: string, apiKey: string, modelName: string): Promise<LanguageModel> {
+  private async createModel(provider: string, creds: ProviderCredentials, modelName: string): Promise<LanguageModel> {
     switch (provider) {
       case 'anthropic': {
         const { createAnthropic } = await import('@ai-sdk/anthropic');
-        return createAnthropic({ apiKey })(modelName);
+        return createAnthropic({ apiKey: creds.apiKey! })(modelName);
       }
       case 'openai': {
         const { createOpenAI } = await import('@ai-sdk/openai');
-        return createOpenAI({ apiKey })(modelName);
+        return createOpenAI({ apiKey: creds.apiKey! })(modelName);
+      }
+      case 'google': {
+        const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
+        return createGoogleGenerativeAI({ apiKey: creds.apiKey! })(modelName);
+      }
+      case 'ollama': {
+        const { ollama } = await import('ollama-ai-provider');
+        return ollama(modelName);
       }
       default:
         throw new Error(`Unsupported provider: ${provider}`);

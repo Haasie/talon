@@ -471,6 +471,7 @@ New packages:
 - `@ai-sdk/anthropic` (Anthropic provider)
 - `@ai-sdk/openai` (OpenAI provider, optional)
 - `@ai-sdk/google` (Google provider, optional)
+- `ollama-ai-provider` (Ollama provider for local models, optional)
 
 ## Trade-offs
 
