@@ -48,7 +48,8 @@ It is built for single-user or small-team deployments where you want persistent,
 
 - **Durable queue** — SQLite-backed message queue with crash recovery, retry, and dead-letter
 - **Scheduler** — Agent-managed cron, interval, and one-shot scheduled tasks
-- **Host-tools MCP bridge** — 5 built-in tools (schedule, channel, memory, http, db) exposed via Unix socket
+- **Host-tools MCP bridge** — 6 built-in tools (schedule, channel, memory, http, db, subagent) exposed via Unix socket
+- **Sub-agent system** — Route mechanical LLM tasks (summarization, memory grooming, search) to cheap models via pluggable sub-agents
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
 - **Session persistence** — Agent sessions resume across messages in the same thread
@@ -96,7 +97,7 @@ graph TB
     TG & SL & DC & WA & EM & TM --> CR
     CR --> NP --> RT --> Q
     Q --> A1 & A2
-    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db"| HT
+    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db, subagent"| HT
     HT --> CR
     HT --> DB
     SCH --> Q
@@ -459,6 +460,7 @@ Tools are gated by scoped capability labels. Capabilities are listed in `allow` 
 | `memory.access`            | Read/write per-thread structured memory  |
 | `net.http`                 | Fetch external URLs                      |
 | `db.query`                 | Execute read-only database queries       |
+| `subagent.invoke`          | Invoke sub-agents for delegated tasks    |
 
 ### Capability Resolution
 
@@ -509,6 +511,82 @@ granted = persona.capabilities ∩ skill.requiredCapabilities
 ```
 
 Skills with unmet capabilities produce a warning at startup and are skipped.
+
+---
+
+## Sub-Agents
+
+Sub-agents are lightweight, single-purpose AI agents that handle mechanical LLM tasks using cheap models (e.g. Haiku) instead of routing everything through the main Claude agent. They reduce token costs and keep the main agent focused on conversation.
+
+### How Sub-Agents Work
+
+1. The main agent calls `subagent_invoke` via MCP, specifying a sub-agent name and input
+2. The daemon validates that the persona is assigned this sub-agent and has the required capabilities
+3. The **ModelResolver** creates a Vercel AI SDK model instance for the sub-agent's configured provider
+4. The sub-agent's `run()` function executes with a system prompt, model, and injected services
+5. Results flow back to the main agent as structured data
+
+### Sub-Agent Structure
+
+```
+subagents/<agent_name>/
+  subagent.yaml          # manifest: model, capabilities, timeout
+  index.ts               # entry point: run(ctx, input) -> Result<SubAgentResult>
+  prompts/*.md           # system prompt fragments (concatenated in order)
+  lib/                   # optional helper modules
+```
+
+### Built-in Sub-Agents
+
+| Sub-Agent | Purpose | Required Capabilities |
+|-----------|---------|----------------------|
+| `session-summarizer` | Compresses conversation transcripts into structured summaries | none |
+| `memory-groomer` | Consolidates duplicates and prunes stale memory items | `memory.read:thread`, `memory.write:thread` |
+| `file-searcher` | Searches files with keyword matching and optional LLM ranking | none |
+| `memory-retriever` | Finds relevant memories via keyword filter and LLM reranking | `memory.read:thread` |
+
+### Provider Support
+
+Sub-agents can use any supported AI provider. Configure API keys in `talond.yaml`:
+
+```yaml
+auth:
+  mode: subscription
+  providers:
+    anthropic:
+      apiKey: ${ANTHROPIC_API_KEY}
+    openai:
+      apiKey: ${OPENAI_API_KEY}
+    google:
+      apiKey: ${GOOGLE_API_KEY}
+    ollama:
+      baseURL: http://localhost:11434/v1
+```
+
+### Persona Assignment
+
+Personas declare which sub-agents they can invoke:
+
+```yaml
+personas:
+  - name: assistant
+    model: claude-sonnet-4-6
+    subagents:
+      - session-summarizer
+      - memory-groomer
+      - memory-retriever
+    capabilities:
+      allow:
+        - subagent.invoke
+        - memory.access
+```
+
+### Creating a Custom Sub-Agent
+
+1. Create a directory under `subagents/` with a `subagent.yaml` manifest
+2. Write an `index.ts` with an exported `run(ctx, input)` function returning `Result<SubAgentResult, SubAgentError>`
+3. Add prompt fragments in `prompts/` (numbered for ordering: `01-system.md`, `02-examples.md`)
+4. Test with `talonctl run-subagent --name your-agent --input '{}'`
 
 ---
 
@@ -585,6 +663,25 @@ npx talonctl env-check
 
 # Show resolved config (secrets masked)
 npx talonctl config-show
+```
+
+### Sub-Agent Testing
+
+| Command | Description |
+| ------- | ----------- |
+| `talonctl run-subagent --name <n> --input <json>` | Invoke a sub-agent directly (no daemon required) |
+
+```bash
+# Test the session-summarizer
+npx talonctl run-subagent --name session-summarizer \
+  --input '{"transcript": "User: Hi\nAssistant: Hello!"}'
+
+# Test the memory-retriever
+npx talonctl run-subagent --name memory-retriever \
+  --input '{"query": "deployment steps"}'
+
+# Use a custom subagents directory
+npx talonctl run-subagent --name my-agent --input '{}' --subagents-dir ./subagents
 ```
 
 ### Database and Operations
@@ -707,6 +804,7 @@ Agents interact with the host through 5 MCP tools exposed over a Unix socket. Th
 | `memory_access`    | Read/write per-thread memory         |
 | `net_http`         | Fetch external URLs                  |
 | `db_query`         | Read-only database queries           |
+| `subagent_invoke`  | Invoke a sub-agent by name           |
 
 ### Capability System
 
@@ -1016,6 +1114,13 @@ talon/
     skills/
       skill-loader.ts            # Load + validate skills
       skill-resolver.ts          # Skill -> persona resolution
+    subagents/
+      subagent-types.ts          # Core type definitions
+      subagent-schema.ts         # Zod manifest validation
+      subagent-loader.ts         # Load sub-agents from directories
+      model-resolver.ts          # Vercel AI SDK provider factory
+      subagent-runner.ts         # Execution engine with timeout
+      index.ts                   # Barrel export
     tools/
       host-tools/                # Host-side tool handlers
         channel-send.ts          # Send via channel connector
@@ -1023,6 +1128,7 @@ talon/
         memory-access.ts         # Thread memory CRUD
         schedule-manage.ts       # Schedule CRUD
         db-query.ts              # Read-only DB queries
+        subagent-invoke.ts       # Invoke sub-agents
       tool-registry.ts           # Tool manifest registry
       policy-engine.ts           # Capability-based access control
       capability-resolver.ts     # Label resolution
