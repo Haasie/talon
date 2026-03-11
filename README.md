@@ -53,6 +53,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
 - **Session persistence** — Agent sessions resume across messages in the same thread
+- **Rolling context window** — Automatic session rotation when context usage exceeds 80K tokens, with compressed history injection into fresh sessions for seamless continuity
 
 ### Security
 
@@ -608,6 +609,42 @@ Uses `generateObject` with a Zod discriminated union schema to ensure the LLM re
 | **Timeout** | 30s |
 | **Input** | `{ transcript }` |
 | **Output** | `{ keyFacts: string[], openThreads: string[], summary: string }` |
+
+This sub-agent is called automatically by the **rolling context window** (see below) — it is not invoked manually by the agent.
+
+### Rolling Context Window
+
+Long conversations eventually fill the Agent SDK's context window. Talon monitors `cacheReadTokens` after each agent run and automatically rotates the session when usage exceeds 80K tokens, keeping conversations seamless without jarring resets.
+
+**How it works:**
+
+```
+Agent run completes → cacheReadTokens > 80K?
+  ├── No  → Continue normally (session resumes next time)
+  └── Yes → ContextRoller triggers:
+            1. Reconstruct transcript from messages table
+            2. Call session-summarizer (cheap model, ~30s)
+            3. Store summary as memory item (type: 'summary')
+            4. Clear session → next run starts fresh
+                               ↓
+            ContextAssembler injects into fresh session:
+            ┌─────────────────────────────────────┐
+            │ ## Previous Context                  │
+            │ [Latest session summary]             │
+            │ ### Recent Messages                  │
+            │ [Last 10 messages verbatim]          │
+            └─────────────────────────────────────┘
+```
+
+**Key design decisions:**
+
+- **80K threshold** — leaves headroom for current turn I/O (~10-20K) within Sonnet's 200K window. Fresh sessions start at ~10-15K, giving ~70K of organic conversation before the next rotation.
+- **Summaries are memory items** — stored as `memory_items` with type `summary`, so they're subject to `memory-groomer` consolidation. Old summaries get merged/pruned automatically.
+- **Daemon-side, not agent-side** — the agent never knows its session was rotated. Context injection happens in the system prompt before the agent sees its first message.
+- **Awaited, not fire-and-forget** — rotation completes before the next queue item is processed, preventing race conditions.
+- **Prompt injection mitigation** — injected historical content is prefixed with a read-only disclaimer to prevent user messages from being treated as instructions.
+
+**Files:** `src/daemon/context-roller.ts`, `src/daemon/context-assembler.ts`
 
 ### Provider Support
 
