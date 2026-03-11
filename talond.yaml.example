@@ -1,0 +1,84 @@
+# talond.yaml.example
+# Copy to talond.yaml and edit for your environment.
+# Canonical config shape validated by src/core/config/config-schema.ts
+
+storage:
+  type: sqlite
+  path: data/talond.sqlite
+
+sandbox:
+  runtime: docker
+  image: talon-sandbox:latest
+  maxConcurrent: 3
+  networkDefault: off
+  idleTimeoutMs: 1800000
+  hardTimeoutMs: 3600000
+  resourceLimits:
+    memoryMb: 1024
+    cpus: 1
+    pidsLimit: 256
+
+channels:
+  - type: telegram
+    name: personal-telegram
+    enabled: true
+    config:
+      token: ${TELEGRAM_BOT_TOKEN}
+      allowedUserIds:
+        - 123456789
+      pollIntervalMs: 1000
+
+personas:
+  - name: assistant
+    model: claude-sonnet-4-6
+    systemPromptFile: personas/assistant/system.md
+    skills: []
+    subagents:
+      - session-summarizer
+      - memory-groomer
+      - memory-retriever
+      - file-searcher
+    capabilities:
+      allow:
+        - channel.send:telegram
+        - fs.read:*
+        - memory.access:*
+      requireApproval:
+        - fs.write:workspace
+    mounts:
+      - source: data/threads/{thread}/memory
+        target: /memory
+        mode: ro
+      - source: data/threads/{thread}/artifacts
+        target: /artifacts
+        mode: rw
+    maxConcurrent: 2
+
+schedules: []
+
+ipc:
+  pollIntervalMs: 500
+  daemonSocketDir: data/ipc/daemon
+
+queue:
+  maxAttempts: 3
+  backoffBaseMs: 1000
+  backoffMaxMs: 60000
+  concurrencyLimit: 5
+
+scheduler:
+  tickIntervalMs: 5000
+
+auth:
+  mode: subscription
+  # mode: api_key
+  # apiKey: ${ANTHROPIC_API_KEY}
+  providers:
+    anthropic:
+      apiKey: ${ANTHROPIC_API_KEY}
+    openai:
+      apiKey: ${OPENAI_API_KEY}
+      # baseURL: https://api.openai.com/v1
+
+logLevel: info
+dataDir: data

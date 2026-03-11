@@ -142,19 +142,38 @@ export async function runSubAgentCommand(options: {
   }
 
   const config = configResult.value;
-  const subagentsDir = options.subagentsDir ?? join(config.dataDir, 'subagents');
+
+  // When no explicit dir is given, search both cwd/subagents and dataDir/subagents
+  // (same dual-source loading as daemon-bootstrap).
+  const subagentsDirs = options.subagentsDir
+    ? [options.subagentsDir]
+    : [join(process.cwd(), 'subagents'), join(config.dataDir, 'subagents')];
 
   try {
-    const result = await runSubAgent({
-      name: options.name,
-      input: options.input,
-      subagentsDir,
-      providers: config.auth.providers ?? {},
-    });
-
-    console.log(JSON.stringify(result, null, 2));
+    // Try each directory in order until we find the requested sub-agent.
+    let lastError: Error | null = null;
+    for (const dir of subagentsDirs) {
+      try {
+        const result = await runSubAgent({
+          name: options.name,
+          input: options.input,
+          subagentsDir: dir,
+          providers: config.auth.providers ?? {},
+        });
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      } catch (e) {
+        lastError = e as Error;
+        // If it's "not found", try next directory
+        if ((e as Error).message.includes('not found')) continue;
+        // Any other error (model, execution) — stop immediately
+        throw e;
+      }
+    }
+    throw lastError ?? new Error(`Sub-agent "${options.name}" not found`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
   }
 }
+
