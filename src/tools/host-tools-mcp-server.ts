@@ -316,6 +316,24 @@ const TOOLS = [
       required: ['sql'],
     },
   },
+  {
+    name: 'subagent_invoke',
+    description: 'Delegate a task to a specialized sub-agent that runs a cheap, fast model',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string' as const,
+          description: 'Sub-agent name (e.g. "memory-groomer", "file-searcher")',
+        },
+        input: {
+          type: 'object' as const,
+          description: 'Task-specific input for the sub-agent',
+        },
+      },
+      required: ['name'],
+    },
+  },
 ];
 
 function getEnvRequired(name: string): string {

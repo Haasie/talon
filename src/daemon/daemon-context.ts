@@ -35,6 +35,7 @@ import type { LoadedSkill } from '../skills/skill-types.js';
 import type { SkillResolver } from '../skills/skill-resolver.js';
 import type { MessagePipeline } from '../pipeline/message-pipeline.js';
 import type { HostToolsBridge } from '../tools/host-tools-bridge.js';
+import type { SubAgentRunner } from '../subagents/subagent-runner.js';
 
 // ---------------------------------------------------------------------------
 // Repository bundle
@@ -81,5 +82,6 @@ export interface DaemonContext {
   readonly loadedSkills: LoadedSkill[];
   readonly messagePipeline: MessagePipeline;
   readonly hostToolsBridge: HostToolsBridge;
+  readonly subAgentRunner: SubAgentRunner | null;
   readonly logger: pino.Logger;
 }

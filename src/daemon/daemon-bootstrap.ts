@@ -45,6 +45,9 @@ import { ThreadWorkspace } from '../memory/thread-workspace.js';
 import { SessionTracker } from '../sandbox/session-tracker.js';
 
 import { HostToolsBridge } from '../tools/host-tools-bridge.js';
+import { SubAgentLoader } from '../subagents/subagent-loader.js';
+import { SubAgentRunner } from '../subagents/subagent-runner.js';
+import { ModelResolver } from '../subagents/model-resolver.js';
 import { recoverFromCrash } from './lifecycle.js';
 import type { DaemonContext } from './daemon-context.js';
 
@@ -150,6 +153,39 @@ export async function bootstrap(
     );
   }
 
+  // 8b. Load sub-agents (optional — if the directory does not exist, skip)
+  const subAgentLoader = new SubAgentLoader(logger);
+  const subAgentsDir = join(dataDir, 'subagents');
+  const loadedSubAgentsResult = await subAgentLoader.loadAll(subAgentsDir);
+  let subAgentRunner: SubAgentRunner | null = null;
+
+  if (loadedSubAgentsResult.isOk() && loadedSubAgentsResult.value.length > 0) {
+    const agentMap = new Map(loadedSubAgentsResult.value.map((a) => [a.manifest.name, a]));
+    const modelResolver = new ModelResolver(config.auth.providers ?? {});
+    subAgentRunner = new SubAgentRunner(
+      agentMap,
+      modelResolver,
+      {
+        memory: repos.memory,
+        schedules: repos.schedule,
+        personas: repos.persona,
+        channels: repos.channel,
+        threads: repos.thread,
+        messages: repos.message,
+        runs: repos.run,
+        queue: repos.queue,
+        logger,
+      },
+      logger,
+    );
+    logger.info({ subagents: [...agentMap.keys()] }, 'bootstrap: loaded sub-agents');
+  } else if (loadedSubAgentsResult.isErr()) {
+    logger.warn(
+      { error: loadedSubAgentsResult.error.message },
+      'bootstrap: failed to load sub-agents, continuing without them',
+    );
+  }
+
   // 9. Session tracker
   const sessionTracker = new SessionTracker();
 
@@ -205,6 +241,7 @@ export async function bootstrap(
     skillResolver,
     loadedSkills: loadedSkills.value,
     messagePipeline,
+    subAgentRunner,
     logger,
   } as Omit<DaemonContext, 'hostToolsBridge'> & { hostToolsBridge?: HostToolsBridge };
 
