@@ -242,7 +242,22 @@ describe('addSchedule()', () => {
         prompt: 'test',
         db,
       }),
-    ).toThrow('Invalid cron expression: "not-a-cron"');
+    ).toThrow('Invalid cron expression');
+  });
+
+  it('throws for 6-field cron (seconds not allowed)', () => {
+    seedPersonaAndChannel();
+
+    expect(() =>
+      addSchedule({
+        persona: 'test-bot',
+        channel: 'test-channel',
+        cron: '0 0 9 * * *',
+        label: 'test',
+        prompt: 'test',
+        db,
+      }),
+    ).toThrow('Expected exactly 5 fields');
   });
 });
 

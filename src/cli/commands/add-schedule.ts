@@ -56,7 +56,11 @@ export interface AddScheduleResult {
 export function addSchedule(options: AddScheduleOptions): AddScheduleResult {
   const { db, persona, channel, cron, label, prompt } = options;
 
-  // --- Validate cron expression -------------------------------------------
+  // --- Validate cron expression (must be exactly 5 fields) ----------------
+  const cronFields = cron.trim().split(/\s+/);
+  if (cronFields.length !== 5) {
+    throw new Error(`Invalid cron expression: "${cron}". Expected exactly 5 fields: "<minute> <hour> <day-of-month> <month> <day-of-week>"`);
+  }
   if (!isValidCronExpression(cron)) {
     throw new Error(`Invalid cron expression: "${cron}"`);
   }

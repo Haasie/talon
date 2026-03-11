@@ -1,7 +1,7 @@
 /**
  * `talonctl list-schedules` command.
  *
- * Lists all cron schedules in the database, optionally filtered by persona.
+ * Lists all schedules in the database, optionally filtered by persona.
  *
  * The pure `listSchedules()` function can be called programmatically.
  * The `listSchedulesCommand()` wrapper handles config loading, DB lifecycle,
