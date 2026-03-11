@@ -123,7 +123,6 @@ export interface SubAgentContext {
     messages: MessageRepository;
     runs: RunRepository;
     queue: QueueRepository;
-    db: Database.Database;         // Escape hatch for direct queries
     logger: pino.Logger;
   };
 }
@@ -226,7 +225,7 @@ Example capability mappings:
 | `memory.write:thread` | `services.memory` (write methods) |
 | `schedule.write:own` | `services.schedules` |
 | `channel.send:*` | `services.channels`, `services.messages` |
-| `db.query` | `services.db` (direct SQL) |
+| `queue.write` | `services.queue` |
 
 ## Host Tool: `subagent_invoke`
 
