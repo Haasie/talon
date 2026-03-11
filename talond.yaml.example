@@ -43,6 +43,7 @@ personas:
         - channel.send:telegram
         - fs.read:*
         - memory.access:*
+        - subagent.invoke:*
       requireApproval:
         - fs.write:workspace
     mounts:
@@ -53,8 +54,6 @@ personas:
         target: /artifacts
         mode: rw
     maxConcurrent: 2
-
-schedules: []
 
 ipc:
   pollIntervalMs: 500
