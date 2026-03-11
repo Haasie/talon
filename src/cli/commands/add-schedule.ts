@@ -89,7 +89,10 @@ export function addSchedule(options: AddScheduleOptions): AddScheduleResult {
   let threadId: string;
 
   const existing = threadRepo.findByExternalId(channelRow.id, scheduleExternalId);
-  if (existing.isOk() && existing.value !== null) {
+  if (existing.isErr()) {
+    throw new Error(`Failed to look up schedule thread: ${existing.error.message}`);
+  }
+  if (existing.value !== null) {
     threadId = existing.value.id;
   } else {
     threadId = uuidv4();

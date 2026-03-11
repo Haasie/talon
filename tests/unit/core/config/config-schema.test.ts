@@ -7,7 +7,6 @@ import {
   MountConfigSchema,
   PersonaConfigSchema,
   ChannelConfigSchema,
-  ScheduleConfigSchema,
   IpcConfigSchema,
   QueueConfigSchema,
   SchedulerConfigSchema,
@@ -250,54 +249,6 @@ describe('ChannelConfigSchema', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ScheduleConfigSchema
-// ---------------------------------------------------------------------------
-
-describe('ScheduleConfigSchema', () => {
-  it('requires name, personaName, type, and expression', () => {
-    expect(ScheduleConfigSchema.safeParse({}).success).toBe(false);
-  });
-
-  it('parses a minimal schedule with defaults', () => {
-    const result = ScheduleConfigSchema.safeParse({
-      name: 'daily-digest',
-      personaName: 'assistant',
-      type: 'cron',
-      expression: '0 9 * * *',
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.payload).toEqual({});
-      expect(result.data.enabled).toBe(true);
-      expect(result.data.threadId).toBeUndefined();
-    }
-  });
-
-  it('accepts all schedule types', () => {
-    const types = ['cron', 'interval', 'one_shot', 'event'] as const;
-    for (const type of types) {
-      const result = ScheduleConfigSchema.safeParse({
-        name: 'task',
-        personaName: 'bot',
-        type,
-        expression: '5000',
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
-  it('rejects an invalid schedule type', () => {
-    const result = ScheduleConfigSchema.safeParse({
-      name: 'task',
-      personaName: 'bot',
-      type: 'timer',
-      expression: '5000',
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // IpcConfigSchema
 // ---------------------------------------------------------------------------
 
@@ -420,7 +371,6 @@ describe('TalondConfigSchema', () => {
       expect(result.data.dataDir).toBe('data');
       expect(result.data.channels).toEqual([]);
       expect(result.data.personas).toEqual([]);
-      expect(result.data.schedules).toEqual([]);
       expect(result.data.storage.type).toBe('sqlite');
       expect(result.data.ipc.pollIntervalMs).toBe(500);
       expect(result.data.queue.maxAttempts).toBe(3);
@@ -437,14 +387,6 @@ describe('TalondConfigSchema', () => {
       sandbox: { runtime: 'docker', maxConcurrent: 5 },
       channels: [{ type: 'telegram', name: 'main', tokenRef: 'TELEGRAM_TOKEN' }],
       personas: [{ name: 'helper', model: 'claude-sonnet-4-6' }],
-      schedules: [
-        {
-          name: 'morning-brief',
-          personaName: 'helper',
-          type: 'cron',
-          expression: '0 8 * * *',
-        },
-      ],
       ipc: { pollIntervalMs: 250 },
       queue: { maxAttempts: 5 },
       scheduler: { tickIntervalMs: 10000 },
@@ -455,7 +397,6 @@ describe('TalondConfigSchema', () => {
       expect(result.data.logLevel).toBe('debug');
       expect(result.data.channels).toHaveLength(1);
       expect(result.data.personas).toHaveLength(1);
-      expect(result.data.schedules).toHaveLength(1);
     }
   });
 

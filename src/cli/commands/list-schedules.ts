@@ -94,8 +94,8 @@ function toScheduleInfo(
   let prompt = '';
   try {
     const parsed = JSON.parse(row.payload);
-    label = parsed.label ?? '';
-    prompt = parsed.prompt ?? '';
+    label = typeof parsed.label === 'string' ? parsed.label : '';
+    prompt = typeof parsed.prompt === 'string' ? parsed.prompt : '';
   } catch {
     // payload may not be valid JSON — leave defaults
   }
@@ -157,7 +157,7 @@ export async function listSchedulesCommand(options: {
     // Print table header
     const header = ['ID', 'PERSONA', 'LABEL', 'CRON', 'ENABLED', 'NEXT RUN'];
     const rows = schedules.map((s) => [
-      s.id.slice(0, 8),
+      s.id,
       s.personaName,
       s.label,
       s.expression,
