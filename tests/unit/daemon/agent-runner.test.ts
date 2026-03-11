@@ -89,6 +89,7 @@ function makeMockContext(): DaemonContext {
         insert: vi.fn().mockReturnValue(ok({})),
         updateStatus: vi.fn().mockReturnValue(ok({})),
         updateSessionId: vi.fn().mockReturnValue(ok({})),
+        updateTokens: vi.fn().mockReturnValue(ok({})),
         getLatestSessionId: vi.fn().mockReturnValue(ok(null)),
       } as any,
       binding: {} as any,

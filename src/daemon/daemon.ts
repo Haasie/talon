@@ -386,6 +386,8 @@ export class TalondDaemon {
                 (aggregate) => ({
                   inputTokens: aggregate.total_input_tokens,
                   outputTokens: aggregate.total_output_tokens,
+                  cacheReadTokens: aggregate.total_cache_read_tokens,
+                  cacheWriteTokens: aggregate.total_cache_write_tokens,
                   costUsd: aggregate.total_cost_usd,
                 }),
                 () => undefined,

@@ -184,8 +184,9 @@ function displayStatus(data: Partial<DaemonStatusData>): void {
   console.log(`Channels:          ${data.channelCount ?? 'unknown'}`);
 
   if (data.tokenUsage24h !== undefined) {
-    const { inputTokens, outputTokens, costUsd } = data.tokenUsage24h;
-    console.log(`Token usage (24h): ${inputTokens} in / ${outputTokens} out`);
+    const { inputTokens, outputTokens, cacheReadTokens = 0, cacheWriteTokens = 0, costUsd } = data.tokenUsage24h;
+    const totalInput = inputTokens + cacheReadTokens + cacheWriteTokens;
+    console.log(`Token usage (24h): ${totalInput} in (${inputTokens} new + ${cacheReadTokens} cache-read + ${cacheWriteTokens} cache-write) / ${outputTokens} out`);
     console.log(`Estimated cost (24h): $${costUsd.toFixed(4)}`);
   }
 }

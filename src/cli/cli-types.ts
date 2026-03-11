@@ -83,6 +83,10 @@ export interface DaemonStatusData {
     inputTokens: number;
     /** Total output tokens consumed in the last 24 hours. */
     outputTokens: number;
+    /** Total tokens read from prompt cache in the last 24 hours. */
+    cacheReadTokens: number;
+    /** Total tokens written to prompt cache in the last 24 hours. */
+    cacheWriteTokens: number;
     /** Estimated cost in USD for the last 24 hours. */
     costUsd: number;
   };
