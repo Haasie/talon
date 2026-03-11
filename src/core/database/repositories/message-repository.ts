@@ -31,6 +31,7 @@ export class MessageRepository extends BaseRepository {
   private readonly insertStmt: Database.Statement;
   private readonly findByIdStmt: Database.Statement;
   private readonly findByThreadStmt: Database.Statement;
+  private readonly findLatestByThreadStmt: Database.Statement;
   private readonly findByIdempotencyKeyStmt: Database.Statement;
 
   constructor(db: Database.Database) {
@@ -52,6 +53,15 @@ export class MessageRepository extends BaseRepository {
       WHERE thread_id = ?
       ORDER BY created_at ASC
       LIMIT ? OFFSET ?
+    `);
+
+    this.findLatestByThreadStmt = db.prepare(`
+      SELECT * FROM (
+        SELECT * FROM messages
+        WHERE thread_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+      ) sub ORDER BY created_at ASC, id ASC
     `);
 
     this.findByIdempotencyKeyStmt = db.prepare(`
@@ -112,6 +122,24 @@ export class MessageRepository extends BaseRepository {
       return err(
         new DbError(
           `Failed to find messages by thread: ${String(cause)}`,
+          cause instanceof Error ? cause : undefined,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Returns the most recent N messages for a thread in chronological order.
+   * Useful for reconstructing recent conversation context.
+   */
+  findLatestByThread(threadId: string, limit: number): Result<MessageRow[], DbError> {
+    try {
+      const rows = this.findLatestByThreadStmt.all(threadId, limit) as MessageRow[];
+      return ok(rows);
+    } catch (cause) {
+      return err(
+        new DbError(
+          `Failed to find latest messages by thread: ${String(cause)}`,
           cause instanceof Error ? cause : undefined,
         ),
       );

@@ -19,6 +19,7 @@ import type {
   QueueConfigSchema,
   SchedulerConfigSchema,
   AuthConfigSchema,
+  ContextConfigSchema,
 } from './config-schema.js';
 
 /** The full daemon configuration, validated and frozen at startup. */
@@ -56,3 +57,6 @@ export type SchedulerConfig = z.infer<typeof SchedulerConfigSchema>;
 
 /** Authentication mode and credentials. */
 export type AuthConfig = z.infer<typeof AuthConfigSchema>;
+
+/** Rolling context window settings. */
+export type ContextConfig = z.infer<typeof ContextConfigSchema>;

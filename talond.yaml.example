@@ -79,5 +79,9 @@ auth:
       apiKey: ${OPENAI_API_KEY}
       # baseURL: https://api.openai.com/v1
 
+context:
+  thresholdTokens: 80000       # trigger session rotation after this many cache-read tokens
+  recentMessageCount: 10       # verbatim messages injected into fresh sessions
+
 logLevel: info
 dataDir: data

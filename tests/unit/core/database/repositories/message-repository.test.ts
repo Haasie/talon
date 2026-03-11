@@ -119,6 +119,37 @@ describe('MessageRepository', () => {
     });
   });
 
+  describe('findLatestByThread', () => {
+    it('returns the most recent N messages in chronological order', () => {
+      for (let i = 0; i < 5; i++) {
+        repo.insert(makeMsg({ id: `msg-${i}`, idempotency_key: `k-latest-${i}-${uuid()}` }));
+      }
+
+      const result = repo.findLatestByThread(threadId, 3);
+      expect(result.isOk()).toBe(true);
+      const rows = result._unsafeUnwrap();
+      expect(rows).toHaveLength(3);
+      // Should be the last 3 in chronological (ASC) order
+      for (let i = 1; i < rows.length; i++) {
+        expect(rows[i].created_at).toBeGreaterThanOrEqual(rows[i - 1].created_at);
+      }
+    });
+
+    it('returns all messages when fewer than limit exist', () => {
+      repo.insert(makeMsg());
+
+      const result = repo.findLatestByThread(threadId, 10);
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toHaveLength(1);
+    });
+
+    it('returns empty array for unknown thread', () => {
+      const result = repo.findLatestByThread('nonexistent', 5);
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toHaveLength(0);
+    });
+  });
+
   describe('existsByIdempotencyKey', () => {
     it('returns true when key exists', () => {
       const key = `idem-${uuid()}`;

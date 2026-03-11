@@ -124,6 +124,12 @@ function makeMockContext(): DaemonContext {
     sessionTracker: {
       getSessionId: vi.fn().mockReturnValue(undefined),
       setSessionId: vi.fn(),
+      wasRotated: vi.fn().mockReturnValue(false),
+      rotateSession: vi.fn(),
+    } as any,
+    contextRoller: null,
+    contextAssembler: {
+      assemble: vi.fn().mockReturnValue(''),
     } as any,
     threadWorkspace: {
       ensureDirectories: vi.fn().mockReturnValue(ok('/tmp/test-data/workspaces/thread-001')),
