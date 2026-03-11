@@ -1,0 +1,85 @@
+import { describe, it, expect } from 'vitest';
+import { ModelResolver } from '../../../src/subagents/model-resolver.js';
+
+describe('ModelResolver', () => {
+  it('resolves an anthropic model', async () => {
+    const resolver = new ModelResolver({ anthropic: { apiKey: 'sk-ant-test' } });
+    const result = await resolver.resolve({ provider: 'anthropic', name: 'claude-haiku-4-5', maxTokens: 2048 });
+    expect(result.isOk()).toBe(true);
+    const model = result._unsafeUnwrap();
+    expect(model).toBeTruthy();
+    expect(model.modelId).toBe('claude-haiku-4-5');
+  });
+
+  it('resolves an openai model', async () => {
+    const resolver = new ModelResolver({ openai: { apiKey: 'sk-oai-test' } });
+    const result = await resolver.resolve({ provider: 'openai', name: 'gpt-4o-mini', maxTokens: 2048 });
+    expect(result.isOk()).toBe(true);
+    const model = result._unsafeUnwrap();
+    expect(model.modelId).toBe('gpt-4o-mini');
+  });
+
+  it('resolves a google model', async () => {
+    const resolver = new ModelResolver({ google: { apiKey: 'google-test' } });
+    const result = await resolver.resolve({ provider: 'google', name: 'gemini-2.0-flash', maxTokens: 2048 });
+    expect(result.isOk()).toBe(true);
+    const model = result._unsafeUnwrap();
+    expect(model.modelId).toBe('gemini-2.0-flash');
+  });
+
+  it('resolves an ollama model via OpenAI-compatible endpoint (no apiKey needed)', async () => {
+    const resolver = new ModelResolver({ ollama: { baseURL: 'http://localhost:11434/v1' } });
+    const result = await resolver.resolve({ provider: 'ollama', name: 'llama3', maxTokens: 2048 });
+    expect(result.isOk()).toBe(true);
+    const model = result._unsafeUnwrap();
+    expect(model.modelId).toBe('llama3');
+  });
+
+  it('resolves an ollama model with default baseURL when none provided', async () => {
+    const resolver = new ModelResolver({ ollama: {} });
+    const result = await resolver.resolve({ provider: 'ollama', name: 'llama3', maxTokens: 2048 });
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('returns error for unknown provider', async () => {
+    const resolver = new ModelResolver({});
+    const result = await resolver.resolve({ provider: 'unknown', name: 'model', maxTokens: 2048 });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain('No credentials');
+  });
+
+  it('returns error when provider has no credentials configured', async () => {
+    const resolver = new ModelResolver({});
+    const result = await resolver.resolve({ provider: 'anthropic', name: 'claude-haiku-4-5', maxTokens: 2048 });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain('credentials');
+  });
+
+  it('returns error for unsupported but configured provider', async () => {
+    const resolver = new ModelResolver({ mycustom: { apiKey: 'key' } });
+    const result = await resolver.resolve({ provider: 'mycustom', name: 'model', maxTokens: 2048 });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain('Unsupported');
+  });
+
+  it('returns error when apiKey is missing for a provider that requires it', async () => {
+    const resolver = new ModelResolver({ anthropic: { baseURL: 'https://example.com' } });
+    const result = await resolver.resolve({ provider: 'anthropic', name: 'claude-haiku-4-5', maxTokens: 2048 });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain('Missing apiKey');
+  });
+
+  it('returns error when openai apiKey is missing', async () => {
+    const resolver = new ModelResolver({ openai: {} });
+    const result = await resolver.resolve({ provider: 'openai', name: 'gpt-4o-mini', maxTokens: 2048 });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain('Missing apiKey');
+  });
+
+  it('returns error when google apiKey is missing', async () => {
+    const resolver = new ModelResolver({ google: {} });
+    const result = await resolver.resolve({ provider: 'google', name: 'gemini-2.0-flash', maxTokens: 2048 });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain('Missing apiKey');
+  });
+});
