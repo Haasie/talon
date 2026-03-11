@@ -2,7 +2,7 @@
 
 **Resilient, secure, extensible autonomous agent daemon.**
 
-[![Tests](https://img.shields.io/badge/tests-2128%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-2128tests/unit/daemon/agent-runner.test.ts %20passing-brightgreen)](#testing)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-blue)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-blue)](https://www.typescriptlang.org)
@@ -198,30 +198,45 @@ personas:
     model: claude-sonnet-4-6
     systemPromptFile: personas/assistant/system.md
     skills: []
+    subagents:
+      - session-summarizer
+      - memory-groomer
+      - memory-retriever
+      - file-searcher
     capabilities:
       allow:
         - channel.send:telegram
-      requireApproval: []
+        - fs.read:*
+        - memory.access:*
+        - subagent.invoke:*
+      requireApproval:
+        - fs.write:workspace
+    maxConcurrent: 2
 
 channels:
   - name: my-telegram
     type: telegram
     enabled: true
     config:
-      botToken: ${TELEGRAM_BOT_TOKEN}
-
-bindings:
-  - persona: assistant
-    channel: my-telegram
-    isDefault: true
-
-schedules: []
+      token: ${TELEGRAM_BOT_TOKEN}
+      allowedUserIds:
+        - 123456789
+      pollIntervalMs: 1000
 
 scheduler:
   tickIntervalMs: 5000
 
 auth:
   mode: subscription
+  providers:
+    anthropic:
+      apiKey: ${ANTHROPIC_API_KEY}
+    openai:
+      apiKey: ${OPENAI_API_KEY}
+
+context:
+  thresholdTokens: 80000
+  recentMessageCount: 10
 
 logLevel: info
 dataDir: data
@@ -239,6 +254,7 @@ dataDir: data
 | `schedules`            | Agent-managed schedule entries (cron, interval, one-shot)                     |
 | `scheduler`            | Scheduler tick interval                                                       |
 | `auth`                 | `subscription` or `api_key` authentication mode                               |
+| `context`              | Rolling context window: cache threshold and verbatim message count            |
 | `logLevel` / `dataDir` | Runtime logging level and data root                                           |
 
 ### Environment Variable Substitution

@@ -238,7 +238,7 @@ export async function bootstrap(
   const contextAssembler = new ContextAssembler({
     messageRepo: repos.message,
     memoryRepo: repos.memory,
-    recentMessageCount: 10,
+    recentMessageCount: config.context.recentMessageCount,
   });
 
   // 9. Session tracker
@@ -261,10 +261,13 @@ export async function bootstrap(
         sessionTracker,
         summarizerRun: boundRun,
         logger,
-        thresholdTokens: 80_000,
+        thresholdTokens: config.context.thresholdTokens,
       });
 
-      logger.info('bootstrap: context roller initialized (threshold: 80K tokens)');
+      logger.info(
+        { thresholdTokens: config.context.thresholdTokens },
+        'bootstrap: context roller initialized',
+      );
     } else {
       logger.warn(
         { error: summarizerModelResult.error.message },

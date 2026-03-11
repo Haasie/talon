@@ -160,7 +160,6 @@ describe('Rolling context window integration', () => {
       summarizerRun: mockSummarizerRun,
       logger: mockLogger,
       thresholdTokens: 80_000,
-      recentMessageCount: 10,
     });
 
     // 3. Trigger rotation (simulate 90K tokens)
@@ -222,7 +221,6 @@ describe('Rolling context window integration', () => {
       summarizerRun: mockSummarizerRun,
       logger: mockLogger,
       thresholdTokens: 80_000,
-      recentMessageCount: 10,
     });
 
     sessionTracker.setSessionId(threadId, 'active-session');
@@ -304,7 +302,6 @@ describe('Rolling context window integration', () => {
       summarizerRun: mockSummarizerRun,
       logger: mockLogger,
       thresholdTokens: 80_000,
-      recentMessageCount: 10,
     });
 
     await roller.checkAndRotate(threadId, personaId, 100_000);

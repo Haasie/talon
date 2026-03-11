@@ -130,6 +130,17 @@ export const AuthConfigSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Context (rolling context window)
+// ---------------------------------------------------------------------------
+
+export const ContextConfigSchema = z.object({
+  /** Token count threshold for triggering session rotation. Default: 80 000. */
+  thresholdTokens: z.number().int().min(10_000).default(80_000),
+  /** Number of recent messages to include verbatim in fresh sessions. Default: 10. */
+  recentMessageCount: z.number().int().min(0).default(10),
+});
+
+// ---------------------------------------------------------------------------
 // Root config
 // ---------------------------------------------------------------------------
 
@@ -142,6 +153,7 @@ export const TalondConfigSchema = z.object({
   queue: QueueConfigSchema.default({}),
   scheduler: SchedulerConfigSchema.default({}),
   auth: AuthConfigSchema.default({}),
+  context: ContextConfigSchema.default({}),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   dataDir: z.string().default('data'),
 });
