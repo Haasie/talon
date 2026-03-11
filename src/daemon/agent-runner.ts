@@ -50,8 +50,9 @@ export class AgentRunner {
     // Resolve session ID: check in-memory tracker first, fall back to DB.
     // We do NOT seed the tracker here — only after a successful run (line ~335)
     // to avoid stranding a thread on a stale/expired session ID.
+    // Skip DB fallback if the session was explicitly rotated by ContextRoller.
     let resolvedSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
-    if (!resolvedSessionId) {
+    if (!resolvedSessionId && !this.ctx.sessionTracker.wasRotated(item.threadId)) {
       const dbSessionResult = this.ctx.repos.run.getLatestSessionId(item.threadId);
       if (dbSessionResult.isOk() && dbSessionResult.value) {
         resolvedSessionId = dbSessionResult.value;
@@ -133,14 +134,22 @@ export class AgentRunner {
         .filter(Boolean)
         .join('\n');
 
-      const systemPrompt = [
+      const systemPromptParts = [
         loadedPersona.systemPromptContent ?? '',
         loadedPersona.personalityContent ?? '',
         skillPrompt,
         channelContext,
-      ]
-        .filter(Boolean)
-        .join('\n\n');
+      ];
+
+      // Inject previous context when starting a fresh session (no resume).
+      if (!resolvedSessionId) {
+        const previousContext = this.ctx.contextAssembler.assemble(item.threadId);
+        if (previousContext) {
+          systemPromptParts.push(previousContext);
+        }
+      }
+
+      const systemPrompt = systemPromptParts.filter(Boolean).join('\n\n');
 
       // ----------------------------------------------------------------
       // Agent SDK mode: run Claude Code as a full autonomous agent with
@@ -346,6 +355,7 @@ export class AgentRunner {
       // Store session ID for future conversation resumption (memory + DB).
       if (resultSessionId) {
         this.ctx.sessionTracker.setSessionId(item.threadId, resultSessionId);
+        this.ctx.sessionTracker.clearRotated(item.threadId);
         this.ctx.repos.run.updateSessionId(runId, resultSessionId);
       }
 
@@ -367,6 +377,19 @@ export class AgentRunner {
       });
       if (tokenResult.isErr()) {
         this.ctx.logger.error({ runId, err: tokenResult.error }, 'agent-sdk: failed to persist token usage');
+      }
+
+      // Check if context needs rotation (rolling window).
+      // Awaited to prevent race with next queue item for the same thread.
+      if (this.ctx.contextRoller && cacheReadTokens > 0) {
+        try {
+          await this.ctx.contextRoller.checkAndRotate(item.threadId, personaId, cacheReadTokens);
+        } catch (e: unknown) {
+          this.ctx.logger.error(
+            { threadId: item.threadId, err: e },
+            'agent-runner: context rotation failed',
+          );
+        }
       }
 
       if (item.type === 'schedule') {

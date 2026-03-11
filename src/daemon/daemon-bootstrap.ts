@@ -49,6 +49,8 @@ import { SubAgentLoader } from '../subagents/subagent-loader.js';
 import { SubAgentRunner } from '../subagents/subagent-runner.js';
 import { ModelResolver } from '../subagents/model-resolver.js';
 import { recoverFromCrash } from './lifecycle.js';
+import { ContextRoller } from './context-roller.js';
+import { ContextAssembler } from './context-assembler.js';
 import type { DaemonContext } from './daemon-context.js';
 
 // ---------------------------------------------------------------------------
@@ -207,9 +209,10 @@ export async function bootstrap(
     );
   }
 
+  let modelResolver: ModelResolver | null = null;
   if (mergedAgentMap.size > 0) {
     const agentMap = mergedAgentMap;
-    const modelResolver = new ModelResolver(config.auth.providers ?? {});
+    modelResolver = new ModelResolver(config.auth.providers ?? {});
     subAgentRunner = new SubAgentRunner(
       agentMap,
       modelResolver,
@@ -231,8 +234,45 @@ export async function bootstrap(
     logger.info('bootstrap: no sub-agents found, continuing without them');
   }
 
+  // 8c. Context assembler + roller (rolling context window)
+  const contextAssembler = new ContextAssembler({
+    messageRepo: repos.message,
+    memoryRepo: repos.memory,
+    recentMessageCount: 10,
+  });
+
   // 9. Session tracker
   const sessionTracker = new SessionTracker();
+
+  // 9b. Context roller (needs sessionTracker + session-summarizer sub-agent)
+  let contextRoller: ContextRoller | null = null;
+  const summarizerAgent = mergedAgentMap.get('session-summarizer');
+  if (summarizerAgent && modelResolver) {
+    const summarizerModelResult = await modelResolver.resolve(summarizerAgent.manifest.model);
+    if (summarizerModelResult.isOk()) {
+      const summarizerModel = summarizerModelResult.value;
+      const summarizerPrompt = summarizerAgent.promptContents.join('\n\n');
+      const boundRun: typeof summarizerAgent.run = (ctx, input) =>
+        summarizerAgent.run({ ...ctx, model: summarizerModel, systemPrompt: summarizerPrompt }, input);
+
+      contextRoller = new ContextRoller({
+        messageRepo: repos.message,
+        memoryRepo: repos.memory,
+        sessionTracker,
+        summarizerRun: boundRun,
+        logger,
+        thresholdTokens: 80_000,
+        recentMessageCount: 10,
+      });
+
+      logger.info('bootstrap: context roller initialized (threshold: 80K tokens)');
+    } else {
+      logger.warn(
+        { error: summarizerModelResult.error.message },
+        'bootstrap: failed to resolve model for context roller, session rotation disabled',
+      );
+    }
+  }
 
   // 10. Crash recovery
   recoverFromCrash(repos.queue, logger);
@@ -287,6 +327,8 @@ export async function bootstrap(
     loadedSkills: loadedSkills.value,
     messagePipeline,
     subAgentRunner,
+    contextRoller,
+    contextAssembler,
     logger,
   } as Omit<DaemonContext, 'hostToolsBridge'> & { hostToolsBridge?: HostToolsBridge };
 

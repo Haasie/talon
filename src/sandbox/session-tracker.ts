@@ -39,6 +39,8 @@ interface SessionEntry {
  */
 export class SessionTracker {
   private readonly sessions: Map<string, SessionEntry> = new Map();
+  /** Threads whose sessions were explicitly rotated — prevents DB fallback from restoring. */
+  private readonly rotated: Set<string> = new Set();
   private readonly ttlMs: number;
 
   constructor(ttlMs: number = DEFAULT_TTL_MS) {
@@ -93,6 +95,23 @@ export class SessionTracker {
    */
   clearSession(threadId: string): void {
     this.sessions.delete(threadId);
+    this.rotated.add(threadId);
+  }
+
+  /**
+   * Check if a thread's session was explicitly rotated (cleared by ContextRoller).
+   * Prevents the DB fallback from restoring a stale session ID.
+   * The flag is consumed (removed) on read so it only blocks the next resolve.
+   */
+  wasRotated(threadId: string): boolean {
+    return this.rotated.has(threadId);
+  }
+
+  /**
+   * Clear the rotation flag for a thread after a fresh session is established.
+   */
+  clearRotated(threadId: string): void {
+    this.rotated.delete(threadId);
   }
 
   /**
