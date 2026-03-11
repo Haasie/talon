@@ -93,6 +93,11 @@ requiredCapabilities:
   - memory.read:thread
   - memory.write:thread
 
+# Optional: filesystem roots (for sub-agents that need file access)
+rootPaths:
+  - /home/talon/cf-notes
+  - /home/talon/personal-notes
+
 # Optional: timeout
 timeoutMs: 30000
 ```
@@ -226,6 +231,7 @@ Example capability mappings:
 | `schedule.write:own` | `services.schedules` |
 | `channel.send:*` | `services.channels`, `services.messages` |
 | `queue.write` | `services.queue` |
+| `fs.read` | `rootPaths` filesystem access (direct Node.js) |
 
 ## Host Tool: `subagent_invoke`
 
@@ -315,7 +321,48 @@ class SubAgentRunner {
 - **Capabilities needed**: `memory.read:thread`, `memory.write:thread`, `schedule.write:own`
 - **Services used**: `memory` for read/write, `schedules` to create follow-up schedules for discovered patterns
 
-### 3. `web-searcher`
+### 3. `file-searcher`
+
+**Purpose**: Search through files (markdown, text, code) and return ranked results with paths and snippets. Saves the main persona from burning Opus tokens on file scanning.
+
+- **Model**: Haiku 4.5
+- **Input**: `{ query: string, fileTypes?: string[], maxResults?: number }`
+- **Output**: Ranked list of `{ path, snippet, relevance }` objects
+- **Filesystem access**: Direct Node.js `fs` + glob + ripgrep via `rootPaths` config
+- **Capabilities needed**: `fs.read`
+- **Future**: Add vector store for embedding-based retrieval (semantic search over file contents)
+
+```yaml
+# subagent.yaml
+name: file-searcher
+version: "0.1.0"
+description: "Search files by content and return ranked results with snippets"
+
+model:
+  provider: anthropic
+  name: claude-haiku-4-5
+  maxTokens: 2048
+
+requiredCapabilities:
+  - fs.read
+
+# Filesystem roots this sub-agent can access (operator-configured)
+rootPaths:
+  - /home/talon/cf-notes
+  - /home/talon/personal-notes
+  - /home/talon/talon/personas
+```
+
+The sub-agent:
+1. Greps `rootPaths` for matches (keyword search via ripgrep or Node.js)
+2. Reads surrounding context from matching files
+3. Sends snippets to Haiku for relevance ranking and summarization
+4. Returns top N results with file paths, line numbers, and snippets
+
+This keeps the Opus persona out of the file-scanning loop entirely — it asks "find notes about X" and gets back a concise digest.
+
+### 4. `web-searcher`
+
 
 **Purpose**: Search the web and return a digest.
 
@@ -325,7 +372,7 @@ class SubAgentRunner {
 - **MCP**: Could use Brave Search MCP or direct API
 - **Capabilities needed**: `net.http`
 
-### 4. `memory-retriever`
+### 5. `memory-retriever`
 
 **Purpose**: Find relevant memories for a given query using semantic search.
 
@@ -402,6 +449,7 @@ Both would be exposed to sub-agents via the `services` object in `SubAgentContex
 ### Phase 2: Built-in Sub-Agents
 - `session-summarizer`
 - `memory-groomer`
+- `file-searcher`
 - `memory-retriever`
 
 ### Phase 3: Session Management
