@@ -327,6 +327,44 @@ auth:
 });
 
 // ---------------------------------------------------------------------------
+// persona.subagents
+// ---------------------------------------------------------------------------
+
+describe('persona.subagents schema', () => {
+  it('defaults to an empty array when not specified', () => {
+    const yaml = `
+personas:
+  - name: helper
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.personas[0].subagents).toEqual([]);
+    }
+  });
+
+  it('parses subagent names from config', () => {
+    const yaml = `
+personas:
+  - name: orchestrator
+    subagents:
+      - code-reviewer
+      - test-runner
+      - doc-writer
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.personas[0].subagents).toEqual([
+        'code-reviewer',
+        'test-runner',
+        'doc-writer',
+      ]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateConfig
 // ---------------------------------------------------------------------------
 

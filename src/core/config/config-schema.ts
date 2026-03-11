@@ -68,6 +68,7 @@ export const PersonaConfigSchema = z.object({
   model: z.string().default('claude-sonnet-4-6'),
   systemPromptFile: z.string().optional(),
   skills: z.array(z.string()).default([]),
+  subagents: z.array(z.string()).default([]),
   capabilities: CapabilitiesSchema.default({}),
   mounts: z.array(MountConfigSchema).default([]),
   maxConcurrent: z.number().int().min(1).optional(),
