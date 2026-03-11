@@ -2220,9 +2220,307 @@ git commit -m "feat(subagents): implement memory-retriever sub-agent with LLM re
 
 ---
 
+### Task 15: CLI command `talonctl run-subagent`
+
+A manual testing command to invoke any sub-agent from the command line without going through the main agent. Invaluable for development and debugging.
+
+**Files:**
+- Create: `src/cli/commands/run-subagent.ts`
+- Modify: `src/cli/index.ts` (register the command)
+- Test: `tests/unit/cli/run-subagent.test.ts`
+
+**Step 1: Write the failing test**
+
+Test the pure `runSubAgent()` function (not the CLI wrapper).
+
+```typescript
+// tests/unit/cli/run-subagent.test.ts
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { runSubAgent } from '../../../src/cli/commands/run-subagent.js';
+
+function makeTempDir(): string {
+  const dir = join(tmpdir(), `run-subagent-test-${randomUUID()}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+describe('runSubAgent()', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir();
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('loads and executes a sub-agent by name', async () => {
+    const agentDir = join(root, 'echo-agent');
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(
+      join(agentDir, 'subagent.yaml'),
+      `name: echo-agent\nversion: "0.1.0"\ndescription: "Echoes input"\nmodel:\n  provider: anthropic\n  name: claude-haiku-4-5`,
+    );
+    writeFileSync(
+      join(agentDir, 'index.js'),
+      `export async function run(ctx, input) {
+        return { success: true, summary: 'Echo: ' + (input.prompt || ''), data: {} };
+      }`,
+    );
+
+    const result = await runSubAgent({
+      name: 'echo-agent',
+      input: '{"prompt": "hello"}',
+      subagentsDir: root,
+      providers: { anthropic: { apiKey: 'test' } },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.summary).toContain('hello');
+  });
+
+  it('throws for unknown sub-agent', async () => {
+    await expect(
+      runSubAgent({
+        name: 'nonexistent',
+        input: '{}',
+        subagentsDir: root,
+        providers: {},
+      }),
+    ).rejects.toThrow('not found');
+  });
+
+  it('throws for invalid JSON input', async () => {
+    const agentDir = join(root, 'test-agent');
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(
+      join(agentDir, 'subagent.yaml'),
+      `name: test-agent\nversion: "0.1.0"\ndescription: "Test"\nmodel:\n  provider: anthropic\n  name: claude-haiku-4-5`,
+    );
+    writeFileSync(
+      join(agentDir, 'index.js'),
+      `export async function run() { return { success: true, summary: 'ok' }; }`,
+    );
+
+    await expect(
+      runSubAgent({
+        name: 'test-agent',
+        input: 'not-json',
+        subagentsDir: root,
+        providers: { anthropic: { apiKey: 'test' } },
+      }),
+    ).rejects.toThrow('Invalid JSON');
+  });
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/unit/cli/run-subagent.test.ts --reporter=verbose`
+
+Expected: FAIL — module not found
+
+**Step 3: Implement the command**
+
+```typescript
+// src/cli/commands/run-subagent.ts
+/**
+ * `talonctl run-subagent` command.
+ *
+ * Manually invokes a sub-agent for testing/debugging purposes.
+ * Loads the sub-agent, resolves the model, and executes it with
+ * the provided JSON input. No database, daemon, or persona required.
+ *
+ * The pure `runSubAgent()` function can be called programmatically.
+ * The `runSubAgentCommand()` wrapper handles config loading and console output.
+ */
+
+import { join } from 'node:path';
+import { SubAgentLoader } from '../../subagents/subagent-loader.js';
+import { ModelResolver } from '../../subagents/model-resolver.js';
+import type { SubAgentResult } from '../../subagents/subagent-types.js';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface RunSubAgentOptions {
+  name: string;
+  input: string;          // JSON string
+  subagentsDir: string;
+  providers: Record<string, { apiKey?: string; baseURL?: string }>;
+}
+
+// ---------------------------------------------------------------------------
+// Core logic (importable, no console / process.exit)
+// ---------------------------------------------------------------------------
+
+const makeNullLogger = () =>
+  ({
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+    child() { return this; },
+  }) as any;
+
+export async function runSubAgent(options: RunSubAgentOptions): Promise<SubAgentResult> {
+  const { name, input: inputStr, subagentsDir, providers } = options;
+
+  // Parse input JSON.
+  let input: Record<string, unknown>;
+  try {
+    input = JSON.parse(inputStr);
+  } catch {
+    throw new Error(`Invalid JSON input: ${inputStr}`);
+  }
+
+  // Load sub-agents.
+  const logger = makeNullLogger();
+  const loader = new SubAgentLoader(logger);
+  const loadResult = await loader.loadAll(subagentsDir);
+  if (loadResult.isErr()) {
+    throw new Error(`Failed to load sub-agents: ${loadResult.error.message}`);
+  }
+
+  const agent = loadResult.value.find((a) => a.manifest.name === name);
+  if (!agent) {
+    const available = loadResult.value.map((a) => a.manifest.name).join(', ') || 'none';
+    throw new Error(`Sub-agent "${name}" not found. Available: ${available}`);
+  }
+
+  // Resolve model.
+  const resolver = new ModelResolver(providers);
+  const modelResult = await resolver.resolve(agent.manifest.model);
+  if (modelResult.isErr()) {
+    throw new Error(`Model resolution failed: ${modelResult.error.message}`);
+  }
+
+  // Execute.
+  const systemPrompt = agent.promptContents.join('\n\n');
+  return agent.run(
+    {
+      threadId: 'cli-test',
+      personaId: 'cli-test',
+      systemPrompt,
+      model: modelResult.value,
+      services: {
+        memory: {} as any,
+        schedules: {} as any,
+        personas: {} as any,
+        channels: {} as any,
+        threads: {} as any,
+        messages: {} as any,
+        runs: {} as any,
+        queue: {} as any,
+        logger,
+      },
+    },
+    input,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CLI wrapper
+// ---------------------------------------------------------------------------
+
+export async function runSubAgentCommand(options: {
+  name: string;
+  input: string;
+  configPath?: string;
+}): Promise<void> {
+  const { loadConfig } = await import('../../core/config/config-loader.js');
+
+  const configPath = options.configPath ?? 'talond.yaml';
+  const configResult = loadConfig(configPath);
+  if (configResult.isErr()) {
+    console.error(`Error loading config: ${configResult.error.message}`);
+    process.exit(1);
+    return;
+  }
+
+  const config = configResult.value;
+  const subagentsDir = join(config.dataDir, 'subagents');
+
+  try {
+    const result = await runSubAgent({
+      name: options.name,
+      input: options.input,
+      subagentsDir,
+      providers: config.auth.providers ?? {},
+    });
+
+    console.log(JSON.stringify(result, null, 2));
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
+```
+
+**Step 4: Register in CLI index**
+
+In `src/cli/index.ts`, add:
+
+```typescript
+import { runSubAgentCommand } from './commands/run-subagent.js';
+
+// ... in the command registration section:
+
+program
+  .command('run-subagent')
+  .description('Manually invoke a sub-agent for testing (no daemon required)')
+  .requiredOption('--name <name>', 'Sub-agent name (e.g. "session-summarizer")')
+  .requiredOption('--input <json>', 'JSON input for the sub-agent')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; input: string; config: string }) => {
+    await runSubAgentCommand({
+      name: opts.name,
+      input: opts.input,
+      configPath: opts.config,
+    });
+  });
+```
+
+**Step 5: Run test to verify it passes**
+
+Run: `npx vitest run tests/unit/cli/run-subagent.test.ts --reporter=verbose`
+
+Expected: PASS
+
+**Step 6: Commit**
+
+```bash
+git add src/cli/commands/run-subagent.ts src/cli/index.ts tests/unit/cli/run-subagent.test.ts
+git commit -m "feat(cli): add talonctl run-subagent command for manual testing"
+```
+
+**Usage:**
+
+```bash
+# Test the session-summarizer
+talonctl run-subagent --name session-summarizer \
+  --input '{"transcript": "User: Hi\nAssistant: Hello!"}'
+
+# Test the file-searcher
+talonctl run-subagent --name file-searcher \
+  --input '{"query": "deployment notes", "maxResults": 5}'
+
+# Test with a specific config
+talonctl run-subagent --name memory-groomer \
+  --input '{}' --config /etc/talon/talond.yaml
+```
+
+---
+
 ## Phase 3: Integration & Verification
 
-### Task 15: End-to-end integration test
+### Task 16: End-to-end integration test
 
 Test the full pipeline: config → loader → runner → host tool → result.
 
@@ -2333,7 +2631,7 @@ git commit -m "test(subagents): add end-to-end integration test for sub-agent pi
 
 ---
 
-### Task 16: Verify build and run all tests
+### Task 17: Verify build and run all tests
 
 **Step 1: Type check**
 
@@ -2371,6 +2669,7 @@ git commit -m "chore(subagents): verify build and test suite passes"
 - `src/subagents/subagent-runner.ts` — Core execution engine
 - `src/subagents/index.ts` — Barrel export
 - `src/tools/host-tools/subagent-invoke.ts` — Host tool handler
+- `src/cli/commands/run-subagent.ts` — CLI testing command
 
 **New files (subagents/):**
 - `subagents/session-summarizer/` — Session compression sub-agent
@@ -2386,6 +2685,7 @@ git commit -m "chore(subagents): verify build and test suite passes"
 - `src/tools/host-tools-mcp-server.ts` — Register tool definition
 - `src/daemon/daemon-context.ts` — Add subAgentRunner field
 - `src/daemon/daemon-bootstrap.ts` — Initialize sub-agent system
+- `src/cli/index.ts` — Register run-subagent command
 
 **New test files:**
 - `tests/unit/subagents/subagent-schema.test.ts`
@@ -2393,6 +2693,7 @@ git commit -m "chore(subagents): verify build and test suite passes"
 - `tests/unit/subagents/model-resolver.test.ts`
 - `tests/unit/subagents/subagent-runner.test.ts`
 - `tests/unit/tools/subagent-invoke.test.ts`
+- `tests/unit/cli/run-subagent.test.ts`
 - `tests/unit/subagents/session-summarizer.test.ts`
 - `tests/unit/subagents/memory-groomer.test.ts`
 - `tests/unit/subagents/file-searcher.test.ts`
