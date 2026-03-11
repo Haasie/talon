@@ -34,7 +34,6 @@ export interface YamlDocument {
   channels?: Array<{ name: string; type: string; config?: Record<string, unknown>; enabled?: boolean }>;
   personas?: Array<{ name: string; model?: string; systemPromptFile?: string; skills?: string[]; capabilities?: Record<string, unknown>; mounts?: unknown[] }>;
   bindings?: Array<{ persona: string; channel: string; isDefault?: boolean }>;
-  schedules?: unknown[];
   [key: string]: unknown;
 }
 

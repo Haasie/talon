@@ -34,6 +34,9 @@ import { envCheckCommand } from './commands/env-check.js';
 import { removeChannelCommand } from './commands/remove-channel.js';
 import { removePersonaCommand } from './commands/remove-persona.js';
 import { configShowCommand } from './commands/config-show.js';
+import { addScheduleCommand } from './commands/add-schedule.js';
+import { listSchedulesCommand } from './commands/list-schedules.js';
+import { removeScheduleCommand } from './commands/remove-schedule.js';
 
 // Load .env before anything else so ${VAR} substitution works in config.
 const envPath = resolve(process.env.TALOND_ENV_FILE || '.env');
@@ -310,6 +313,48 @@ program
   .option('--show-secrets', 'Show secret values instead of masking them')
   .action(async (opts: { config: string; showSecrets?: boolean }) => {
     await configShowCommand({ configPath: opts.config, showSecrets: opts.showSecrets });
+  });
+
+// ---------------------------------------------------------------------------
+// Schedule commands (CLI-018 through CLI-020)
+// ---------------------------------------------------------------------------
+
+program
+  .command('add-schedule')
+  .description('Create a scheduled task for a persona')
+  .requiredOption('--persona <name>', 'Persona name')
+  .requiredOption('--channel <name>', 'Channel to bind the schedule thread to')
+  .requiredOption('--cron <expr>', 'Cron expression (5-field)')
+  .requiredOption('--label <label>', 'Human-readable label')
+  .requiredOption('--prompt <prompt>', 'Prompt text for the agent')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { persona: string; channel: string; cron: string; label: string; prompt: string; config: string }) => {
+    await addScheduleCommand({
+      persona: opts.persona,
+      channel: opts.channel,
+      cron: opts.cron,
+      label: opts.label,
+      prompt: opts.prompt,
+      configPath: opts.config,
+    });
+  });
+
+program
+  .command('list-schedules')
+  .description('List all scheduled tasks')
+  .option('--persona <name>', 'Filter by persona name')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { config: string; persona?: string }) => {
+    await listSchedulesCommand({ configPath: opts.config, persona: opts.persona });
+  });
+
+program
+  .command('remove-schedule')
+  .description('Disable a scheduled task')
+  .argument('<schedule-id>', 'Schedule ID to remove')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (scheduleId: string, opts: { config: string }) => {
+    await removeScheduleCommand({ scheduleId, configPath: opts.config });
   });
 
 program.parse();

@@ -86,20 +86,6 @@ export const ChannelConfigSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Schedule
-// ---------------------------------------------------------------------------
-
-export const ScheduleConfigSchema = z.object({
-  name: z.string().min(1),
-  personaName: z.string(),
-  threadId: z.string().optional(),
-  type: z.enum(['cron', 'interval', 'one_shot', 'event']),
-  expression: z.string(),
-  payload: z.record(z.unknown()).default({}),
-  enabled: z.boolean().default(true),
-});
-
-// ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
 
@@ -145,7 +131,6 @@ export const TalondConfigSchema = z.object({
   sandbox: SandboxConfigSchema.default({}),
   channels: z.array(ChannelConfigSchema).default([]),
   personas: z.array(PersonaConfigSchema).default([]),
-  schedules: z.array(ScheduleConfigSchema).default([]),
   ipc: IpcConfigSchema.default({}),
   queue: QueueConfigSchema.default({}),
   scheduler: SchedulerConfigSchema.default({}),

@@ -15,7 +15,6 @@ import type {
   MountConfigSchema,
   PersonaConfigSchema,
   ChannelConfigSchema,
-  ScheduleConfigSchema,
   IpcConfigSchema,
   QueueConfigSchema,
   SchedulerConfigSchema,
@@ -45,9 +44,6 @@ export type PersonaConfig = z.infer<typeof PersonaConfigSchema>;
 
 /** Channel integration definition. */
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
-
-/** Scheduled task definition. */
-export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>;
 
 /** IPC polling settings. */
 export type IpcConfig = z.infer<typeof IpcConfigSchema>;
