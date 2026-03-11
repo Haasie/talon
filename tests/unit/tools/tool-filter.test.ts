@@ -123,11 +123,12 @@ describe('filterAllowedMcpTools', () => {
         'memory.access',
         'net.http',
         'db.query',
+        'subagent.invoke',
       ],
       requireApproval: [],
     };
     const result = filterAllowedMcpTools(caps);
-    expect(result).toHaveLength(5);
+    expect(result).toHaveLength(6);
   });
 });
 
@@ -194,12 +195,13 @@ describe('isToolAllowed', () => {
 // ---------------------------------------------------------------------------
 
 describe('ALL_HOST_TOOLS', () => {
-  it('contains all five host tools', () => {
-    expect(ALL_HOST_TOOLS).toHaveLength(5);
+  it('contains all six host tools', () => {
+    expect(ALL_HOST_TOOLS).toHaveLength(6);
     expect(ALL_HOST_TOOLS).toContain('schedule.manage');
     expect(ALL_HOST_TOOLS).toContain('channel.send');
     expect(ALL_HOST_TOOLS).toContain('memory.access');
     expect(ALL_HOST_TOOLS).toContain('net.http');
     expect(ALL_HOST_TOOLS).toContain('db.query');
+    expect(ALL_HOST_TOOLS).toContain('subagent.invoke');
   });
 });

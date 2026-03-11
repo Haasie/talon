@@ -42,6 +42,7 @@ const HOST_TOOL_REGISTRY: ReadonlyArray<{
   { capabilityPrefix: 'memory.access', internalName: 'memory.access', mcpName: 'memory_access' },
   { capabilityPrefix: 'net.http', internalName: 'net.http', mcpName: 'net_http' },
   { capabilityPrefix: 'db.query', internalName: 'db.query', mcpName: 'db_query' },
+  { capabilityPrefix: 'subagent.invoke', internalName: 'subagent.invoke', mcpName: 'subagent_invoke' },
 ];
 
 /** Derived lookup: capability prefix → internal tool name. */
