@@ -145,20 +145,46 @@ Currently active skills:
 - **web-research** — Brave Search MCP for web search
 - **picnic** — Picnic grocery shopping MCP
 
-### 10. MCP Proxy (`src/mcp/`)
+### 10. Sub-Agent System (`src/subagents/`)
+
+Sub-agents are lightweight, single-purpose AI agents that handle mechanical LLM tasks (summarization, memory grooming, file search) using cheap models instead of the main Claude agent.
+
+**How it works:**
+
+- Built-in sub-agents live under `src/subagents/default/`, each containing a `subagent.yaml` manifest, `prompts/*.md` fragments, and an `index.ts` entry point. Custom sub-agents can be placed in `cwd()/subagents/` or `dataDir/subagents/`
+- The **SubAgentLoader** discovers and validates them at daemon startup
+- The **ModelResolver** maps `{provider, name}` to a Vercel AI SDK `LanguageModel` (supports Anthropic, OpenAI, Google, Ollama)
+- The **SubAgentRunner** validates capability grants, resolves the model, assembles the system prompt, and executes with a timeout
+- The main agent invokes sub-agents via the `subagent_invoke` host tool (capability: `subagent.invoke`)
+- Personas declare which sub-agents they can use via `persona.subagents` in `talond.yaml`
+
+**Built-in sub-agents:**
+
+| Sub-Agent | Purpose | Model |
+|-----------|---------|-------|
+| `session-summarizer` | Compresses transcripts into structured summaries | Haiku 4.5 |
+| `memory-groomer` | Consolidates/prunes thread memory items | Haiku 4.5 |
+| `file-searcher` | Searches files with keyword matching + LLM ranking | Haiku 4.5 |
+| `memory-retriever` | Finds relevant memories via keyword filter + LLM reranking | Haiku 4.5 |
+
+**CLI testing:** `talonctl run-subagent --name <agent> --input '<json>'` runs any sub-agent without a daemon.
+
+**Security:** Sub-agents declare `requiredCapabilities` in their manifest. The runner validates these against persona grants before execution. Sub-agents only access thread-scoped data via injected services.
+
+### 11. MCP Proxy (`src/mcp/`)
 
 - MCP (Model Context Protocol) servers run on the host
 - The proxy forwards tool calls from the container to the right MCP server
 - Rate limiting (token bucket) per server
 - Policy is checked before forwarding
 
-### 11. Scheduler (`src/scheduler/`)
+### 12. Scheduler (`src/scheduler/`)
 
 - Tick-based, checks every 5 seconds for due schedules
 - Supports: cron expressions, interval-based, one-shot
 - Can trigger prompts to me at scheduled times (e.g., reminders)
 
-### 12. Database (`src/core/database/`)
+### 13. Database (`src/core/database/`)
 
 SQLite with WAL mode. 12 tables, repository pattern:
 
@@ -187,6 +213,7 @@ SQLite with WAL mode. 12 tables, repository pattern:
 ├─ dist/                   # Compiled JavaScript (built from src/)
 ├─ personas/assistant/     # My system prompt lives here
 ├─ skills/                 # web-research, picnic, etc.
+├─ src/subagents/default/  # Built-in sub-agents (session-summarizer, etc.)
 ├─ config/                 # Example configs
 ├─ deploy/                 # systemd units, Dockerfiles
 ├─ specs/                  # Functional specifications
@@ -239,6 +266,7 @@ I operate on a **default-deny, capability-based** security model:
 | Remember things     | Thread memory (files in workspace)        |
 | Scheduled reminders | Scheduler (cron/one-shot)                 |
 | Read/write files    | Thread workspace only                     |
+| Sub-agent tasks     | `subagent.invoke` (summarize, groom, search, retrieve) |
 
 ---
 

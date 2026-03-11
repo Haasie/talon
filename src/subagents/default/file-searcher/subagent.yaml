@@ -1,0 +1,17 @@
+name: file-searcher
+version: "0.1.0"
+description: "Search files by content and return ranked results with snippets"
+
+model:
+  provider: anthropic
+  name: claude-haiku-4-5
+  maxTokens: 4096
+
+requiredCapabilities:
+  - fs.read:*
+
+rootPaths:
+  - /home/talon/cf-notes
+  - /home/talon/personal-notes
+
+timeoutMs: 30000

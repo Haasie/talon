@@ -18,6 +18,7 @@ import { ChannelSendHandler, type ChannelSendArgs } from './host-tools/channel-s
 import { HttpProxyHandler, type HttpProxyArgs } from './host-tools/http-proxy.js';
 import { DbQueryHandler, type DbQueryArgs } from './host-tools/db-query.js';
 import { MemoryAccessHandler, type MemoryAccessArgs } from './host-tools/memory-access.js';
+import { SubAgentInvokeHandler, type SubAgentInvokeArgs } from './host-tools/subagent-invoke.js';
 import { isToolAllowed, MCP_TO_INTERNAL } from './tool-filter.js';
 import { createDatabase } from '../core/database/connection.js';
 import type { ResolvedCapabilities } from '../personas/persona-types.js';
@@ -51,6 +52,7 @@ export class HostToolsBridge {
   private httpHandler: HttpProxyHandler;
   private dbHandler: DbQueryHandler;
   private memoryHandler: MemoryAccessHandler;
+  private subagentHandler: SubAgentInvokeHandler | null = null;
 
   constructor(private readonly ctx: DaemonContext) {
     this.socketPath = resolve(join(ctx.dataDir, 'host-tools.sock'));
@@ -94,6 +96,15 @@ export class HostToolsBridge {
       memoryRepository: ctx.repos.memory,
       logger: ctx.logger,
     });
+
+    if (ctx.subAgentRunner) {
+      this.subagentHandler = new SubAgentInvokeHandler({
+        runner: ctx.subAgentRunner,
+        personaLoader: ctx.personaLoader,
+        personaRepository: ctx.repos.persona,
+        logger: ctx.logger,
+      });
+    }
   }
 
   get path(): string {
@@ -313,6 +324,17 @@ export class HostToolsBridge {
 
       case 'db.query':
         return this.dbHandler.execute(args as unknown as DbQueryArgs, context);
+
+      case 'subagent.invoke':
+        if (!this.subagentHandler) {
+          return {
+            requestId: context.requestId ?? 'unknown',
+            tool,
+            status: 'error',
+            error: 'Sub-agent system not initialized',
+          };
+        }
+        return this.subagentHandler.execute(args as unknown as SubAgentInvokeArgs, context);
 
       default:
         return {

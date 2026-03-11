@@ -37,6 +37,7 @@ import { configShowCommand } from './commands/config-show.js';
 import { addScheduleCommand } from './commands/add-schedule.js';
 import { listSchedulesCommand } from './commands/list-schedules.js';
 import { removeScheduleCommand } from './commands/remove-schedule.js';
+import { runSubAgentCommand } from './commands/run-subagent.js';
 
 // Load .env before anything else so ${VAR} substitution works in config.
 const envPath = resolve(process.env.TALOND_ENV_FILE || '.env');
@@ -355,6 +356,26 @@ program
   .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
   .action(async (scheduleId: string, opts: { config: string }) => {
     await removeScheduleCommand({ scheduleId, configPath: opts.config });
+  });
+
+// ---------------------------------------------------------------------------
+// Sub-agent commands
+// ---------------------------------------------------------------------------
+
+program
+  .command('run-subagent')
+  .description('Manually invoke a sub-agent for testing (no daemon required)')
+  .requiredOption('--name <name>', 'Sub-agent name (e.g. "session-summarizer")')
+  .requiredOption('--input <json>', 'JSON input for the sub-agent')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .option('--subagents-dir <path>', 'Sub-agents directory (overrides config default)')
+  .action(async (opts: { name: string; input: string; config: string; subagentsDir?: string }) => {
+    await runSubAgentCommand({
+      name: opts.name,
+      input: opts.input,
+      configPath: opts.config,
+      subagentsDir: opts.subagentsDir,
+    });
   });
 
 program.parse();

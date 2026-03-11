@@ -45,6 +45,9 @@ import { ThreadWorkspace } from '../memory/thread-workspace.js';
 import { SessionTracker } from '../sandbox/session-tracker.js';
 
 import { HostToolsBridge } from '../tools/host-tools-bridge.js';
+import { SubAgentLoader } from '../subagents/subagent-loader.js';
+import { SubAgentRunner } from '../subagents/subagent-runner.js';
+import { ModelResolver } from '../subagents/model-resolver.js';
 import { recoverFromCrash } from './lifecycle.js';
 import type { DaemonContext } from './daemon-context.js';
 
@@ -150,6 +153,84 @@ export async function bootstrap(
     );
   }
 
+  // 8b. Load sub-agents (optional — if the directory does not exist, skip)
+  //     Load from three sources in priority order (later overrides earlier):
+  //       1. Built-in default sub-agents (compiled alongside daemon code)
+  //       2. cwd()/subagents (project-level custom agents)
+  //       3. dataDir/subagents (deployment-level custom agents)
+  const subAgentLoader = new SubAgentLoader(logger);
+  const builtinSubAgentsDir = join(import.meta.dirname, '../subagents/default');
+  const cwdSubAgentsDir = join(process.cwd(), 'subagents');
+  const dataDirSubAgentsDir = join(dataDir, 'subagents');
+
+  const builtinSubAgentsResult = await subAgentLoader.loadAll(builtinSubAgentsDir);
+  const cwdSubAgentsResult = await subAgentLoader.loadAll(cwdSubAgentsDir);
+  const dataDirSubAgentsResult = await subAgentLoader.loadAll(dataDirSubAgentsDir);
+
+  // Merge: built-in first, then cwd, then dataDir (later overrides earlier)
+  const mergedAgentMap = new Map<string, import('../subagents/subagent-types.js').LoadedSubAgent>();
+  if (builtinSubAgentsResult.isOk()) {
+    for (const a of builtinSubAgentsResult.value) {
+      mergedAgentMap.set(a.manifest.name, a);
+    }
+  }
+  if (cwdSubAgentsResult.isOk()) {
+    for (const a of cwdSubAgentsResult.value) {
+      mergedAgentMap.set(a.manifest.name, a);
+    }
+  }
+  if (dataDirSubAgentsResult.isOk()) {
+    for (const a of dataDirSubAgentsResult.value) {
+      mergedAgentMap.set(a.manifest.name, a);
+    }
+  }
+
+  let subAgentRunner: SubAgentRunner | null = null;
+
+  // Log any partial load errors regardless of whether agents were found.
+  if (builtinSubAgentsResult.isErr()) {
+    logger.warn(
+      { error: builtinSubAgentsResult.error.message, dir: builtinSubAgentsDir },
+      'bootstrap: failed to load built-in sub-agents',
+    );
+  }
+  if (cwdSubAgentsResult.isErr()) {
+    logger.warn(
+      { error: cwdSubAgentsResult.error.message, dir: cwdSubAgentsDir },
+      'bootstrap: failed to load sub-agents from cwd',
+    );
+  }
+  if (dataDirSubAgentsResult.isErr()) {
+    logger.warn(
+      { error: dataDirSubAgentsResult.error.message, dir: dataDirSubAgentsDir },
+      'bootstrap: failed to load sub-agents from dataDir',
+    );
+  }
+
+  if (mergedAgentMap.size > 0) {
+    const agentMap = mergedAgentMap;
+    const modelResolver = new ModelResolver(config.auth.providers ?? {});
+    subAgentRunner = new SubAgentRunner(
+      agentMap,
+      modelResolver,
+      {
+        memory: repos.memory,
+        schedules: repos.schedule,
+        personas: repos.persona,
+        channels: repos.channel,
+        threads: repos.thread,
+        messages: repos.message,
+        runs: repos.run,
+        queue: repos.queue,
+        logger,
+      },
+      logger,
+    );
+    logger.info({ subagents: [...agentMap.keys()] }, 'bootstrap: loaded sub-agents');
+  } else {
+    logger.info('bootstrap: no sub-agents found, continuing without them');
+  }
+
   // 9. Session tracker
   const sessionTracker = new SessionTracker();
 
@@ -205,6 +286,7 @@ export async function bootstrap(
     skillResolver,
     loadedSkills: loadedSkills.value,
     messagePipeline,
+    subAgentRunner,
     logger,
   } as Omit<DaemonContext, 'hostToolsBridge'> & { hostToolsBridge?: HostToolsBridge };
 

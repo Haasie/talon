@@ -277,6 +277,94 @@ describe('frozen config output', () => {
 });
 
 // ---------------------------------------------------------------------------
+// auth.providers
+// ---------------------------------------------------------------------------
+
+describe('auth.providers schema', () => {
+  it('defaults to an empty object when not specified', () => {
+    const result = loadConfigFromString('');
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.auth.providers).toEqual({});
+    }
+  });
+
+  it('parses provider credentials with apiKey and baseURL', () => {
+    const yaml = `
+auth:
+  mode: api_key
+  providers:
+    openai:
+      apiKey: sk-test-123
+      baseURL: https://api.openai.com/v1
+    anthropic:
+      apiKey: sk-ant-456
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.auth.providers.openai.apiKey).toBe('sk-test-123');
+      expect(result.value.auth.providers.openai.baseURL).toBe('https://api.openai.com/v1');
+      expect(result.value.auth.providers.anthropic.apiKey).toBe('sk-ant-456');
+      expect(result.value.auth.providers.anthropic.baseURL).toBeUndefined();
+    }
+  });
+
+  it('allows providers with only baseURL (no apiKey)', () => {
+    const yaml = `
+auth:
+  providers:
+    local:
+      baseURL: http://localhost:8080
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.auth.providers.local.baseURL).toBe('http://localhost:8080');
+      expect(result.value.auth.providers.local.apiKey).toBeUndefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// persona.subagents
+// ---------------------------------------------------------------------------
+
+describe('persona.subagents schema', () => {
+  it('defaults to an empty array when not specified', () => {
+    const yaml = `
+personas:
+  - name: helper
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.personas[0].subagents).toEqual([]);
+    }
+  });
+
+  it('parses subagent names from config', () => {
+    const yaml = `
+personas:
+  - name: orchestrator
+    subagents:
+      - code-reviewer
+      - test-runner
+      - doc-writer
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.personas[0].subagents).toEqual([
+        'code-reviewer',
+        'test-runner',
+        'doc-writer',
+      ]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateConfig
 // ---------------------------------------------------------------------------
 

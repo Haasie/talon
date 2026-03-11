@@ -1,0 +1,15 @@
+name: memory-retriever
+version: "0.1.0"
+description: "Finds relevant memories for a query using keyword pre-filter and LLM reranking"
+
+model:
+  provider: anthropic
+  name: claude-haiku-4-5
+  maxTokens: 4096
+
+requiredCapabilities:
+  - memory.access:*
+
+rootPaths: []
+
+timeoutMs: 30000

@@ -48,7 +48,8 @@ It is built for single-user or small-team deployments where you want persistent,
 
 - **Durable queue** — SQLite-backed message queue with crash recovery, retry, and dead-letter
 - **Scheduler** — Agent-managed cron, interval, and one-shot scheduled tasks
-- **Host-tools MCP bridge** — 5 built-in tools (schedule, channel, memory, http, db) exposed via Unix socket
+- **Host-tools MCP bridge** — 6 built-in tools (schedule, channel, memory, http, db, subagent) exposed via Unix socket
+- **Sub-agent system** — Route mechanical LLM tasks (summarization, memory grooming, search) to cheap models via pluggable sub-agents
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
 - **Session persistence** — Agent sessions resume across messages in the same thread
@@ -96,7 +97,7 @@ graph TB
     TG & SL & DC & WA & EM & TM --> CR
     CR --> NP --> RT --> Q
     Q --> A1 & A2
-    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db"| HT
+    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db, subagent"| HT
     HT --> CR
     HT --> DB
     SCH --> Q
@@ -459,6 +460,7 @@ Tools are gated by scoped capability labels. Capabilities are listed in `allow` 
 | `memory.access`            | Read/write per-thread structured memory  |
 | `net.http`                 | Fetch external URLs                      |
 | `db.query`                 | Execute read-only database queries       |
+| `subagent.invoke`          | Invoke sub-agents for delegated tasks    |
 
 ### Capability Resolution
 
@@ -509,6 +511,166 @@ granted = persona.capabilities ∩ skill.requiredCapabilities
 ```
 
 Skills with unmet capabilities produce a warning at startup and are skipped.
+
+---
+
+## Sub-Agents
+
+### Why Sub-Agents?
+
+The main agent (Claude Sonnet) is powerful but expensive. Many tasks it performs are mechanical — searching files, retrieving memories, grooming stale data, summarizing transcripts. These don't need Sonnet-level reasoning; a cheaper model like Haiku can handle them in a fraction of the cost and time.
+
+Sub-agents solve this by offloading specific, well-scoped tasks to cheap models. The main agent stays focused on conversation and decision-making, while sub-agents handle the grunt work and return structured results. This keeps per-message costs low without sacrificing capability.
+
+### How Sub-Agents Work
+
+1. The main agent calls `subagent_invoke` via MCP, specifying a sub-agent name and input
+2. The daemon validates that the persona is assigned this sub-agent and has the required capabilities
+3. The **ModelResolver** creates a Vercel AI SDK model instance for the sub-agent's configured provider
+4. The sub-agent's `run()` function executes with a system prompt, model, and injected services
+5. Results flow back to the main agent as structured data
+
+Sub-agents are loaded from three locations at startup (later overrides earlier):
+1. **Built-in** (`dist/subagents/default/`) — ships with the daemon
+2. **Project-level** (`cwd()/subagents/`) — custom agents in the project directory
+3. **Data directory** (`dataDir/subagents/`) — deployment-specific agents
+
+### Sub-Agent Structure
+
+```
+src/subagents/default/<agent_name>/    # built-in agents (compiled with daemon)
+  subagent.yaml          # manifest: model, capabilities, timeout
+  index.ts               # entry point: run(ctx, input) -> Result<SubAgentResult>
+  prompts/*.md           # system prompt fragments (concatenated in order)
+  lib/                   # optional helper modules
+```
+
+### Built-in Sub-Agents
+
+#### `file-searcher`
+
+**Problem:** The main agent has no filesystem access outside its sandbox. When a user asks "find my notes about deployment," the agent would need to read every file itself — slow, expensive, and context-heavy.
+
+**Solution:** Uses a cascading search backend (`rg` → `grep` → Node.js `readdir`/`readFile`) to find matches by content, then optionally ranks results with an LLM when there are too many hits. Returns ranked file paths with relevant snippets.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | `fs.read:*` |
+| **Timeout** | 30s |
+| **Input** | `{ query, rootPaths?, extensions?, maxFileSize?, maxResultsWithoutLlm? }` |
+| **Output** | Ranked list of `{ path, snippet, relevance }` |
+
+The search cascade tries `rg --json` first (fastest, with `--ignore-case`, `--max-filesize`, context lines), falls back to `grep -rni` if rg isn't installed, and finally to a pure Node.js implementation as a last resort. If fewer than 20 matches are found, they're returned directly without LLM ranking.
+
+#### `memory-retriever`
+
+**Problem:** As threads accumulate memory items (facts, summaries, notes), finding the right ones for context becomes a search problem. Loading all memories into the main agent's context is wasteful when only a few are relevant.
+
+**Solution:** Reads all memory items for the current thread, applies a keyword pre-filter, then uses an LLM to rank the remaining candidates by relevance to the query. Returns the top-K results with relevance scores and reasoning.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | `memory.access:*` |
+| **Timeout** | 30s |
+| **Input** | `{ query, topK?, threshold? }` |
+| **Output** | Ranked list of `{ id, type, content, relevance, reason }` |
+
+If fewer than 10 keyword matches are found, they're returned directly without LLM ranking. The LLM filters out items with relevance below 0.3.
+
+#### `memory-groomer`
+
+**Problem:** Memory items accumulate over time — duplicates, outdated facts, superseded summaries. Without grooming, context assembly pulls in stale data that confuses the main agent.
+
+**Solution:** Reads memory items for the current thread (optionally filtered by time window), sends them to an LLM that classifies each as `prune` (delete), `consolidate` (merge duplicates into one), or `keep`. Executes the recommended actions against the database. Consolidation inserts the merged entry before deleting sources to prevent data loss.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | `memory.access:*` |
+| **Timeout** | 30s |
+| **Input** | `{ periodMs? }` (optional: only groom items from the last N ms) |
+| **Output** | `{ pruned, consolidated, kept }` counts |
+
+Uses `generateObject` with a Zod discriminated union schema to ensure the LLM returns valid, typed actions.
+
+#### `session-summarizer`
+
+**Problem:** Long conversations consume context window space. When the agent resumes a thread, it needs the key facts without replaying the entire transcript.
+
+**Solution:** Takes a raw conversation transcript and compresses it into a structured summary using `generateObject` with a Zod schema. Returns key facts (important decisions and information), open threads (unresolved topics), and a narrative summary.
+
+| | |
+|---|---|
+| **Model** | Haiku 4.5 |
+| **Required capabilities** | none |
+| **Timeout** | 30s |
+| **Input** | `{ transcript }` |
+| **Output** | `{ keyFacts: string[], openThreads: string[], summary: string }` |
+
+### Provider Support
+
+Sub-agents can use any supported AI provider. Configure API keys in `talond.yaml`:
+
+```yaml
+auth:
+  providers:
+    anthropic:
+      apiKey: ${ANTHROPIC_API_KEY}
+    openai:
+      apiKey: ${OPENAI_API_KEY}
+    google:
+      apiKey: ${GOOGLE_API_KEY}
+    ollama:
+      baseURL: http://localhost:11434/v1
+```
+
+### Persona Configuration
+
+Personas must declare which sub-agents they can invoke and have the `subagent.invoke:*` capability:
+
+```yaml
+personas:
+  - name: assistant
+    model: claude-sonnet-4-6
+    subagents:
+      - session-summarizer
+      - memory-groomer
+      - memory-retriever
+      - file-searcher
+    capabilities:
+      allow:
+        - subagent.invoke:*
+        - memory.access:*
+        - fs.read:*
+```
+
+The agent also needs to know about its sub-agents in the system prompt. Add a section describing the available sub-agents and their input schemas so the agent knows when and how to use them.
+
+### Testing Sub-Agents
+
+Use `talonctl run-subagent` to test sub-agents without a running daemon:
+
+```bash
+# File search (no DB needed)
+npx talonctl run-subagent --name file-searcher --input '{"query": "deployment"}'
+
+# Session summarizer (no DB needed)
+npx talonctl run-subagent --name session-summarizer --input '{"transcript": "User: hello\nAssistant: hi"}'
+
+# memory-retriever and memory-groomer require a running daemon (they need DB access)
+```
+
+### Creating a Custom Sub-Agent
+
+1. Create a directory under `subagents/` (in cwd or dataDir) with a `subagent.yaml` manifest
+2. Write an `index.ts` (dev) or `index.js` (production) with an exported `run(ctx, input)` function returning `Result<SubAgentResult, SubAgentError>`
+3. Add prompt fragments in `prompts/` (numbered for ordering: `01-system.md`, `02-examples.md`)
+4. Declare required capabilities in the manifest — the daemon validates these against the persona at invocation time
+5. Test with `talonctl run-subagent --name your-agent --input '{}'`
+
+Custom sub-agents override built-in ones if they share the same name (dataDir takes precedence over cwd, which takes precedence over built-in).
 
 ---
 
@@ -585,6 +747,25 @@ npx talonctl env-check
 
 # Show resolved config (secrets masked)
 npx talonctl config-show
+```
+
+### Sub-Agent Testing
+
+| Command | Description |
+| ------- | ----------- |
+| `talonctl run-subagent --name <n> --input <json>` | Invoke a sub-agent directly (no daemon required) |
+
+```bash
+# Test the session-summarizer
+npx talonctl run-subagent --name session-summarizer \
+  --input '{"transcript": "User: Hi\nAssistant: Hello!"}'
+
+# Test the memory-retriever
+npx talonctl run-subagent --name memory-retriever \
+  --input '{"query": "deployment steps"}'
+
+# Use a custom subagents directory
+npx talonctl run-subagent --name my-agent --input '{}' --subagents-dir ./subagents
 ```
 
 ### Database and Operations
@@ -707,6 +888,7 @@ Agents interact with the host through 5 MCP tools exposed over a Unix socket. Th
 | `memory_access`    | Read/write per-thread memory         |
 | `net_http`         | Fetch external URLs                  |
 | `db_query`         | Read-only database queries           |
+| `subagent_invoke`  | Invoke a sub-agent by name           |
 
 ### Capability System
 
@@ -1016,6 +1198,18 @@ talon/
     skills/
       skill-loader.ts            # Load + validate skills
       skill-resolver.ts          # Skill -> persona resolution
+    subagents/
+      subagent-types.ts          # Core type definitions
+      subagent-schema.ts         # Zod manifest validation
+      subagent-loader.ts         # Load sub-agents from directories
+      model-resolver.ts          # Vercel AI SDK provider factory
+      subagent-runner.ts         # Execution engine with timeout
+      index.ts                   # Barrel export
+      default/                   # Built-in sub-agents
+        session-summarizer/      # Transcript compression
+        memory-groomer/          # Memory consolidation
+        memory-retriever/        # Memory search + LLM reranking
+        file-searcher/           # File search (rg/grep/node cascade)
     tools/
       host-tools/                # Host-side tool handlers
         channel-send.ts          # Send via channel connector
@@ -1023,6 +1217,7 @@ talon/
         memory-access.ts         # Thread memory CRUD
         schedule-manage.ts       # Schedule CRUD
         db-query.ts              # Read-only DB queries
+        subagent-invoke.ts       # Invoke sub-agents
       tool-registry.ts           # Tool manifest registry
       policy-engine.ts           # Capability-based access control
       capability-resolver.ts     # Label resolution

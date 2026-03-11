@@ -1,0 +1,15 @@
+name: memory-groomer
+version: "0.1.0"
+description: "Reviews memory entries, consolidates duplicates, prunes stale items"
+
+model:
+  provider: anthropic
+  name: claude-haiku-4-5
+  maxTokens: 8192
+
+requiredCapabilities:
+  - memory.access:*
+
+rootPaths: []
+
+timeoutMs: 30000
