@@ -1,0 +1,14 @@
+name: session-summarizer
+version: "0.1.0"
+description: "Compresses a long conversation transcript into key facts, decisions, and open threads for session resumption"
+
+model:
+  provider: anthropic
+  name: claude-haiku-4-5
+  maxTokens: 4096
+
+requiredCapabilities: []
+
+rootPaths: []
+
+timeoutMs: 30000
