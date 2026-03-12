@@ -350,19 +350,34 @@ export class SlackConnector implements ChannelConnector {
    * Call `apps.connections.open` to obtain a WebSocket URL for Socket Mode.
    */
   private async openSocketModeConnection(): Promise<string> {
-    const response = await fetch(`${SLACK_API_BASE}/apps.connections.open`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Bearer ${this.config.appToken}`,
-      },
-      signal: this.abortController?.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${SLACK_API_BASE}/apps.connections.open`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: `Bearer ${this.config.appToken}`,
+        },
+        signal: this.abortController?.signal,
+      });
+    } catch (fetchErr) {
+      throw new ChannelError(
+        `Slack apps.connections.open network error: ${String(fetchErr)}`,
+      );
+    }
 
-    const data = (await response.json()) as { ok: boolean; url?: string; error?: string };
+    let data: { ok: boolean; url?: string; error?: string };
+    try {
+      data = (await response.json()) as typeof data;
+    } catch {
+      throw new ChannelError(
+        `Slack apps.connections.open: could not parse response (HTTP ${response.status})`,
+      );
+    }
+
     if (!data.ok || !data.url) {
       throw new ChannelError(
-        `Slack apps.connections.open failed: ${data.error ?? 'no url returned'}`,
+        `Slack apps.connections.open failed (HTTP ${response.status}): ${data.error ?? 'no url returned'}`,
       );
     }
 
@@ -409,6 +424,8 @@ export class SlackConnector implements ChannelConnector {
           { channelName: this.name, err: wsErr },
           'slack socket mode websocket error',
         );
+        // Terminate the socket to release resources before reconnecting.
+        ws.terminate();
         if (this.ws === ws) this.ws = undefined;
         reject(wsErr);
       });
@@ -469,6 +486,12 @@ export class SlackConnector implements ChannelConnector {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
+      // If the signal is already aborted (stop() called before sleep()),
+      // resolve immediately to avoid stalling shutdown.
+      if (this.abortController?.signal.aborted) {
+        resolve();
+        return;
+      }
       const timer = setTimeout(resolve, ms);
       this.abortController?.signal.addEventListener('abort', () => {
         clearTimeout(timer);
