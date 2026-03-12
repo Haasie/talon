@@ -32,9 +32,9 @@ sandbox:
 
 # ---------------------------------------------------------------------------
 # Channels — inbound/outbound message adapters
-# Supported types: telegram, terminal
-# Planned but not yet tested: slack (TASK-042), discord (TASK-043),
-#   email (TASK-049), whatsapp (TASK-050)
+# Working: telegram, slack, terminal
+# Not yet implemented: discord (TASK-043), whatsapp (TASK-067)
+# Not yet tested: email (TASK-049)
 # ---------------------------------------------------------------------------
 channels:
   - type: telegram                   # channel adapter type
@@ -45,6 +45,14 @@ channels:
       allowedUserIds:                # restrict to these Telegram user IDs
         - 123456789
       pollIntervalMs: 1000           # long-poll interval for updates (ms)
+
+  - type: slack                      # Slack via Socket Mode (no public URL needed)
+    name: work-slack
+    enabled: true
+    config:
+      botToken: ${SLACK_BOT_TOKEN}   # Bot User OAuth Token (xoxb-...)
+      appToken: ${SLACK_APP_TOKEN}   # App-Level Token for Socket Mode (xapp-...)
+      signingSecret: ${SLACK_SIGNING_SECRET}  # signing secret from Slack app settings
 
 # ---------------------------------------------------------------------------
 # Personas — AI agent definitions, each with its own model + capabilities
