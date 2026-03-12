@@ -198,6 +198,15 @@ describe('validateCapabilityLabels — valid labels', () => {
     expect(warnings).toHaveLength(0);
   });
 
+  it('accepts labels with wildcard scope', () => {
+    const { valid, warnings } = validateCapabilityLabels({
+      allow: ['fs.read:*', 'memory.access:*', 'subagent.invoke:*'],
+      requireApproval: [],
+    });
+    expect(valid).toBe(true);
+    expect(warnings).toHaveLength(0);
+  });
+
   it('accepts labels with underscores in each segment', () => {
     const { valid, warnings } = validateCapabilityLabels({
       allow: ['my_domain.some_action:my_scope'],

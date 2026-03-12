@@ -71,10 +71,10 @@ scheduler:
 auth:
   mode: subscription
   # mode: api_key
-  # apiKey: ${ANTHROPIC_API_KEY}
+  # apiKey: ${SUBAGENT_ANTHROPIC_API_KEY}
   providers:
     anthropic:
-      apiKey: ${ANTHROPIC_API_KEY}
+      apiKey: ${SUBAGENT_ANTHROPIC_API_KEY}
     openai:
       apiKey: ${OPENAI_API_KEY}
       # baseURL: https://api.openai.com/v1
