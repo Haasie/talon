@@ -230,7 +230,7 @@ auth:
   mode: subscription
   providers:
     anthropic:
-      apiKey: ${ANTHROPIC_API_KEY}
+      apiKey: ${SUBAGENT_ANTHROPIC_API_KEY}
     openai:
       apiKey: ${OPENAI_API_KEY}
 
@@ -672,7 +672,7 @@ Sub-agents can use any supported AI provider. Configure API keys in `talond.yaml
 auth:
   providers:
     anthropic:
-      apiKey: ${ANTHROPIC_API_KEY}
+      apiKey: ${SUBAGENT_ANTHROPIC_API_KEY}
     openai:
       apiKey: ${OPENAI_API_KEY}
     google:

@@ -44,6 +44,7 @@
 | FEAT-008 | Personality folder for persona enhancement | PR #9 |
 | FEAT-009 | Sub-agent system (loader, runner, 4 built-in agents) | PR #12 |
 | FIX-017 | Remove Zod .min() constraints incompatible with Haiku | PR #12 |
+| TASK-065 | Rolling context window (auto-summarize + rotate at threshold) | PR #13 |
 
 ---
 
@@ -58,7 +59,6 @@ _Nothing currently in progress._
 | ID | Title | Description |
 |----|-------|-------------|
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
-| TASK-065 | Rolling context window | Daemon-side context rotation that keeps token usage below 100K without jarring session resets. Monitor `cacheReadTokens`, proactively summarize via session-summarizer sub-agent, store summary as memory, clear session, inject summary + recent messages into fresh session. Plan written: `docs/superpowers/plans/2026-03-11-rolling-context-window.md`. |
 
 ---
 
