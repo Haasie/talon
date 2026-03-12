@@ -37,7 +37,7 @@ export const SandboxConfigSchema = z.object({
   networkDefault: z.enum(['off', 'on']).default('off'),
   idleTimeoutMs: z.number().int().min(0).default(30 * 60 * 1000),
   hardTimeoutMs: z.number().int().min(0).default(60 * 60 * 1000),
-  resourceLimits: ResourceLimitsSchema.default(ResourceLimitsSchema.parse({})),
+  resourceLimits: ResourceLimitsSchema.default(() => ResourceLimitsSchema.parse({})),
 });
 
 // ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ export const PersonaConfigSchema = z.object({
   systemPromptFile: z.string().optional(),
   skills: z.array(z.string()).default([]),
   subagents: z.array(z.string()).default([]),
-  capabilities: CapabilitiesSchema.default(CapabilitiesSchema.parse({})),
+  capabilities: CapabilitiesSchema.default(() => CapabilitiesSchema.parse({})),
   mounts: z.array(MountConfigSchema).default([]),
   maxConcurrent: z.number().int().min(1).optional(),
 });
@@ -145,15 +145,15 @@ export const ContextConfigSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const TalondConfigSchema = z.object({
-  storage: StorageConfigSchema.default(StorageConfigSchema.parse({})),
-  sandbox: SandboxConfigSchema.default(SandboxConfigSchema.parse({})),
+  storage: StorageConfigSchema.default(() => StorageConfigSchema.parse({})),
+  sandbox: SandboxConfigSchema.default(() => SandboxConfigSchema.parse({})),
   channels: z.array(ChannelConfigSchema).default([]),
   personas: z.array(PersonaConfigSchema).default([]),
-  ipc: IpcConfigSchema.default(IpcConfigSchema.parse({})),
-  queue: QueueConfigSchema.default(QueueConfigSchema.parse({})),
-  scheduler: SchedulerConfigSchema.default(SchedulerConfigSchema.parse({})),
-  auth: AuthConfigSchema.default(AuthConfigSchema.parse({})),
-  context: ContextConfigSchema.default(ContextConfigSchema.parse({})),
+  ipc: IpcConfigSchema.default(() => IpcConfigSchema.parse({})),
+  queue: QueueConfigSchema.default(() => QueueConfigSchema.parse({})),
+  scheduler: SchedulerConfigSchema.default(() => SchedulerConfigSchema.parse({})),
+  auth: AuthConfigSchema.default(() => AuthConfigSchema.parse({})),
+  context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   dataDir: z.string().default('data'),
 });
