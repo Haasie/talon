@@ -53,17 +53,17 @@ export interface DaemonResponse {
 
 /** Zod schema for validating serialised {@link DaemonCommand} objects. */
 export const DaemonCommandSchema = z.object({
-  id: z.string().uuid(),
+  id: z.uuid(),
   command: z.enum(['status', 'reload', 'shutdown', 'queue-purge']),
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** Zod schema for validating serialised {@link DaemonResponse} objects. */
 export const DaemonResponseSchema = z.object({
-  id: z.string().uuid(),
-  commandId: z.string().uuid(),
+  id: z.uuid(),
+  commandId: z.uuid(),
   success: z.boolean(),
-  data: z.record(z.unknown()).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
   error: z.string().optional(),
 });
 

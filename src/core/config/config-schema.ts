@@ -37,7 +37,7 @@ export const SandboxConfigSchema = z.object({
       cpus: z.number().default(1),
       pidsLimit: z.number().int().default(256),
     })
-    .default({}),
+    .default({ memoryMb: 1024, cpus: 1, pidsLimit: 256 }),
 });
 
 // ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ export const PersonaConfigSchema = z.object({
   systemPromptFile: z.string().optional(),
   skills: z.array(z.string()).default([]),
   subagents: z.array(z.string()).default([]),
-  capabilities: CapabilitiesSchema.default({}),
+  capabilities: CapabilitiesSchema.default({ allow: [], requireApproval: [] }),
   mounts: z.array(MountConfigSchema).default([]),
   maxConcurrent: z.number().int().min(1).optional(),
 });
@@ -81,7 +81,7 @@ export const PersonaConfigSchema = z.object({
 export const ChannelConfigSchema = z.object({
   type: z.enum(['telegram', 'whatsapp', 'slack', 'email', 'discord', 'terminal']),
   name: z.string().min(1),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   tokenRef: z.string().optional(),
   enabled: z.boolean().default(true),
 });
@@ -145,15 +145,28 @@ export const ContextConfigSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const TalondConfigSchema = z.object({
-  storage: StorageConfigSchema.default({}),
-  sandbox: SandboxConfigSchema.default({}),
+  storage: StorageConfigSchema.default({ type: 'sqlite', path: 'data/talond.sqlite' }),
+  sandbox: SandboxConfigSchema.default({
+    runtime: 'docker',
+    image: 'talon-sandbox:latest',
+    maxConcurrent: 3,
+    networkDefault: 'off',
+    idleTimeoutMs: 30 * 60 * 1000,
+    hardTimeoutMs: 60 * 60 * 1000,
+    resourceLimits: { memoryMb: 1024, cpus: 1, pidsLimit: 256 },
+  }),
   channels: z.array(ChannelConfigSchema).default([]),
   personas: z.array(PersonaConfigSchema).default([]),
-  ipc: IpcConfigSchema.default({}),
-  queue: QueueConfigSchema.default({}),
-  scheduler: SchedulerConfigSchema.default({}),
-  auth: AuthConfigSchema.default({}),
-  context: ContextConfigSchema.default({}),
+  ipc: IpcConfigSchema.default({ pollIntervalMs: 500, daemonSocketDir: 'data/ipc/daemon' }),
+  queue: QueueConfigSchema.default({
+    maxAttempts: 3,
+    backoffBaseMs: 1000,
+    backoffMaxMs: 60000,
+    concurrencyLimit: 5,
+  }),
+  scheduler: SchedulerConfigSchema.default({ tickIntervalMs: 5000 }),
+  auth: AuthConfigSchema.default({ mode: 'subscription', providers: {} }),
+  context: ContextConfigSchema.default({ thresholdTokens: 80_000, recentMessageCount: 10 }),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   dataDir: z.string().default('data'),
 });

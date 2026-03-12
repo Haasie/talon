@@ -22,8 +22,8 @@ import { ConfigError } from '../errors/index.js';
  * Formats a Zod issue path and message into a single actionable string.
  * e.g. "sandbox.resourceLimits.memoryMb: Expected number, received string"
  */
-function formatIssue(issue: { path: (string | number)[]; message: string }): string {
-  const path = issue.path.length > 0 ? issue.path.join('.') : '<root>';
+function formatIssue(issue: { path: PropertyKey[]; message: string }): string {
+  const path = issue.path.length > 0 ? issue.path.map(String).join('.') : '<root>';
   return `${path}: ${issue.message}`;
 }
 
