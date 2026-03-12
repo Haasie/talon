@@ -21,7 +21,7 @@ import { z } from 'zod';
 /** Common fields present on every IPC message. */
 export const IpcMessageBaseSchema = z.object({
   /** UUID v4 uniquely identifying this message. */
-  id: z.string().uuid(),
+  id: z.uuid(),
   /** Discriminant string; narrows to a specific message type. */
   type: z.string(),
   /** Identifier for the current agent run. */
@@ -49,7 +49,7 @@ export const MessageNewSchema = IpcMessageBaseSchema.extend({
     /** Sender identifier (platform-specific). */
     senderId: z.string().optional(),
     /** Optional metadata passed by the channel adapter. */
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 
@@ -85,7 +85,7 @@ export const ToolRequestSchema = IpcMessageBaseSchema.extend({
     /** Name of the registered tool to invoke. */
     toolName: z.string().min(1),
     /** Tool-specific input arguments. */
-    args: z.record(z.unknown()),
+    args: z.record(z.string(), z.unknown()),
   }),
 });
 
@@ -100,7 +100,7 @@ export const ToolResultSchema = IpcMessageBaseSchema.extend({
   type: z.literal('tool.result'),
   payload: z.object({
     /** ID of the originating tool.request message. */
-    requestId: z.string().uuid(),
+    requestId: z.uuid(),
     /** Whether the tool executed successfully. */
     success: z.boolean(),
     /** Tool output on success. */

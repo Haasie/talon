@@ -163,6 +163,7 @@ function makeConfig(overrides: Record<string, unknown> = {}): unknown {
       resourceLimits: { memoryMb: 1024, cpus: 1, pidsLimit: 256 },
     },
     auth: { mode: 'subscription' },
+    context: { thresholdTokens: 80_000, recentMessageCount: 10 },
     ...overrides,
   };
 }

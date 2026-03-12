@@ -24,6 +24,12 @@ export const StorageConfigSchema = z.object({
 // Sandbox
 // ---------------------------------------------------------------------------
 
+const ResourceLimitsSchema = z.object({
+  memoryMb: z.number().int().default(1024),
+  cpus: z.number().default(1),
+  pidsLimit: z.number().int().default(256),
+});
+
 export const SandboxConfigSchema = z.object({
   runtime: z.enum(['docker', 'apple-container']).default('docker'),
   image: z.string().default('talon-sandbox:latest'),
@@ -31,13 +37,7 @@ export const SandboxConfigSchema = z.object({
   networkDefault: z.enum(['off', 'on']).default('off'),
   idleTimeoutMs: z.number().int().min(0).default(30 * 60 * 1000),
   hardTimeoutMs: z.number().int().min(0).default(60 * 60 * 1000),
-  resourceLimits: z
-    .object({
-      memoryMb: z.number().int().default(1024),
-      cpus: z.number().default(1),
-      pidsLimit: z.number().int().default(256),
-    })
-    .default({}),
+  resourceLimits: ResourceLimitsSchema.default(() => ResourceLimitsSchema.parse({})),
 });
 
 // ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ export const PersonaConfigSchema = z.object({
   systemPromptFile: z.string().optional(),
   skills: z.array(z.string()).default([]),
   subagents: z.array(z.string()).default([]),
-  capabilities: CapabilitiesSchema.default({}),
+  capabilities: CapabilitiesSchema.default(() => CapabilitiesSchema.parse({})),
   mounts: z.array(MountConfigSchema).default([]),
   maxConcurrent: z.number().int().min(1).optional(),
 });
@@ -81,7 +81,7 @@ export const PersonaConfigSchema = z.object({
 export const ChannelConfigSchema = z.object({
   type: z.enum(['telegram', 'whatsapp', 'slack', 'email', 'discord', 'terminal']),
   name: z.string().min(1),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   tokenRef: z.string().optional(),
   enabled: z.boolean().default(true),
 });
@@ -145,15 +145,15 @@ export const ContextConfigSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const TalondConfigSchema = z.object({
-  storage: StorageConfigSchema.default({}),
-  sandbox: SandboxConfigSchema.default({}),
+  storage: StorageConfigSchema.default(() => StorageConfigSchema.parse({})),
+  sandbox: SandboxConfigSchema.default(() => SandboxConfigSchema.parse({})),
   channels: z.array(ChannelConfigSchema).default([]),
   personas: z.array(PersonaConfigSchema).default([]),
-  ipc: IpcConfigSchema.default({}),
-  queue: QueueConfigSchema.default({}),
-  scheduler: SchedulerConfigSchema.default({}),
-  auth: AuthConfigSchema.default({}),
-  context: ContextConfigSchema.default({}),
+  ipc: IpcConfigSchema.default(() => IpcConfigSchema.parse({})),
+  queue: QueueConfigSchema.default(() => QueueConfigSchema.parse({})),
+  scheduler: SchedulerConfigSchema.default(() => SchedulerConfigSchema.parse({})),
+  auth: AuthConfigSchema.default(() => AuthConfigSchema.parse({})),
+  context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   dataDir: z.string().default('data'),
 });
