@@ -5,7 +5,7 @@ description: "Search files by content and return ranked results with snippets"
 model:
   provider: anthropic
   name: claude-haiku-4-5
-  maxTokens: 4096
+  maxTokens: 16384
 
 requiredCapabilities:
   - fs.read:*
