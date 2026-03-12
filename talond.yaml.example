@@ -1,87 +1,131 @@
 # talond.yaml.example
 # Copy to talond.yaml and edit for your environment.
 # Canonical config shape validated by src/core/config/config-schema.ts
+#
+# All sections are optional — omitted sections use built-in defaults.
+# Supports ${ENV_VAR} substitution (resolved at load time from process env).
 
+# ---------------------------------------------------------------------------
+# Storage — where talond persists all state (messages, threads, runs, etc.)
+# ---------------------------------------------------------------------------
 storage:
-  type: sqlite
-  path: data/talond.sqlite
+  type: sqlite                       # only "sqlite" supported for now
+  path: data/talond.sqlite           # path to the SQLite database file
 
+# ---------------------------------------------------------------------------
+# Sandbox — container isolation for agent execution
+# NOT YET IMPLEMENTED — agent runs on host for now. See TASK-037.
+# These values are parsed and validated but have no effect until
+# Docker sandbox support lands.
+# ---------------------------------------------------------------------------
 sandbox:
-  runtime: docker
-  image: talon-sandbox:latest
-  maxConcurrent: 3
-  networkDefault: off
-  idleTimeoutMs: 1800000
-  hardTimeoutMs: 3600000
+  runtime: docker                    # "docker" or "apple-container"
+  image: talon-sandbox:latest        # container image for sandboxed runs
+  maxConcurrent: 3                   # max simultaneous sandbox containers
+  networkDefault: off                # "off" = no network in sandbox; "on" = allow
+  idleTimeoutMs: 1800000             # kill idle container after 30 min
+  hardTimeoutMs: 3600000             # hard kill after 60 min regardless of activity
   resourceLimits:
-    memoryMb: 1024
-    cpus: 1
-    pidsLimit: 256
+    memoryMb: 1024                   # memory cap per container (MB)
+    cpus: 1                          # CPU core limit per container
+    pidsLimit: 256                   # max processes per container
 
+# ---------------------------------------------------------------------------
+# Channels — inbound/outbound message adapters
+# Supported types: telegram, terminal
+# Planned but not yet tested: slack (TASK-042), discord (TASK-043),
+#   email (TASK-049), whatsapp (TASK-050)
+# ---------------------------------------------------------------------------
 channels:
-  - type: telegram
-    name: personal-telegram
-    enabled: true
+  - type: telegram                   # channel adapter type
+    name: personal-telegram          # unique name (used in bindings + logs)
+    enabled: true                    # set false to disable without removing
     config:
-      token: ${TELEGRAM_BOT_TOKEN}
-      allowedUserIds:
+      token: ${TELEGRAM_BOT_TOKEN}   # bot token (from @BotFather)
+      allowedUserIds:                # restrict to these Telegram user IDs
         - 123456789
-      pollIntervalMs: 1000
+      pollIntervalMs: 1000           # long-poll interval for updates (ms)
 
+# ---------------------------------------------------------------------------
+# Personas — AI agent definitions, each with its own model + capabilities
+# Personas are bound to channels via the bindings table (auto-created on startup).
+# ---------------------------------------------------------------------------
 personas:
-  - name: assistant
-    model: claude-sonnet-4-6
-    systemPromptFile: personas/assistant/system.md
-    skills: []
-    subagents:
+  - name: assistant                  # unique persona identifier
+    model: claude-sonnet-4-6         # AI model to use for this persona
+    systemPromptFile: personas/assistant/system.md  # path to system prompt markdown
+    skills: []                       # skill names to load (from skills/ directory)
+    subagents:                       # sub-agent names (from subagents/default/)
       - session-summarizer
       - memory-groomer
       - memory-retriever
       - file-searcher
     capabilities:
-      allow:
-        - channel.send:telegram
+      allow:                         # tools/actions this persona can use (default-deny)
+        - channel.send:telegram      # format: domain.action:scope (* = wildcard)
         - fs.read:*
         - memory.access:*
         - subagent.invoke:*
-      requireApproval:
-        - fs.write:workspace
-    mounts:
-      - source: data/threads/{thread}/memory
+      requireApproval:               # tools that need human confirmation before executing
+        - fs.write:workspace         # NOT YET IMPLEMENTED — approval flow planned
+    mounts:                          # host dirs to bind into sandbox containers
+      - source: data/threads/{thread}/memory  # NOT YET ACTIVE — requires sandbox (TASK-037)
         target: /memory
-        mode: ro
+        mode: ro                     # "ro" = read-only, "rw" = read-write
       - source: data/threads/{thread}/artifacts
         target: /artifacts
         mode: rw
-    maxConcurrent: 2
+    maxConcurrent: 2                 # max parallel agent runs for this persona
 
+# ---------------------------------------------------------------------------
+# IPC — file-based communication between talond daemon and talonctl CLI
+# ---------------------------------------------------------------------------
 ipc:
-  pollIntervalMs: 500
-  daemonSocketDir: data/ipc/daemon
+  pollIntervalMs: 500                # how often talonctl polls for responses (ms)
+  daemonSocketDir: data/ipc/daemon   # directory for IPC command/response files
 
+# ---------------------------------------------------------------------------
+# Queue — durable message processing queue (SQLite-backed FIFO per thread)
+# ---------------------------------------------------------------------------
 queue:
-  maxAttempts: 3
-  backoffBaseMs: 1000
-  backoffMaxMs: 60000
-  concurrencyLimit: 5
+  maxAttempts: 3                     # retry limit before sending to dead-letter
+  backoffBaseMs: 1000                # initial retry delay (ms)
+  backoffMaxMs: 60000                # max retry delay cap (ms, exponential backoff)
+  concurrencyLimit: 5                # max messages processed in parallel
 
+# ---------------------------------------------------------------------------
+# Scheduler — cron/interval/one-shot task execution engine
+# ---------------------------------------------------------------------------
 scheduler:
-  tickIntervalMs: 5000
+  tickIntervalMs: 5000               # how often the scheduler checks for due tasks (ms)
 
+# ---------------------------------------------------------------------------
+# Auth — authentication for AI provider APIs
+# ---------------------------------------------------------------------------
 auth:
-  mode: subscription
-  # mode: api_key
-  # apiKey: ${SUBAGENT_ANTHROPIC_API_KEY}
-  providers:
+  mode: subscription                 # "subscription" = Claude Max (no API key needed)
+  # mode: api_key                    # use "api_key" if paying per-token via API
+  # apiKey: ${SUBAGENT_ANTHROPIC_API_KEY}  # main Anthropic API key (for api_key mode)
+  providers:                         # per-provider credentials (used by sub-agents)
     anthropic:
       apiKey: ${SUBAGENT_ANTHROPIC_API_KEY}
     openai:
       apiKey: ${OPENAI_API_KEY}
-      # baseURL: https://api.openai.com/v1
+      # baseURL: https://api.openai.com/v1  # override for proxies or compatible APIs
+    # google:
+    #   apiKey: ${GOOGLE_AI_API_KEY}        # Gemini API key (from ai.google.dev)
+    # ollama:                               # local models — no API key needed
+    #   baseURL: http://localhost:11434/v1   # Ollama server URL
 
+# ---------------------------------------------------------------------------
+# Context — rolling context window (auto-summarize + rotate long conversations)
+# ---------------------------------------------------------------------------
 context:
-  thresholdTokens: 80000       # trigger session rotation after this many cache-read tokens
-  recentMessageCount: 10       # verbatim messages injected into fresh sessions
+  thresholdTokens: 80000             # token count that triggers session rotation
+  recentMessageCount: 10             # recent messages included verbatim in new session
 
-logLevel: info
-dataDir: data
+# ---------------------------------------------------------------------------
+# Global settings
+# ---------------------------------------------------------------------------
+logLevel: info                       # trace | debug | info | warn | error | fatal
+dataDir: data                        # root directory for all runtime data

@@ -1,6 +1,6 @@
 # Talon — Project Board
 
-> Last updated: 2026-03-11
+> Last updated: 2026-03-12
 
 ## ✅ Done
 
@@ -45,6 +45,7 @@
 | FEAT-009 | Sub-agent system (loader, runner, 4 built-in agents)          | PR #12    |
 | FIX-017  | Remove Zod .min() constraints incompatible with Haiku         | PR #12    |
 | TASK-065 | Rolling context window (auto-summarize + rotate at threshold) | PR #13    |
+| BUG-003  | Upgrade zod v3 → v4 (peer dep conflict resolved)             | PR #15    |
 
 ---
 
@@ -100,7 +101,7 @@ _Nothing currently in progress._
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | BUG-001 | 359 tests failing (pre-existing, not from recent changes) — likely test setup/teardown issues in repository tests                                                                                             | Low      |
 | BUG-002 | `SdkProcessSpawner` is dead code now that Agent SDK runs on host — should be removed or repurposed for Docker mode                                                                                            | Low      |
-| BUG-003 | `zod` peer dep conflict: Agent SDK `@0.2.71` requires `zod@^4.0.0`, project uses `zod@3.25.76`. Upgrade zod to v4 — `@anthropic-ai/sdk` and `@modelcontextprotocol/sdk` both support v4 in their peer ranges. | Medium   |
+| BUG-003 | ~~`zod` peer dep conflict: Agent SDK requires `zod@^4.0.0`, project used `zod@3.x`.~~ Fixed: upgraded to zod v4, migrated all schemas (PR #15).                                                              | Resolved |
 | BUG-007 | ~~Memory key (`id`) globally unique, collides across threads.~~ Fixed: compound PK `(thread_id, id)` via migration 002, all repo methods scope by thread_id.                                                  | Resolved |
 | BUG-008 | ~~Session resume lost on daemon restart.~~ Fixed: `AgentRunner` falls back to `getLatestSessionId()` from `runs` table when in-memory tracker is empty, then seeds the tracker.                               | Resolved |
 | BUG-004 | ~~`schedule.manage` host tool dead code~~ — Fixed: wired via host-tools MCP bridge + Unix socket. All 5 tools work (schedule, channel, memory, http, db).                                                     | Resolved |
