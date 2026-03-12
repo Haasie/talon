@@ -4,47 +4,47 @@
 
 ## ✅ Done
 
-| ID | Title | Commit |
-|----|-------|--------|
-| TASK-032 | Wire daemon bootstrap and runtime orchestration | `9f6aa4b` |
-| TASK-033 | Implement MCP transport forwarding in proxy | `f34e17d` |
-| TASK-034 | Fix run identity and channel-scoped idempotency | `b20efd4` |
-| FIX-001 | cron-parser ESM default import | `5456c61` |
-| FIX-002 | Copy SQL migrations to dist/ | `8e22e9f` |
-| FIX-003 | Add ${ENV_VAR} substitution in config loader | `fb6a309` |
-| FIX-004 | Seed channel DB rows on startup | `79e82bd` |
-| FIX-005 | Create default channel→persona binding on startup | `f382655` |
-| FIX-006 | Resolve Docker bind mount paths to absolute | `5828635` |
-| FEAT-001 | Agent SDK integration (replaced direct-mode API calls) | `bd25665` |
-| FEAT-002 | Session persistence across daemon restarts | `df9342e` |
-| FEAT-003 | Conversation history / multi-turn support | `1861f20` |
-| FEAT-004 | Skill MCP server passthrough to Agent SDK | `da2728b` |
-| FEAT-005 | Skills system live (web-research + picnic on VM) | — |
-| FIX-007 | Agent SDK query timeout (3 min) to prevent indefinite hangs | `397a028` |
-| FIX-008 | Remove stale DB session fallback causing agent hangs | `005e23d` |
-| FIX-009 | Disable session resume (hangs with MCP servers attached) | `442b01d` |
-| FIX-010 | Merge process.env into host-tools MCP server env | `a0735ea` |
-| FIX-011 | Resolve host-tools socket path to absolute | `b8b54e2` |
-| FIX-012 | Inject channel context into agent system prompt | `8d1f508` |
-| FIX-013 | Wire memory.access handler + local timezone for cron | `11f9ef3` |
-| FIX-014 | Resolve thread external_id for channel.send | `a158e90` |
-| FIX-015 | Skip duplicate outbound reply for schedule items | `3c3ce3b` |
-| FEAT-006 | `talonctl queue-purge` command with FK-safe transaction | `6e7c8ad` |
-| FEAT-007 | Schedule list action (agents can review their schedules) | `7de45de` |
-| TASK-044 | Scheduled tasks — tested end-to-end on VM | `7de45de` |
-| TASK-059 | Native .env file loading (PR #1) | merged |
-| TASK-039 | Systemd service unit with install script (PR #2) | merged |
-| TASK-040 | Per-persona tool restrictions (PR #3) | merged |
-| FIX-016 | Re-enable session resume for conversation memory | `cc3449c` |
-| TASK-060 | GPT-5.4 code review fixes (all 10 items) | PR #4 |
-| TASK-062 | Terminal channel connector + talonctl chat CLI | PR #5 |
-| BUG-007 | Compound PK (thread_id, id) for memory_items | PR #6 |
-| BUG-008 | Session resume across daemon restarts | PR #7 |
-| TASK-038 | talonctl CLI cleanup (20/20 subtasks, 213 tests) | PR #8 |
-| FEAT-008 | Personality folder for persona enhancement | PR #9 |
-| FEAT-009 | Sub-agent system (loader, runner, 4 built-in agents) | PR #12 |
-| FIX-017 | Remove Zod .min() constraints incompatible with Haiku | PR #12 |
-| TASK-065 | Rolling context window (auto-summarize + rotate at threshold) | PR #13 |
+| ID       | Title                                                         | Commit    |
+| -------- | ------------------------------------------------------------- | --------- |
+| TASK-032 | Wire daemon bootstrap and runtime orchestration               | `9f6aa4b` |
+| TASK-033 | Implement MCP transport forwarding in proxy                   | `f34e17d` |
+| TASK-034 | Fix run identity and channel-scoped idempotency               | `b20efd4` |
+| FIX-001  | cron-parser ESM default import                                | `5456c61` |
+| FIX-002  | Copy SQL migrations to dist/                                  | `8e22e9f` |
+| FIX-003  | Add ${ENV_VAR} substitution in config loader                  | `fb6a309` |
+| FIX-004  | Seed channel DB rows on startup                               | `79e82bd` |
+| FIX-005  | Create default channel→persona binding on startup             | `f382655` |
+| FIX-006  | Resolve Docker bind mount paths to absolute                   | `5828635` |
+| FEAT-001 | Agent SDK integration (replaced direct-mode API calls)        | `bd25665` |
+| FEAT-002 | Session persistence across daemon restarts                    | `df9342e` |
+| FEAT-003 | Conversation history / multi-turn support                     | `1861f20` |
+| FEAT-004 | Skill MCP server passthrough to Agent SDK                     | `da2728b` |
+| FEAT-005 | Skills system live (web-research + picnic on VM)              | —         |
+| FIX-007  | Agent SDK query timeout (3 min) to prevent indefinite hangs   | `397a028` |
+| FIX-008  | Remove stale DB session fallback causing agent hangs          | `005e23d` |
+| FIX-009  | Disable session resume (hangs with MCP servers attached)      | `442b01d` |
+| FIX-010  | Merge process.env into host-tools MCP server env              | `a0735ea` |
+| FIX-011  | Resolve host-tools socket path to absolute                    | `b8b54e2` |
+| FIX-012  | Inject channel context into agent system prompt               | `8d1f508` |
+| FIX-013  | Wire memory.access handler + local timezone for cron          | `11f9ef3` |
+| FIX-014  | Resolve thread external_id for channel.send                   | `a158e90` |
+| FIX-015  | Skip duplicate outbound reply for schedule items              | `3c3ce3b` |
+| FEAT-006 | `talonctl queue-purge` command with FK-safe transaction       | `6e7c8ad` |
+| FEAT-007 | Schedule list action (agents can review their schedules)      | `7de45de` |
+| TASK-044 | Scheduled tasks — tested end-to-end on VM                     | `7de45de` |
+| TASK-059 | Native .env file loading (PR #1)                              | merged    |
+| TASK-039 | Systemd service unit with install script (PR #2)              | merged    |
+| TASK-040 | Per-persona tool restrictions (PR #3)                         | merged    |
+| FIX-016  | Re-enable session resume for conversation memory              | `cc3449c` |
+| TASK-060 | GPT-5.4 code review fixes (all 10 items)                      | PR #4     |
+| TASK-062 | Terminal channel connector + talonctl chat CLI                | PR #5     |
+| BUG-007  | Compound PK (thread_id, id) for memory_items                  | PR #6     |
+| BUG-008  | Session resume across daemon restarts                         | PR #7     |
+| TASK-038 | talonctl CLI cleanup (20/20 subtasks, 213 tests)              | PR #8     |
+| FEAT-008 | Personality folder for persona enhancement                    | PR #9     |
+| FEAT-009 | Sub-agent system (loader, runner, 4 built-in agents)          | PR #12    |
+| FIX-017  | Remove Zod .min() constraints incompatible with Haiku         | PR #12    |
+| TASK-065 | Rolling context window (auto-summarize + rotate at threshold) | PR #13    |
 
 ---
 
@@ -56,56 +56,56 @@ _Nothing currently in progress._
 
 ## 📋 Backlog — High Priority
 
-| ID | Title | Description |
-|----|-------|-------------|
+| ID       | Title                    | Description                                                                                                                                                                                                                                                                                           |
+| -------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TASK-037 | Docker sandbox hardening | Run Agent SDK inside Docker containers for blast-radius isolation against prompt injection from untrusted input (repos, emails, messages). The Agent SDK `query()` already works on the host; wrap it in a container with network access to `api.anthropic.com`. Keep the host-mode path as fallback. |
 
 ---
 
 ## 📋 Backlog — Medium Priority
 
-| ID | Title | Description |
-|----|-------|-------------|
-| TASK-041 | Multi-persona support | Test multiple personas bound to different channels (e.g. a "coder" persona for Slack, an "assistant" persona for Telegram). Verify routing and isolation. |
-| TASK-042 | Slack channel connector + multi-agent swarm | Test and fix the Slack connector end-to-end. **Design needed**: `bot_id` filter (line 220) drops ALL bot messages — blocks agent-to-agent communication. Need echo prevention that allows cross-channel bot messages while preventing self-reply loops. Also: shared workspace between agents, persona-per-channel routing. Target: multiple domain-specific agents collaborating in Slack. |
-| TASK-043 | Discord channel connector | Test and fix the Discord connector end-to-end. |
-| TASK-047 | Cost tracking & limits | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command. |
-| TASK-063 | Memory-retriever vector search | Reimplement the `memory-retriever` sub-agent to use embeddings and a vector store (e.g. `sqlite-vec`, Chroma, or Qdrant) instead of keyword pre-filter + LLM reranking. Current approach reads all memories and does string matching, which won't scale. Needs: embedding generation on memory write, vector similarity search on retrieval, fallback to current keyword path if vector store is unavailable. |
-| TASK-048 | Thread memory | Use the thread workspace's `memory/` directory for persistent agent memory across sessions. Explore Agent SDK file persistence. |
-| TASK-064 | Semantic search over messages | Add embedding-based semantic search across the `messages` table so the agent can recall past conversations by meaning, not just keywords. Big ticket: (1) choose an embedding model (local like `nomic-embed-text` or API-based), (2) generate embeddings on message ingest, (3) extend SQLite with `sqlite-vec` or stand up a separate vector DB (Qdrant, Chroma), (4) build a search interface (sub-agent or host tool) that returns relevant past messages with thread context, (5) backfill existing messages. This gives the agent long-term conversational memory — it can reference what was discussed days/weeks ago, recognize recurring topics, and build genuine continuity across interactions. Related: TASK-063 (memory-retriever vector search) could share the embedding infrastructure. |
-| TASK-066 | Knowledge graph for memories (graphqlite) | Research [graphqlite](https://github.com/colliery-io/graphqlite) — a SQLite extension that adds graph database capabilities. Could be used to build a knowledge graph linking memory items, messages, threads, and entities together with typed relationships. Instead of flat memory storage, Talon could maintain a connected graph: facts linked to the conversations that produced them, entities linked across threads, topics connected to related discussions. This would give the agent much richer contextual recall — traversing relationships instead of keyword/vector search. Evaluate: (1) graphqlite maturity and SQLite compatibility, (2) schema design for nodes (memories, messages, entities) and edges (mentioned_in, related_to, derived_from), (3) query patterns for context assembly, (4) integration with existing memory system (graph as layer on top, or replacement). Related: TASK-063, TASK-064. |
+| ID           | Title                                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TASK-041     | Multi-persona support                       | Test multiple personas bound to different channels (e.g. a "coder" persona for Slack, an "assistant" persona for Telegram). Verify routing and isolation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| TASK-042     | Slack channel connector + multi-agent swarm | Test and fix the Slack connector end-to-end. **Design needed**: `bot_id` filter (line 220) drops ALL bot messages — blocks agent-to-agent communication. Need echo prevention that allows cross-channel bot messages while preventing self-reply loops. Also: shared workspace between agents, persona-per-channel routing. Target: multiple domain-specific agents collaborating in Slack.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| TASK-043     | Discord channel connector                   | Test and fix the Discord connector end-to-end.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| TASK-047     | Cost tracking & limits                      | Persist `total_cost_usd` from Agent SDK results to the runs table. Add `maxBudgetUsd` per persona config. Add a `talonctl usage` report command.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ~~TASK-063~~ | ~~Memory-retriever vector search~~          | _Superseded by TASK-066._                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| TASK-048     | Thread memory                               | Use the thread workspace's `memory/` directory for persistent agent memory across sessions. Explore Agent SDK file persistence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ~~TASK-064~~ | ~~Semantic search over messages~~           | _Superseded by TASK-066._                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| TASK-066     | Knowledge graph memory & retrieval          | Replace keyword-based memory retrieval with a lightweight knowledge graph (SQLite-backed). Two tables: `nodes` (entities: people, projects, decisions, events, topics) and `edges` (typed, weighted relationships). LLM-assisted entity/relationship extraction on memory writes and significant messages — extract triples like `(Ivo, works_on, CLI fork)`, `(Maria, blocks, Staff promotion)`. Graph traversal (BFS/DFS) for contextual retrieval: given a starting concept, traverse connected nodes to surface the full web of related context. Optional: `graphology` (TypeScript) for in-memory graph operations, persisted to SQLite. Hybrid path: lightweight embeddings on node names for fuzzy entry-point matching, graph traversal for structural context. Replaces TASK-063 and TASK-064 — knowledge graphs capture relational meaning that vector similarity misses. |
 
 ---
 
 ## 📋 Backlog — Low Priority
 
-| ID | Title | Description |
-|----|-------|-------------|
-| TASK-049 | Email channel connector | Test and fix the email (IMAP/SMTP) connector. |
-| TASK-050 | WhatsApp channel connector | Test and fix the WhatsApp Business connector. |
-| TASK-051 | Audit logging | Verify audit log entries are written for all tool calls, messages, and permission decisions. Add `talonctl audit` query command. |
-| TASK-052 | Health endpoint | Expose an HTTP health endpoint for monitoring (uptime, active threads, queue depth, last error). |
-| TASK-053 | Backup & restore | Test the SQLite backup mechanism. Add `talonctl backup` and `talonctl restore` commands. |
-| TASK-054 | Multi-agent collaboration | Test the Agent SDK's subagent/Task tool support. Configure `agents` in persona config for specialized sub-tasks. |
-| TASK-055 | Graceful shutdown | Verify SIGTERM handling: drain queue, finish active runs, close channels, then exit. |
-| TASK-056 | Fix pre-existing test failures | 30 test files / 359 tests failing (pre-existing, mostly tool-result-repository setup issues). |
-| TASK-058 | Connector plugin/factory pattern | Refactor channel connectors into a plugin or factory pattern so new connectors can be added without touching core code. Currently connectors are hardcoded by type string in channel registration. Move to a registry where connectors self-register or are loaded from a config-driven factory. |
+| ID       | Title                               | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TASK-049 | Email channel connector             | Test and fix the email (IMAP/SMTP) connector.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| TASK-050 | WhatsApp channel connector          | Test and fix the WhatsApp Business connector.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| TASK-051 | Audit logging                       | Verify audit log entries are written for all tool calls, messages, and permission decisions. Add `talonctl audit` query command.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| TASK-052 | Health endpoint                     | Expose an HTTP health endpoint for monitoring (uptime, active threads, queue depth, last error).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| TASK-053 | Backup & restore                    | Test the SQLite backup mechanism. Add `talonctl backup` and `talonctl restore` commands.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| TASK-054 | Multi-agent collaboration           | Test the Agent SDK's subagent/Task tool support. Configure `agents` in persona config for specialized sub-tasks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| TASK-055 | Graceful shutdown                   | Verify SIGTERM handling: drain queue, finish active runs, close channels, then exit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| TASK-056 | Fix pre-existing test failures      | 30 test files / 359 tests failing (pre-existing, mostly tool-result-repository setup issues).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| TASK-058 | Connector plugin/factory pattern    | Refactor channel connectors into a plugin or factory pattern so new connectors can be added without touching core code. Currently connectors are hardcoded by type string in channel registration. Move to a registry where connectors self-register or are loaded from a config-driven factory.                                                                                                                                                                                                                                                                                   |
 | TASK-061 | Dynamic code generation & execution | When Talon lacks a tool for a user's request, it should be able to generate code, deploy it safely (Sprites.dev sandbox or Docker container), and execute it. Saved snippets can be reused later. Code generation via Claude Code or OpenAI API with GPT-5.3-spark (optimized for speed). Key differentiator — turns Talon from a fixed-tool agent into a self-extending one. Needs: code-gen prompt pipeline, sandbox execution runtime (Sprites.dev preferred, Docker fallback), snippet storage/retrieval, capability gating so only authorized personas can generate+run code. |
 
 ---
 
 ## 🐛 Known Issues
 
-| ID | Description | Severity |
-|----|-------------|----------|
-| BUG-001 | 359 tests failing (pre-existing, not from recent changes) — likely test setup/teardown issues in repository tests | Low |
-| BUG-002 | `SdkProcessSpawner` is dead code now that Agent SDK runs on host — should be removed or repurposed for Docker mode | Low |
-| BUG-003 | `zod` peer dep conflict: Agent SDK `@0.2.71` requires `zod@^4.0.0`, project uses `zod@3.25.76`. Upgrade zod to v4 — `@anthropic-ai/sdk` and `@modelcontextprotocol/sdk` both support v4 in their peer ranges. | Medium |
-| BUG-007 | ~~Memory key (`id`) globally unique, collides across threads.~~ Fixed: compound PK `(thread_id, id)` via migration 002, all repo methods scope by thread_id. | Resolved |
-| BUG-008 | ~~Session resume lost on daemon restart.~~ Fixed: `AgentRunner` falls back to `getLatestSessionId()` from `runs` table when in-memory tracker is empty, then seeds the tracker. | Resolved |
-| BUG-004 | ~~`schedule.manage` host tool dead code~~ — Fixed: wired via host-tools MCP bridge + Unix socket. All 5 tools work (schedule, channel, memory, http, db). | Resolved |
-| BUG-005 | ~~`schedule.manage` sets `next_run_at: null`~~ — Fixed: computes `next_run_at` from cron expression on create/update. | Resolved |
-| BUG-006 | ~~Agent SDK session resume hangs when MCP servers are attached.~~ Re-enabled and working. | Resolved |
+| ID      | Description                                                                                                                                                                                                   | Severity |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| BUG-001 | 359 tests failing (pre-existing, not from recent changes) — likely test setup/teardown issues in repository tests                                                                                             | Low      |
+| BUG-002 | `SdkProcessSpawner` is dead code now that Agent SDK runs on host — should be removed or repurposed for Docker mode                                                                                            | Low      |
+| BUG-003 | `zod` peer dep conflict: Agent SDK `@0.2.71` requires `zod@^4.0.0`, project uses `zod@3.25.76`. Upgrade zod to v4 — `@anthropic-ai/sdk` and `@modelcontextprotocol/sdk` both support v4 in their peer ranges. | Medium   |
+| BUG-007 | ~~Memory key (`id`) globally unique, collides across threads.~~ Fixed: compound PK `(thread_id, id)` via migration 002, all repo methods scope by thread_id.                                                  | Resolved |
+| BUG-008 | ~~Session resume lost on daemon restart.~~ Fixed: `AgentRunner` falls back to `getLatestSessionId()` from `runs` table when in-memory tracker is empty, then seeds the tracker.                               | Resolved |
+| BUG-004 | ~~`schedule.manage` host tool dead code~~ — Fixed: wired via host-tools MCP bridge + Unix socket. All 5 tools work (schedule, channel, memory, http, db).                                                     | Resolved |
+| BUG-005 | ~~`schedule.manage` sets `next_run_at: null`~~ — Fixed: computes `next_run_at` from cron expression on create/update.                                                                                         | Resolved |
+| BUG-006 | ~~Agent SDK session resume hangs when MCP servers are attached.~~ Re-enabled and working.                                                                                                                     | Resolved |
 
 ---
 
