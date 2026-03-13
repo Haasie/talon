@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="assets/logo-inverted/talon-logo-inverted.png" alt="Talon" width="200" />
+  </p>
+
 # Talon
 
 **Resilient, secure, extensible autonomous agent daemon.**
@@ -32,9 +36,9 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Telegram** — Long polling with MarkdownV2 formatting
 - **Slack** — Socket Mode with mrkdwn formatting
 - **Terminal** — WebSocket server with `talonctl chat` client, rendered markdown output, persistent threads
-- **Discord** — Gateway events with REST API, rate limit handling *(inbound not yet implemented)*
-- **WhatsApp** — Cloud API with webhook inbound *(inbound not yet implemented)*
-- **Email** — IMAP polling + SMTP send, thread tracking via In-Reply-To headers *(not yet tested)*
+- **Discord** — Gateway events with REST API, rate limit handling _(inbound not yet implemented)_
+- **WhatsApp** — Cloud API with webhook inbound _(inbound not yet implemented)_
+- **Email** — IMAP polling + SMTP send, thread tracking via In-Reply-To headers _(not yet tested)_
 
 ### Agent System
 
