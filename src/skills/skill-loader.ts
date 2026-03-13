@@ -104,7 +104,10 @@ const McpServerConfigSchema = z.object({
 const McpServerDefFileSchema = z.object({
   name: z.string().min(1),
   config: McpServerConfigSchema,
-});
+}).transform((def) => ({
+  ...def,
+  config: { ...def.config, name: def.config.name ?? def.name },
+}));
 
 // ---------------------------------------------------------------------------
 // SkillLoader
@@ -460,12 +463,7 @@ export class SkillLoader {
         );
       }
 
-      const def = parseResult.data;
-      // Backfill config.name from the outer name when omitted.
-      if (!def.config.name) {
-        def.config.name = def.name;
-      }
-      defs.push(def as McpServerDef);
+      defs.push(parseResult.data as McpServerDef);
       this.logger.debug({ skill: skillName, file }, 'MCP server definition loaded');
     }
 

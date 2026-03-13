@@ -306,6 +306,30 @@ describe('SkillLoader', () => {
       expect(skill.resolvedMcpServers[0].config.transport).toBe('stdio');
     });
 
+    it('backfills config.name from outer name when omitted', async () => {
+      const skillDir = await makeTmpDir(cleanup);
+      await writeMinimalManifest(skillDir);
+      const mcpDir = join(skillDir, 'mcp');
+      await mkdir(mcpDir);
+      await writeFile(
+        join(mcpDir, 'github.json'),
+        JSON.stringify({
+          name: 'github',
+          config: {
+            transport: 'http',
+            url: 'https://api.githubcopilot.com/mcp',
+          },
+        }),
+        'utf-8',
+      );
+
+      const result = await loader.loadFromDirectory(skillDir);
+      const skill = result._unsafeUnwrap();
+      expect(skill.resolvedMcpServers).toHaveLength(1);
+      expect(skill.resolvedMcpServers[0].name).toBe('github');
+      expect(skill.resolvedMcpServers[0].config.name).toBe('github');
+    });
+
     it('loads multiple MCP server defs in alphabetical order', async () => {
       const skillDir = await makeTmpDir(cleanup);
       await writeMinimalManifest(skillDir);
