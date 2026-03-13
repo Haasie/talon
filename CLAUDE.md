@@ -94,9 +94,14 @@ Tests in `tests/` using vitest. Coverage thresholds: 80% (branches, functions, l
 
 ## Workflow
 
+### Branching
+
+Always make sure you are in a feature or fix branch before getting to work
+
 ### Reviews
 
 Before every commit you need to use the codex skill to ask Gpt-5.3-codex-high for a review, address the issues, only if there a no critical, high or medium issues are found the work can be committed.
+When dealing with PR reviews, always resolve a comment when it's fixed or deemed invalid, always add a comment what you fixed, which commit, or why the comment was invalid
 
 ### Offload work
 
