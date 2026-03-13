@@ -565,6 +565,7 @@ describe('AgentRunner', () => {
 
   describe('MCP headers env var resolution', () => {
     it('resolves ${ENV_VAR} placeholders in MCP server headers', async () => {
+      const prevToken = process.env.TEST_MCP_TOKEN;
       process.env.TEST_MCP_TOKEN = 'secret-token-123';
       try {
         // Set up a skill with an MCP server that has headers.
@@ -617,12 +618,13 @@ describe('AgentRunner', () => {
         });
         expect(github.url).toBe('https://api.githubcopilot.com/mcp');
       } finally {
-        delete process.env.TEST_MCP_TOKEN;
+        if (prevToken !== undefined) process.env.TEST_MCP_TOKEN = prevToken;
+        else delete process.env.TEST_MCP_TOKEN;
       }
     });
 
     it('warns and resolves to empty string when env var is missing', async () => {
-      // Ensure the env var is NOT set.
+      const prevMissing = process.env.MISSING_VAR;
       delete process.env.MISSING_VAR;
 
       const personaWithSkill = {
@@ -668,6 +670,8 @@ describe('AgentRunner', () => {
         expect.objectContaining({ mcpServer: 'github', header: 'Authorization', variable: 'MISSING_VAR' }),
         expect.stringContaining('unresolved env var'),
       );
+
+      if (prevMissing !== undefined) process.env.MISSING_VAR = prevMissing;
     });
 
     it('ignores headers for stdio transport MCP servers', async () => {
@@ -713,11 +717,11 @@ describe('AgentRunner', () => {
       expect(local.headers).toBeUndefined();
     });
 
-    it('omits headers from MCP server entry when none are configured', async () => {
+    it('omits headers from HTTP MCP server entry when none are configured', async () => {
       const personaWithSkill = {
         config: {
           model: 'claude-sonnet-4-20250514',
-          skills: ['basic'],
+          skills: ['remote'],
           capabilities: { allow: [] },
         },
         systemPromptContent: 'You are a test bot.',
@@ -730,15 +734,14 @@ describe('AgentRunner', () => {
 
       (ctx as any).loadedSkills = [
         {
-          manifest: { name: 'basic' },
+          manifest: { name: 'remote' },
           resolvedMcpServers: [
             {
-              name: 'basic-mcp',
+              name: 'remote-mcp',
               config: {
-                name: 'basic-mcp',
-                transport: 'stdio' as const,
-                command: 'node',
-                args: ['server.js'],
+                name: 'remote-mcp',
+                transport: 'http' as const,
+                url: 'https://example.com/mcp',
               },
             },
           ],
@@ -751,8 +754,9 @@ describe('AgentRunner', () => {
       const queryCall = mockQuery.mock.calls[0]![0] as {
         options: { mcpServers: Record<string, any> };
       };
-      const basic = queryCall.options.mcpServers['basic-mcp'];
-      expect(basic.headers).toBeUndefined();
+      const remote = queryCall.options.mcpServers['remote-mcp'];
+      expect(remote.headers).toBeUndefined();
+      expect(remote.url).toBe('https://example.com/mcp');
     });
   });
 
