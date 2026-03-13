@@ -42,6 +42,9 @@ export interface McpServerConfig {
   /** Base URL for SSE or HTTP transport. */
   url?: string;
 
+  /** Custom headers sent with HTTP/SSE transport requests (e.g. Authorization). */
+  headers?: Record<string, string>;
+
   // --- common optional fields -----------------------------------------------
 
   /**

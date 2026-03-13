@@ -201,12 +201,34 @@ export class AgentRunner {
               resolvedEnv[key] = envVarMatch ? (process.env[envVarMatch[1] ?? ''] ?? '') : val;
             }
           }
+          // Substitute env var placeholders in MCP header values (HTTP/SSE only).
+          // Uses global replace to support embedded patterns like "Bearer ${TOKEN}".
+          const resolvedHeaders: Record<string, string> = {};
+          if (cfg.headers && (cfg.transport === 'http' || cfg.transport === 'sse')) {
+            for (const [key, val] of Object.entries(cfg.headers)) {
+              const resolved = val.replace(
+                /\$\{(\w+)\}/g,
+                (_match, varName: string) => {
+                  const envVal = process.env[varName];
+                  if (envVal === undefined) {
+                    this.ctx.logger.warn(
+                      { mcpServer: mcpDef.name, header: key, variable: varName },
+                      'agent-sdk: unresolved env var in MCP header — value will be empty',
+                    );
+                  }
+                  return envVal ?? '';
+                },
+              );
+              resolvedHeaders[key] = resolved;
+            }
+          }
           mcpServers[mcpDef.name] = {
             type: cfg.transport,
             command: cfg.command,
             args: cfg.args ?? [],
             ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
             ...(cfg.url ? { url: cfg.url } : {}),
+            ...(Object.keys(resolvedHeaders).length > 0 ? { headers: resolvedHeaders } : {}),
           };
         }
       }

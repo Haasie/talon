@@ -94,6 +94,7 @@ const McpServerConfigSchema = z.object({
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
   url: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   allowedTools: z.array(z.string()).optional(),
   credentialScope: z.string().optional(),

@@ -560,6 +560,207 @@ describe('AgentRunner', () => {
   });
 
   // -------------------------------------------------------------------------
+  // MCP headers env var resolution
+  // -------------------------------------------------------------------------
+
+  describe('MCP headers env var resolution', () => {
+    it('resolves ${ENV_VAR} placeholders in MCP server headers', async () => {
+      const prevToken = process.env.TEST_MCP_TOKEN;
+      process.env.TEST_MCP_TOKEN = 'secret-token-123';
+      try {
+        // Set up a skill with an MCP server that has headers.
+        const personaWithSkill = {
+          config: {
+            model: 'claude-sonnet-4-20250514',
+            skills: ['github'],
+            capabilities: { allow: [] },
+          },
+          systemPromptContent: 'You are a test bot.',
+          resolvedCapabilities: {
+            allow: ['channel.send:*'],
+            requireApproval: [],
+          },
+        };
+        vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+        (ctx as any).loadedSkills = [
+          {
+            manifest: { name: 'github' },
+            resolvedMcpServers: [
+              {
+                name: 'github',
+                config: {
+                  name: 'github',
+                  transport: 'http' as const,
+                  url: 'https://api.githubcopilot.com/mcp',
+                  headers: {
+                    Authorization: 'Bearer ${TEST_MCP_TOKEN}',
+                    'X-Exact': '${TEST_MCP_TOKEN}',
+                    'X-Static': 'plain-value',
+                  },
+                },
+              },
+            ],
+          },
+        ];
+
+        const item = makeQueueItem();
+        await runner.run(item);
+
+        const queryCall = mockQuery.mock.calls[0]![0] as {
+          options: { mcpServers: Record<string, any> };
+        };
+        const github = queryCall.options.mcpServers['github'];
+        expect(github.headers).toEqual({
+          Authorization: 'Bearer secret-token-123',
+          'X-Exact': 'secret-token-123',
+          'X-Static': 'plain-value',
+        });
+        expect(github.url).toBe('https://api.githubcopilot.com/mcp');
+      } finally {
+        if (prevToken !== undefined) process.env.TEST_MCP_TOKEN = prevToken;
+        else delete process.env.TEST_MCP_TOKEN;
+      }
+    });
+
+    it('warns and resolves to empty string when env var is missing', async () => {
+      const prevMissing = process.env.MISSING_VAR;
+      delete process.env.MISSING_VAR;
+
+      const personaWithSkill = {
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: ['github'],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*'],
+          requireApproval: [],
+        },
+      };
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+      (ctx as any).loadedSkills = [
+        {
+          manifest: { name: 'github' },
+          resolvedMcpServers: [
+            {
+              name: 'github',
+              config: {
+                name: 'github',
+                transport: 'http' as const,
+                url: 'https://example.com/mcp',
+                headers: { Authorization: 'Bearer ${MISSING_VAR}' },
+              },
+            },
+          ],
+        },
+      ];
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      const github = queryCall.options.mcpServers['github'];
+      expect(github.headers).toEqual({ Authorization: 'Bearer ' });
+      expect(ctx.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ mcpServer: 'github', header: 'Authorization', variable: 'MISSING_VAR' }),
+        expect.stringContaining('unresolved env var'),
+      );
+
+      if (prevMissing !== undefined) process.env.MISSING_VAR = prevMissing;
+    });
+
+    it('ignores headers for stdio transport MCP servers', async () => {
+      const personaWithSkill = {
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: ['local'],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*'],
+          requireApproval: [],
+        },
+      };
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+      (ctx as any).loadedSkills = [
+        {
+          manifest: { name: 'local' },
+          resolvedMcpServers: [
+            {
+              name: 'local-mcp',
+              config: {
+                name: 'local-mcp',
+                transport: 'stdio' as const,
+                command: 'node',
+                args: ['server.js'],
+                headers: { Authorization: 'should-be-ignored' },
+              },
+            },
+          ],
+        },
+      ];
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      const local = queryCall.options.mcpServers['local-mcp'];
+      expect(local.headers).toBeUndefined();
+    });
+
+    it('omits headers from HTTP MCP server entry when none are configured', async () => {
+      const personaWithSkill = {
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: ['remote'],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*'],
+          requireApproval: [],
+        },
+      };
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+      (ctx as any).loadedSkills = [
+        {
+          manifest: { name: 'remote' },
+          resolvedMcpServers: [
+            {
+              name: 'remote-mcp',
+              config: {
+                name: 'remote-mcp',
+                transport: 'http' as const,
+                url: 'https://example.com/mcp',
+              },
+            },
+          ],
+        },
+      ];
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      const remote = queryCall.options.mcpServers['remote-mcp'];
+      expect(remote.headers).toBeUndefined();
+      expect(remote.url).toBe('https://example.com/mcp');
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Debug logging for non-text streaming events
   // -------------------------------------------------------------------------
 
