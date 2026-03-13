@@ -89,7 +89,7 @@ const McpRateLimitSchema = z.object({
 });
 
 const McpServerConfigSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1).optional(),
   transport: z.enum(['stdio', 'sse', 'http']),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
@@ -459,7 +459,12 @@ export class SkillLoader {
         );
       }
 
-      defs.push(parseResult.data as McpServerDef);
+      const def = parseResult.data;
+      // Backfill config.name from the outer name when omitted.
+      if (!def.config.name) {
+        def.config.name = def.name;
+      }
+      defs.push(def as McpServerDef);
       this.logger.debug({ skill: skillName, file }, 'MCP server definition loaded');
     }
 
