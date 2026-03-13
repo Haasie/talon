@@ -2,14 +2,16 @@
  * Slack channel connector.
  *
  * Implements the ChannelConnector interface for Slack via the Web API.
- * This connector is designed to work with Slack's Events API or Socket Mode,
- * where inbound events are pushed to the connector via `feedEvent()`.
+ * When an `appToken` is configured, the connector establishes a Socket Mode
+ * WebSocket connection to receive inbound events automatically. Otherwise,
+ * events must be pushed externally via `feedEvent()`.
  *
  * Outbound messages are sent via the `chat.postMessage` Web API endpoint
  * using the bot token for Bearer authentication.
  */
 
 import type pino from 'pino';
+import WebSocket from 'ws';
 import type { ChannelConnector, InboundEvent, AgentOutput } from '../../channel-types.js';
 import type { Result } from '../../../core/types/result.js';
 import { ok, err } from '../../../core/types/result.js';
@@ -24,23 +26,29 @@ import { markdownToSlackMrkdwn } from './slack-format.js';
 /** Slack Web API base URL. */
 const SLACK_API_BASE = 'https://slack.com/api';
 
+/** Initial backoff after a Socket Mode connection error, in milliseconds. */
+const INITIAL_BACKOFF_MS = 1_000;
+/** Maximum backoff after repeated connection errors, in milliseconds. */
+const MAX_BACKOFF_MS = 60_000;
+
 // ---------------------------------------------------------------------------
 // SlackConnector
 // ---------------------------------------------------------------------------
 
 /**
- * Channel connector for Slack via the Web API.
+ * Channel connector for Slack via the Web API + Socket Mode.
  *
- * Unlike the Telegram connector (which uses long polling), the Slack connector
- * is event-driven: inbound events are delivered externally (via Events API
- * webhooks or Socket Mode) and fed into the connector via `feedEvent()`.
+ * When `appToken` is configured, `start()` opens a Socket Mode WebSocket
+ * connection that receives events from Slack and feeds them into the pipeline
+ * automatically — no public URL required.
+ *
+ * Without `appToken`, events must be pushed externally via `feedEvent()`.
  *
  * Usage:
  * 1. Construct with a SlackConfig and a channel name.
  * 2. Call `onMessage()` to register an inbound event handler.
- * 3. Call `start()` to mark the connector as active.
- * 4. Call `feedEvent()` with raw Slack event payloads to process inbound events.
- * 5. Call `stop()` to mark the connector as inactive.
+ * 3. Call `start()` to connect via Socket Mode (or just mark active).
+ * 4. Call `stop()` to disconnect gracefully.
  */
 export class SlackConnector implements ChannelConnector {
   readonly type = 'slack';
@@ -48,6 +56,13 @@ export class SlackConnector implements ChannelConnector {
 
   private handler?: (event: InboundEvent) => void | Promise<void>;
   private running = false;
+
+  /** Active Socket Mode WebSocket, if connected. */
+  private ws?: WebSocket;
+  /** Promise tracking the Socket Mode reconnect loop. */
+  private socketLoopPromise?: Promise<void>;
+  /** AbortController for cancelling sleep and in-flight fetch during stop(). */
+  private abortController?: AbortController;
 
   constructor(
     private readonly config: SlackConfig,
@@ -62,12 +77,11 @@ export class SlackConnector implements ChannelConnector {
   // ---------------------------------------------------------------------------
 
   /**
-   * Mark the connector as started. Idempotent — no-op if already running.
+   * Start the connector. If `appToken` is configured, opens a Socket Mode
+   * WebSocket connection with automatic reconnect. Otherwise, marks the
+   * connector as active for external event delivery via `feedEvent()`.
    *
-   * The actual webhook registration or Socket Mode connection is managed
-   * externally (e.g. by the Slack Bolt SDK or a webhook handler). This method
-   * records the started state so that the connector can guard against processing
-   * events while stopped.
+   * Idempotent — no-op if already running.
    */
   start(): Promise<void> {
     if (this.running) {
@@ -75,20 +89,44 @@ export class SlackConnector implements ChannelConnector {
       return Promise.resolve();
     }
     this.running = true;
-    this.logger.info({ channelName: this.name }, 'slack connector started');
+
+    if (this.config.appToken) {
+      this.logger.info({ channelName: this.name }, 'slack connector starting (socket mode)');
+      this.socketLoopPromise = this.socketModeLoop();
+    } else {
+      this.logger.info(
+        { channelName: this.name },
+        'slack connector started (no appToken — external event delivery only)',
+      );
+    }
+
     return Promise.resolve();
   }
 
   /**
-   * Mark the connector as stopped. Idempotent — no-op if already stopped.
+   * Stop the connector gracefully. Closes the Socket Mode WebSocket if active.
+   * Idempotent — no-op if already stopped.
    */
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
     if (!this.running) {
-      return Promise.resolve();
+      return;
     }
     this.running = false;
+    this.logger.info({ channelName: this.name }, 'slack connector stopping');
+
+    // Abort any in-flight fetch or sleep so the reconnect loop unblocks.
+    this.abortController?.abort();
+
+    // Close the WebSocket so the reconnect loop exits.
+    if (this.ws) {
+      this.ws.close(1000, 'connector stopping');
+      this.ws = undefined;
+    }
+
+    // Wait for the reconnect loop to exit cleanly.
+    await this.socketLoopPromise;
+    this.socketLoopPromise = undefined;
     this.logger.info({ channelName: this.name }, 'slack connector stopped');
-    return Promise.resolve();
   }
 
   /**
@@ -272,6 +310,194 @@ export class SlackConnector implements ChannelConnector {
         'slack connector handler threw an error',
       );
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Socket Mode
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reconnect loop for Socket Mode. Obtains a WSS URL via
+   * `apps.connections.open`, connects, and re-connects with exponential
+   * backoff on failure. Exits when `this.running` is set to false.
+   */
+  private async socketModeLoop(): Promise<void> {
+    let backoffMs = INITIAL_BACKOFF_MS;
+
+    while (this.running) {
+      this.abortController = new AbortController();
+      try {
+        const wssUrl = await this.openSocketModeConnection();
+        await this.runSocketMode(wssUrl);
+        // Clean close (e.g. server-requested disconnect) — apply a short
+        // backoff to avoid tight reconnect loops against the API.
+        if (!this.running) break;
+        backoffMs = INITIAL_BACKOFF_MS;
+        await this.sleep(backoffMs);
+      } catch (connectErr) {
+        if (!this.running) break;
+        this.logger.warn(
+          { channelName: this.name, err: connectErr, backoffMs },
+          'slack socket mode connection error, backing off',
+        );
+        await this.sleep(backoffMs);
+        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+      }
+    }
+  }
+
+  /**
+   * Call `apps.connections.open` to obtain a WebSocket URL for Socket Mode.
+   */
+  private async openSocketModeConnection(): Promise<string> {
+    let response: Response;
+    try {
+      response = await fetch(`${SLACK_API_BASE}/apps.connections.open`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: `Bearer ${this.config.appToken}`,
+        },
+        signal: this.abortController?.signal,
+      });
+    } catch (fetchErr) {
+      throw new ChannelError(
+        `Slack apps.connections.open network error: ${String(fetchErr)}`,
+      );
+    }
+
+    let data: { ok: boolean; url?: string; error?: string };
+    try {
+      data = (await response.json()) as typeof data;
+    } catch {
+      throw new ChannelError(
+        `Slack apps.connections.open: could not parse response (HTTP ${response.status})`,
+      );
+    }
+
+    if (!data.ok || !data.url) {
+      throw new ChannelError(
+        `Slack apps.connections.open failed (HTTP ${response.status}): ${data.error ?? 'no url returned'}`,
+      );
+    }
+
+    this.logger.debug({ channelName: this.name }, 'obtained socket mode wss url');
+    return data.url;
+  }
+
+  /**
+   * Connect to the Socket Mode WSS URL and process messages until the
+   * connection closes or an error occurs. Returns a promise that resolves
+   * when the WebSocket closes.
+   */
+  private runSocketMode(wssUrl: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(wssUrl);
+      this.ws = ws;
+
+      ws.on('open', () => {
+        this.logger.info({ channelName: this.name }, 'slack socket mode connected');
+      });
+
+      ws.on('message', (raw: Buffer) => {
+        this.handleSocketModeMessage(ws, raw).catch((msgErr) => {
+          this.logger.error(
+            { channelName: this.name, err: msgErr },
+            'error handling socket mode message',
+          );
+        });
+      });
+
+      ws.on('close', (code, reason) => {
+        this.logger.info(
+          { channelName: this.name, code, reason: reason.toString() },
+          'slack socket mode disconnected',
+        );
+        // Only clear the reference if this is still the active socket —
+        // prevents a late-firing stale socket from clearing a newer one.
+        if (this.ws === ws) this.ws = undefined;
+        resolve();
+      });
+
+      ws.on('error', (wsErr) => {
+        this.logger.error(
+          { channelName: this.name, err: wsErr },
+          'slack socket mode websocket error',
+        );
+        // Terminate the socket to release resources before reconnecting.
+        ws.terminate();
+        if (this.ws === ws) this.ws = undefined;
+        reject(wsErr);
+      });
+    });
+  }
+
+  /**
+   * Handle a single Socket Mode envelope. Acknowledges the envelope
+   * immediately, then routes the payload based on its type.
+   */
+  private async handleSocketModeMessage(ws: WebSocket, raw: Buffer): Promise<void> {
+    let envelope: {
+      envelope_id?: string;
+      type?: string;
+      payload?: Record<string, unknown>;
+    };
+
+    try {
+      envelope = JSON.parse(raw.toString()) as typeof envelope;
+    } catch {
+      this.logger.debug({ channelName: this.name }, 'socket mode: unparseable message, skipping');
+      return;
+    }
+
+    // Acknowledge the envelope immediately so Slack doesn't redeliver.
+    if (envelope.envelope_id && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ envelope_id: envelope.envelope_id }));
+    }
+
+    // Handle hello — connection confirmation from Slack.
+    if (envelope.type === 'hello') {
+      this.logger.debug({ channelName: this.name }, 'socket mode: received hello');
+      return;
+    }
+
+    // Handle disconnect — Slack is asking us to reconnect.
+    if (envelope.type === 'disconnect') {
+      this.logger.info({ channelName: this.name }, 'socket mode: received disconnect, reconnecting');
+      ws.close(1000, 'server requested disconnect');
+      return;
+    }
+
+    // Route events_api envelopes to feedEvent.
+    if (envelope.type === 'events_api' && envelope.payload) {
+      await this.feedEvent(envelope.payload as unknown as SlackEvent);
+      return;
+    }
+
+    this.logger.debug(
+      { channelName: this.name, type: envelope.type },
+      'socket mode: unhandled envelope type',
+    );
+  }
+
+  /**
+   * Resolve after `ms` milliseconds. Resolves early if the abort controller
+   * fires (e.g. during stop()), so shutdown is not blocked by long backoffs.
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      // If the signal is already aborted (stop() called before sleep()),
+      // resolve immediately to avoid stalling shutdown.
+      if (this.abortController?.signal.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(resolve, ms);
+      this.abortController?.signal.addEventListener('abort', () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+    });
   }
 }
 

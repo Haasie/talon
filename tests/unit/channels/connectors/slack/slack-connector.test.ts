@@ -559,3 +559,165 @@ describe('decodeThreadId', () => {
     expect(decoded.threadTs).toBe(threadTs);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Socket Mode
+// ---------------------------------------------------------------------------
+
+describe('SlackConnector — Socket Mode', () => {
+  function configWithAppToken(overrides?: Partial<SlackConfig>): SlackConfig {
+    return {
+      botToken: 'xoxb-test-token',
+      signingSecret: 'test-signing-secret',
+      appToken: 'xapp-test-app-token',
+      ...overrides,
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does not call apps.connections.open when appToken is absent', async () => {
+    const connector = new SlackConnector(defaultConfig(), 'test-no-socket', silentLogger());
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    await connector.start();
+    // Give any async work a chance to run.
+    await new Promise((r) => setTimeout(r, 50));
+    await connector.stop();
+
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('calls apps.connections.open with the appToken on start', async () => {
+    // Return a valid URL but fail the WebSocket connection so the loop exits.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ ok: true, url: 'wss://fake.slack.com/link' }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', mockFetch);
+
+    const connector = new SlackConnector(configWithAppToken(), 'test-socket', silentLogger());
+    connector.onMessage(async () => {});
+    await connector.start();
+
+    // Let the async socketModeLoop call fetch.
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(mockFetch).toHaveBeenCalled();
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toContain('apps.connections.open');
+    expect((opts?.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer xapp-test-app-token',
+    );
+
+    await connector.stop();
+  });
+
+  it('retries with backoff when apps.connections.open fails', async () => {
+    let callCount = 0;
+    const mockFetch = vi.fn().mockImplementation(() => {
+      callCount++;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: false, error: 'invalid_auth' }),
+      } as unknown as Response);
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const connector = new SlackConnector(configWithAppToken(), 'test-retry', silentLogger());
+    connector.onMessage(async () => {});
+    await connector.start();
+
+    // Wait enough for at least 2 retry attempts (1s initial backoff).
+    await new Promise((r) => setTimeout(r, 1500));
+    await connector.stop();
+
+    // Should have retried at least twice.
+    expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('handleSocketModeMessage routes events_api to feedEvent', async () => {
+    // Access the private method via prototype for unit testing.
+    const connector = new SlackConnector(configWithAppToken(), 'test-route', silentLogger());
+    const received: InboundEvent[] = [];
+    connector.onMessage(async (event) => { received.push(event); });
+
+    const fakeWs = {
+      readyState: 1, // WebSocket.OPEN
+      send: vi.fn(),
+    };
+
+    // Call the private method directly.
+    const handleMsg = (connector as unknown as {
+      handleSocketModeMessage: (ws: unknown, raw: Buffer) => Promise<void>;
+    }).handleSocketModeMessage.bind(connector);
+
+    const envelope = {
+      envelope_id: 'eid-789',
+      type: 'events_api',
+      payload: makeSlackEvent({ text: 'socket mode message', channelId: 'C55555555' }),
+    };
+
+    await handleMsg(fakeWs, Buffer.from(JSON.stringify(envelope)));
+
+    // Verify ack was sent.
+    expect(fakeWs.send).toHaveBeenCalledWith(JSON.stringify({ envelope_id: 'eid-789' }));
+
+    // Verify the message was routed to the handler.
+    expect(received).toHaveLength(1);
+    expect(received[0].content).toBe('socket mode message');
+    expect(received[0].channelType).toBe('slack');
+  });
+
+  it('handleSocketModeMessage ignores hello envelopes', async () => {
+    const connector = new SlackConnector(configWithAppToken(), 'test-hello', silentLogger());
+    const received: InboundEvent[] = [];
+    connector.onMessage(async (event) => { received.push(event); });
+
+    const handleMsg = (connector as unknown as {
+      handleSocketModeMessage: (ws: unknown, raw: Buffer) => Promise<void>;
+    }).handleSocketModeMessage.bind(connector);
+
+    await handleMsg({ readyState: 1, send: vi.fn() }, Buffer.from(JSON.stringify({ type: 'hello' })));
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('handleSocketModeMessage closes ws on disconnect envelope', async () => {
+    const connector = new SlackConnector(configWithAppToken(), 'test-disc', silentLogger());
+
+    const fakeWs = {
+      readyState: 1,
+      send: vi.fn(),
+      close: vi.fn(),
+    };
+
+    const handleMsg = (connector as unknown as {
+      handleSocketModeMessage: (ws: unknown, raw: Buffer) => Promise<void>;
+    }).handleSocketModeMessage.bind(connector);
+
+    await handleMsg(fakeWs, Buffer.from(JSON.stringify({ type: 'disconnect' })));
+
+    expect(fakeWs.close).toHaveBeenCalledWith(1000, 'server requested disconnect');
+  });
+
+  it('handleSocketModeMessage skips unparseable messages', async () => {
+    const connector = new SlackConnector(configWithAppToken(), 'test-bad', silentLogger());
+    const received: InboundEvent[] = [];
+    connector.onMessage(async (event) => { received.push(event); });
+
+    const handleMsg = (connector as unknown as {
+      handleSocketModeMessage: (ws: unknown, raw: Buffer) => Promise<void>;
+    }).handleSocketModeMessage.bind(connector);
+
+    // Send garbage that won't parse as JSON.
+    await handleMsg({ readyState: 1, send: vi.fn() }, Buffer.from('not json'));
+
+    expect(received).toHaveLength(0);
+  });
+});

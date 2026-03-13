@@ -160,12 +160,12 @@ Sub-agents are lightweight, single-purpose AI agents that handle mechanical LLM 
 
 **Built-in sub-agents:**
 
-| Sub-Agent | Purpose | Model |
-|-----------|---------|-------|
-| `session-summarizer` | Compresses transcripts into structured summaries | Haiku 4.5 |
-| `memory-groomer` | Consolidates/prunes thread memory items | Haiku 4.5 |
-| `file-searcher` | Searches files with keyword matching + LLM ranking | Haiku 4.5 |
-| `memory-retriever` | Finds relevant memories via keyword filter + LLM reranking | Haiku 4.5 |
+| Sub-Agent            | Purpose                                                    | Model     |
+| -------------------- | ---------------------------------------------------------- | --------- |
+| `session-summarizer` | Compresses transcripts into structured summaries           | Haiku 4.5 |
+| `memory-groomer`     | Consolidates/prunes thread memory items                    | Haiku 4.5 |
+| `file-searcher`      | Searches files with keyword matching + LLM ranking         | Haiku 4.5 |
+| `memory-retriever`   | Finds relevant memories via keyword filter + LLM reranking | Haiku 4.5 |
 
 **CLI testing:** `talonctl run-subagent --name <agent> --input '<json>'` runs any sub-agent without a daemon.
 
@@ -258,14 +258,14 @@ I operate on a **default-deny, capability-based** security model:
 
 ## What I Can Do (Current Skills)
 
-| Capability          | How                                       |
-| ------------------- | ----------------------------------------- |
-| Web search          | Brave Search MCP (via web-research skill) |
-| Grocery shopping    | Picnic MCP (via picnic skill)             |
-| Send messages       | `channel.send` to TalonMain (Telegram)    |
-| Remember things     | Thread memory (files in workspace)        |
-| Scheduled reminders | Scheduler (cron/one-shot)                 |
-| Read/write files    | Thread workspace only                     |
+| Capability          | How                                                    |
+| ------------------- | ------------------------------------------------------ |
+| Web search          | Brave Search MCP (via web-research skill)              |
+| Grocery shopping    | Picnic MCP (via picnic skill)                          |
+| Send messages       | `channel.send` to TalonMain (Telegram)                 |
+| Remember things     | Thread memory (files in workspace)                     |
+| Scheduled reminders | Scheduler (cron/one-shot)                              |
+| Read/write files    | Thread workspace only                                  |
 | Sub-agent tasks     | `subagent.invoke` (summarize, groom, search, retrieve) |
 
 ---

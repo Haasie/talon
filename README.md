@@ -30,11 +30,11 @@ It is built for single-user or small-team deployments where you want persistent,
 ### Channels
 
 - **Telegram** — Long polling with MarkdownV2 formatting
-- **Slack** — Events API / Socket Mode with mrkdwn formatting
-- **Discord** — Gateway events with REST API, rate limit handling
-- **WhatsApp** — Cloud API with webhook inbound
-- **Email** — IMAP polling + SMTP send, thread tracking via In-Reply-To headers
+- **Slack** — Socket Mode with mrkdwn formatting
 - **Terminal** — WebSocket server with `talonctl chat` client, rendered markdown output, persistent threads
+- **Discord** — Gateway events with REST API, rate limit handling *(inbound not yet implemented)*
+- **WhatsApp** — Cloud API with webhook inbound *(inbound not yet implemented)*
+- **Email** — IMAP polling + SMTP send, thread tracking via In-Reply-To headers *(not yet tested)*
 
 ### Agent System
 
@@ -319,6 +319,8 @@ channels:
 
 ### Discord
 
+> **Not yet implemented**: The connector has send support and a `feedEvent()` ingestion method, but no Gateway WebSocket client to actually receive events from Discord. Needs a Gateway client similar to the Slack Socket Mode implementation. See TASK-043.
+
 Push-based connector using the Discord Gateway and REST API.
 
 ```yaml
@@ -341,6 +343,8 @@ channels:
 
 ### WhatsApp
 
+> **Not yet implemented**: The connector has send support and a `feedWebhook()` ingestion method, but no HTTP webhook server to receive events from the WhatsApp Cloud API. Needs a webhook endpoint that proxies incoming POST requests to `feedWebhook()`. See TASK-067.
+
 Webhook-based connector using the WhatsApp Cloud API.
 
 ```yaml
@@ -360,6 +364,8 @@ channels:
 - **Format**: WhatsApp-flavored markdown
 
 ### Email
+
+> **Not yet tested**: The connector has IMAP polling and SMTP send implementations, but has not been tested end-to-end. See TASK-049.
 
 Dual-mode connector with IMAP polling and SMTP outbound.
 
