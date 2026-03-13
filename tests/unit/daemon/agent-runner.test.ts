@@ -560,6 +560,111 @@ describe('AgentRunner', () => {
   });
 
   // -------------------------------------------------------------------------
+  // MCP headers env var resolution
+  // -------------------------------------------------------------------------
+
+  describe('MCP headers env var resolution', () => {
+    it('resolves ${ENV_VAR} placeholders in MCP server headers', async () => {
+      process.env.TEST_MCP_TOKEN = 'secret-token-123';
+      try {
+        // Set up a skill with an MCP server that has headers.
+        const personaWithSkill = {
+          config: {
+            model: 'claude-sonnet-4-20250514',
+            skills: ['github'],
+            capabilities: { allow: [] },
+          },
+          systemPromptContent: 'You are a test bot.',
+          resolvedCapabilities: {
+            allow: ['channel.send:*'],
+            requireApproval: [],
+          },
+        };
+        vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+        (ctx as any).loadedSkills = [
+          {
+            manifest: { name: 'github' },
+            resolvedMcpServers: [
+              {
+                name: 'github',
+                config: {
+                  name: 'github',
+                  transport: 'http' as const,
+                  url: 'https://api.githubcopilot.com/mcp',
+                  headers: {
+                    Authorization: 'Bearer ${TEST_MCP_TOKEN}',
+                    'X-Exact': '${TEST_MCP_TOKEN}',
+                    'X-Static': 'plain-value',
+                  },
+                },
+              },
+            ],
+          },
+        ];
+
+        const item = makeQueueItem();
+        await runner.run(item);
+
+        const queryCall = mockQuery.mock.calls[0]![0] as {
+          options: { mcpServers: Record<string, any> };
+        };
+        const github = queryCall.options.mcpServers['github'];
+        expect(github.headers).toEqual({
+          Authorization: 'Bearer secret-token-123',
+          'X-Exact': 'secret-token-123',
+          'X-Static': 'plain-value',
+        });
+        expect(github.url).toBe('https://api.githubcopilot.com/mcp');
+      } finally {
+        delete process.env.TEST_MCP_TOKEN;
+      }
+    });
+
+    it('omits headers from MCP server entry when none are configured', async () => {
+      const personaWithSkill = {
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: ['basic'],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*'],
+          requireApproval: [],
+        },
+      };
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+      (ctx as any).loadedSkills = [
+        {
+          manifest: { name: 'basic' },
+          resolvedMcpServers: [
+            {
+              name: 'basic-mcp',
+              config: {
+                name: 'basic-mcp',
+                transport: 'stdio' as const,
+                command: 'node',
+                args: ['server.js'],
+              },
+            },
+          ],
+        },
+      ];
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      const basic = queryCall.options.mcpServers['basic-mcp'];
+      expect(basic.headers).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Debug logging for non-text streaming events
   // -------------------------------------------------------------------------
 

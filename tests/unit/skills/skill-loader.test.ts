@@ -321,6 +321,37 @@ describe('SkillLoader', () => {
       expect(skill.resolvedMcpServers[1].name).toBe('z-server');
     });
 
+    it('loads MCP server definition with headers', async () => {
+      const skillDir = await makeTmpDir(cleanup);
+      await writeMinimalManifest(skillDir);
+      const mcpDir = join(skillDir, 'mcp');
+      await mkdir(mcpDir);
+      await writeFile(
+        join(mcpDir, 'github.json'),
+        JSON.stringify({
+          name: 'github',
+          config: {
+            name: 'github',
+            transport: 'http',
+            url: 'https://api.githubcopilot.com/mcp',
+            headers: {
+              Authorization: 'Bearer ${GITHUB_TOKEN}',
+              'X-Custom': 'static-value',
+            },
+          },
+        }),
+        'utf-8',
+      );
+
+      const result = await loader.loadFromDirectory(skillDir);
+      const skill = result._unsafeUnwrap();
+      expect(skill.resolvedMcpServers).toHaveLength(1);
+      expect(skill.resolvedMcpServers[0].config.headers).toEqual({
+        Authorization: 'Bearer ${GITHUB_TOKEN}',
+        'X-Custom': 'static-value',
+      });
+    });
+
     it('returns Err for invalid MCP definition JSON structure', async () => {
       const skillDir = await makeTmpDir(cleanup);
       await writeMinimalManifest(skillDir);

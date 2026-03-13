@@ -201,12 +201,24 @@ export class AgentRunner {
               resolvedEnv[key] = envVarMatch ? (process.env[envVarMatch[1] ?? ''] ?? '') : val;
             }
           }
+          // Substitute env var placeholders in MCP header values.
+          // Uses global replace to support embedded patterns like "Bearer ${TOKEN}".
+          const resolvedHeaders: Record<string, string> = {};
+          if (cfg.headers) {
+            for (const [key, val] of Object.entries(cfg.headers)) {
+              resolvedHeaders[key] = val.replace(
+                /\$\{(\w+)\}/g,
+                (_, varName: string) => process.env[varName] ?? '',
+              );
+            }
+          }
           mcpServers[mcpDef.name] = {
             type: cfg.transport,
             command: cfg.command,
             args: cfg.args ?? [],
             ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
             ...(cfg.url ? { url: cfg.url } : {}),
+            ...(Object.keys(resolvedHeaders).length > 0 ? { headers: resolvedHeaders } : {}),
           };
         }
       }
