@@ -621,6 +621,98 @@ describe('AgentRunner', () => {
       }
     });
 
+    it('warns and resolves to empty string when env var is missing', async () => {
+      // Ensure the env var is NOT set.
+      delete process.env.MISSING_VAR;
+
+      const personaWithSkill = {
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: ['github'],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*'],
+          requireApproval: [],
+        },
+      };
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+      (ctx as any).loadedSkills = [
+        {
+          manifest: { name: 'github' },
+          resolvedMcpServers: [
+            {
+              name: 'github',
+              config: {
+                name: 'github',
+                transport: 'http' as const,
+                url: 'https://example.com/mcp',
+                headers: { Authorization: 'Bearer ${MISSING_VAR}' },
+              },
+            },
+          ],
+        },
+      ];
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      const github = queryCall.options.mcpServers['github'];
+      expect(github.headers).toEqual({ Authorization: 'Bearer ' });
+      expect(ctx.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ mcpServer: 'github', header: 'Authorization', variable: 'MISSING_VAR' }),
+        expect.stringContaining('unresolved env var'),
+      );
+    });
+
+    it('ignores headers for stdio transport MCP servers', async () => {
+      const personaWithSkill = {
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: ['local'],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*'],
+          requireApproval: [],
+        },
+      };
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok(personaWithSkill as any));
+
+      (ctx as any).loadedSkills = [
+        {
+          manifest: { name: 'local' },
+          resolvedMcpServers: [
+            {
+              name: 'local-mcp',
+              config: {
+                name: 'local-mcp',
+                transport: 'stdio' as const,
+                command: 'node',
+                args: ['server.js'],
+                headers: { Authorization: 'should-be-ignored' },
+              },
+            },
+          ],
+        },
+      ];
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      const local = queryCall.options.mcpServers['local-mcp'];
+      expect(local.headers).toBeUndefined();
+    });
+
     it('omits headers from MCP server entry when none are configured', async () => {
       const personaWithSkill = {
         config: {
