@@ -2,6 +2,7 @@
   "name": "talon",
   "version": "0.1.0",
   "description": "Resilient, secure, extensible autonomous agent daemon",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "engines": {
     "node": ">=22"

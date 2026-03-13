@@ -6,9 +6,9 @@
 
 **Resilient, secure, extensible autonomous agent daemon.**
 
-[![Tests](https://img.shields.io/badge/tests-2128tests/unit/daemon/agent-runner.test.ts %20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-2135%20passing-brightgreen)](#testing)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-blue)](https://nodejs.org)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-blue)](https://www.typescriptlang.org)
 
 ---
