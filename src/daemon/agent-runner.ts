@@ -134,11 +134,24 @@ export class AgentRunner {
         .filter(Boolean)
         .join('\n');
 
+      // Generate fresh timestamp per run so the agent can reason about time.
+      const now_ = new Date();
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      const offsetMin = now_.getTimezoneOffset();
+      const offsetSign = offsetMin <= 0 ? '+' : '-';
+      const absOffset = Math.abs(offsetMin);
+      const offsetStr = `${offsetSign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`;
+      const localISO = `${now_.getFullYear()}-${pad(now_.getMonth() + 1)}-${pad(now_.getDate())}T${pad(now_.getHours())}:${pad(now_.getMinutes())}:${pad(now_.getSeconds())}${offsetStr}`;
+      const tzAbbr = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(now_).find((p) => p.type === 'timeZoneName')?.value ?? 'UTC';
+      const dayName = now_.toLocaleDateString('en', { weekday: 'long' });
+      const timeContext = `Current time: ${localISO} (${tzAbbr}, ${dayName})`;
+
       const systemPromptParts = [
         loadedPersona.systemPromptContent ?? '',
         loadedPersona.personalityContent ?? '',
         skillPrompt,
         channelContext,
+        timeContext,
       ];
 
       // Inject previous context when starting a fresh session (no resume).
