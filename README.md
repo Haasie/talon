@@ -183,7 +183,7 @@ npm run talond
 
 ## Configuration
 
-Talon uses a single YAML configuration file. A fully annotated example ships at [`config/talond.example.yaml`](config/talond.example.yaml).
+Talon uses a single YAML configuration file. A fully annotated example ships at [`talond.yaml.example`](talond.yaml.example).
 
 ### Minimal Configuration
 
@@ -1249,7 +1249,7 @@ npm run dev            # tsx watch mode with auto-reload
 ```
 talon/
   config/
-    talond.example.yaml          # Annotated example configuration
+    talond.yaml.example          # Annotated example configuration
   deploy/
     Dockerfile                   # talond container image
     Dockerfile.sandbox           # Agent sandbox image

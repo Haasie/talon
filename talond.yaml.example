@@ -74,6 +74,7 @@ personas:
         - fs.read:*
         - memory.access:*
         - subagent.invoke:*
+        - subagent.background
       requireApproval:               # tools that need human confirmation before executing
         - fs.write:workspace         # NOT YET IMPLEMENTED — approval flow planned
     mounts:                          # host dirs to bind into sandbox containers
@@ -100,6 +101,15 @@ queue:
   backoffBaseMs: 1000                # initial retry delay (ms)
   backoffMaxMs: 60000                # max retry delay cap (ms, exponential backoff)
   concurrencyLimit: 5                # max messages processed in parallel
+
+# ---------------------------------------------------------------------------
+# Background workers — detached Claude Code jobs spawned by the foreground agent
+# ---------------------------------------------------------------------------
+backgroundAgent:
+  enabled: true                      # master switch for background workers
+  maxConcurrent: 3                   # max background Claude workers running at once
+  defaultTimeoutMinutes: 30          # default wall-clock timeout per worker
+  claudePath: claude                 # Claude Code CLI executable to launch
 
 # ---------------------------------------------------------------------------
 # Scheduler — cron/interval/one-shot task execution engine
