@@ -23,6 +23,7 @@ export interface ScheduleInfo {
   expression: string;
   label: string;
   prompt: string;
+  promptFile: string;
   enabled: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;
@@ -86,16 +87,23 @@ export function listSchedules(options: { db: Database.Database; persona?: string
 // Helpers
 // ---------------------------------------------------------------------------
 
+function truncate(str: string, maxLen: number): string {
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen - 1) + '…';
+}
+
 function toScheduleInfo(
   row: { id: string; persona_id: string; expression: string; payload: string; enabled: number; next_run_at: number | null; last_run_at: number | null },
   personaMap: Map<string, string>,
 ): ScheduleInfo {
   let label = '';
   let prompt = '';
+  let promptFile = '';
   try {
     const parsed = JSON.parse(row.payload);
     label = typeof parsed.label === 'string' ? parsed.label : '';
     prompt = typeof parsed.prompt === 'string' ? parsed.prompt : '';
+    promptFile = typeof parsed.promptFile === 'string' ? parsed.promptFile : '';
   } catch {
     // payload may not be valid JSON — leave defaults
   }
@@ -106,6 +114,7 @@ function toScheduleInfo(
     expression: row.expression,
     label,
     prompt,
+    promptFile,
     enabled: row.enabled === 1,
     nextRunAt: row.next_run_at !== null ? new Date(row.next_run_at).toISOString() : null,
     lastRunAt: row.last_run_at !== null ? new Date(row.last_run_at).toISOString() : null,
@@ -155,11 +164,12 @@ export async function listSchedulesCommand(options: {
     }
 
     // Print table header
-    const header = ['ID', 'PERSONA', 'LABEL', 'CRON', 'ENABLED', 'NEXT RUN'];
+    const header = ['ID', 'PERSONA', 'LABEL', 'PROMPT', 'CRON', 'ENABLED', 'NEXT RUN'];
     const rows = schedules.map((s) => [
       s.id,
       s.personaName,
       s.label,
+      s.promptFile ? `file:${s.promptFile}` : s.prompt ? truncate(s.prompt, 40) : '',
       s.expression,
       s.enabled ? 'yes' : 'no',
       s.nextRunAt ?? '—',

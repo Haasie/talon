@@ -1,14 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { ok, err } from 'neverthrow';
-import { QueueError } from '../../../src/core/errors/index.js';
+import { PersonaError, QueueError } from '../../../src/core/errors/index.js';
 import { ScheduleRepository } from '../../../src/core/database/repositories/schedule-repository.js';
 import { Scheduler } from '../../../src/scheduler/scheduler.js';
 import type { ScheduleConfig } from '../../../src/scheduler/schedule-types.js';
+import type { PersonaLoader } from '../../../src/personas/persona-loader.js';
 import type { QueueManager } from '../../../src/queue/queue-manager.js';
 import type { QueueItem } from '../../../src/queue/queue-types.js';
 import { QueueItemStatus } from '../../../src/queue/queue-types.js';
-import { createTestDb, createTestLogger, seedPersona, seedThread, seedDueSchedule, uuid } from './helpers.js';
+import { createTestDb, seedPersona, seedThread, seedDueSchedule, uuid } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Minimal QueueManager stub
@@ -51,6 +52,15 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function makeLogger() {
+  return {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  } as unknown as import('pino').Logger;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -62,6 +72,8 @@ describe('Scheduler', () => {
   let threadId: string;
   let scheduler: Scheduler;
   let queueStub: QueueManager;
+  let personaLoader: PersonaLoader;
+  let logger: ReturnType<typeof makeLogger>;
 
   beforeEach(() => {
     db = createTestDb();
@@ -69,7 +81,11 @@ describe('Scheduler', () => {
     personaId = seedPersona(db);
     threadId = seedThread(db);
     queueStub = makeQueueStub();
-    scheduler = new Scheduler(scheduleRepo, queueStub, FAST_CONFIG, createTestLogger());
+    logger = makeLogger();
+    personaLoader = {
+      resolveTaskPrompt: vi.fn(),
+    } as unknown as PersonaLoader;
+    scheduler = new Scheduler(scheduleRepo, queueStub, personaLoader, FAST_CONFIG, logger);
   });
 
   afterEach(() => {
@@ -195,6 +211,27 @@ describe('Scheduler', () => {
         prompt: 'Summarize open issues',
         personaId,
         content: 'Summarize open issues',
+      });
+    });
+
+    it('resolves promptFile to content when the schedule fires', async () => {
+      vi.mocked(personaLoader.resolveTaskPrompt).mockResolvedValue(ok('Rendered prompt file contents'));
+      const payload = { label: 'Morning briefing', promptFile: 'morning-briefing' };
+      seedDueSchedule(db, personaId, threadId, {
+        type: 'one_shot',
+        payload: JSON.stringify(payload),
+      });
+
+      scheduler.start();
+      await wait(150);
+      scheduler.stop();
+
+      expect(personaLoader.resolveTaskPrompt).toHaveBeenCalledWith(personaId, 'morning-briefing');
+      expect(queueStub.enqueue).toHaveBeenCalledWith(threadId, 'schedule', {
+        label: 'Morning briefing',
+        promptFile: 'morning-briefing',
+        personaId,
+        content: 'Rendered prompt file contents',
       });
     });
 
@@ -460,7 +497,7 @@ describe('Scheduler', () => {
         return ok(makeQueueItem({ threadId: tId }));
       });
 
-      scheduler = new Scheduler(scheduleRepo, failingStub, FAST_CONFIG, createTestLogger());
+      scheduler = new Scheduler(scheduleRepo, failingStub, personaLoader, FAST_CONFIG, logger);
       scheduler.start();
       await wait(150);
       scheduler.stop();
@@ -474,7 +511,7 @@ describe('Scheduler', () => {
       const scheduleId = seedDueSchedule(db, personaId, threadId, { type: 'interval', expression: '10000' });
 
       const errorStub = makeQueueStub(() => err(new QueueError('enqueue failed')));
-      scheduler = new Scheduler(scheduleRepo, errorStub, FAST_CONFIG, createTestLogger());
+      scheduler = new Scheduler(scheduleRepo, errorStub, personaLoader, FAST_CONFIG, logger);
       scheduler.start();
       await wait(150);
       scheduler.stop();
@@ -495,7 +532,7 @@ describe('Scheduler', () => {
         disable: vi.fn(() => ok(undefined)),
       } as unknown as ScheduleRepository;
 
-      scheduler = new Scheduler(faultyRepo, queueStub, FAST_CONFIG, createTestLogger());
+      scheduler = new Scheduler(faultyRepo, queueStub, personaLoader, FAST_CONFIG, logger);
 
       // Should not throw
       scheduler.start();
@@ -519,6 +556,48 @@ describe('Scheduler', () => {
         content: '',
       });
       void scheduleId;
+    });
+
+    it('skips enqueue and does not advance the schedule when promptFile resolution fails', async () => {
+      const scheduleId = seedDueSchedule(db, personaId, threadId, {
+        type: 'one_shot',
+        payload: JSON.stringify({ label: 'Morning briefing', promptFile: 'missing-prompt' }),
+      });
+      vi.mocked(personaLoader.resolveTaskPrompt).mockResolvedValue(
+        err(new PersonaError('Task prompt "missing-prompt" not found')),
+      );
+
+      scheduler.start();
+      await wait(150);
+      scheduler.stop();
+
+      expect(queueStub.enqueue).not.toHaveBeenCalled();
+      const row = db.prepare('SELECT next_run_at, last_run_at FROM schedules WHERE id = ?').get(scheduleId) as {
+        next_run_at: number;
+        last_run_at: number | null;
+      };
+      expect(row.next_run_at).toBeLessThan(Date.now());
+      expect(row.last_run_at).toBeNull();
+    });
+
+    it('catches unexpected rejected prompt resolution and logs per-schedule error', async () => {
+      seedDueSchedule(db, personaId, threadId, {
+        type: 'one_shot',
+        payload: JSON.stringify({ label: 'Morning briefing', promptFile: 'broken-prompt' }),
+      });
+      vi.mocked(personaLoader.resolveTaskPrompt).mockRejectedValue(new Error('disk read exploded'));
+
+      scheduler.start();
+      await wait(150);
+      scheduler.stop();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: expect.any(Error),
+        }),
+        'scheduler: unexpected error processing schedule',
+      );
+      expect(queueStub.enqueue).not.toHaveBeenCalled();
     });
   });
 });

@@ -112,11 +112,13 @@ export async function addPersona(options: AddPersonaOptions): Promise<AddPersona
 
     // Scaffold personality folder with example file.
     const personalityDir = path.join(personaDir, 'personality');
+    const promptsDir = path.join(personaDir, 'prompts');
     try {
       await fs.mkdir(personalityDir, { recursive: true });
+      await fs.mkdir(promptsDir, { recursive: true });
       await fs.writeFile(path.join(personalityDir, '01-tone.md'), buildExamplePersonalityFile(), 'utf-8');
     } catch (cause) {
-      throw new Error(`Error creating personality folder "${personalityDir}": ${String(cause)}`);
+      throw new Error(`Error scaffolding persona folders (personality/prompts): ${String(cause)}`);
     }
   }
 
@@ -155,9 +157,11 @@ export async function addPersonaCommand(options: AddPersonaOptions): Promise<voi
     console.log(`Created persona directory: ${path.dirname(entry.systemPromptFile)}`);
     console.log(`Created system prompt:     ${entry.systemPromptFile}`);
     console.log(`Created personality folder: ${path.join(path.dirname(entry.systemPromptFile), 'personality')}`);
+    console.log(`Created prompts folder:    ${path.join(path.dirname(entry.systemPromptFile), 'prompts')}`);
     console.log(`Added persona "${entry.name}" to "${options.configPath ?? DEFAULT_CONFIG_PATH}".`);
     console.log(`Edit "${entry.systemPromptFile}" to customise the system prompt.`);
     console.log(`Add .md files to the personality/ folder to enhance the agent's personality.`);
+    console.log(`Add task-specific prompts to the prompts/ folder and reference them with promptFile in schedules.`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
@@ -205,6 +209,8 @@ export function buildSystemPromptTemplate(name: string): string {
     '',
     '- Do not reveal confidential system information.',
     '- Decline requests that violate safety guidelines.',
+    '',
+    '<!-- Add task-specific prompt files under prompts/*.md and reference them from schedules via promptFile. -->',
     '',
   ].join('\n');
 }

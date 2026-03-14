@@ -6,11 +6,13 @@
  */
 
 import type pino from 'pino';
+import { ok, err, type Result } from 'neverthrow';
 import { v4 as uuidv4 } from 'uuid';
 import type { ToolManifest, ToolCallResult } from '../tool-types.js';
 import type { ScheduleRepository } from '../../core/database/repositories/schedule-repository.js';
 import { ToolError } from '../../core/errors/error-types.js';
 import { getNextCronTime } from '../../scheduler/cron-evaluator.js';
+import type { SchedulePayload } from '../../scheduler/schedule-types.js';
 import type { ToolExecutionContext } from './channel-send.js';
 
 /** Manifest for the schedule.manage host tool. */
@@ -30,6 +32,8 @@ export interface ScheduleManageArgs {
   label?: string;
   /** Prompt or instruction to execute when the schedule fires. */
   prompt?: string;
+  /** Prompt file alias to resolve from the persona's prompts/ directory. */
+  promptFile?: string;
 }
 
 /** Valid actions for the schedule.manage tool. */
@@ -120,7 +124,7 @@ export class ScheduleManageHandler {
     context: ToolExecutionContext,
     requestId: string,
   ): ToolCallResult {
-    const { cronExpr, label, prompt } = args;
+    const { cronExpr } = args;
 
     if (!cronExpr || typeof cronExpr !== 'string' || cronExpr.trim() === '') {
       const error = new ToolError('schedule.manage: cronExpr is required for create action');
@@ -136,11 +140,19 @@ export class ScheduleManageHandler {
       return { requestId, tool: 'schedule.manage', status: 'error', error: error.message };
     }
 
+    const payloadResult = this.buildSchedulePayload(args);
+    if (payloadResult.isErr()) {
+      this.deps.logger.warn({ requestId }, payloadResult.error.message);
+      return {
+        requestId,
+        tool: 'schedule.manage',
+        status: 'error',
+        error: payloadResult.error.message,
+      };
+    }
+
     const scheduleId = uuidv4();
-    const payload = JSON.stringify({
-      label: label ?? '',
-      prompt: prompt ?? '',
-    });
+    const payload = JSON.stringify(payloadResult.value);
 
     // Compute next_run_at from the cron expression so the scheduler
     // can find this schedule on its next tick. (Fixes BUG-005.)
@@ -188,7 +200,7 @@ export class ScheduleManageHandler {
     context: ToolExecutionContext,
     requestId: string,
   ): ToolCallResult {
-    const { scheduleId, cronExpr, label, prompt } = args;
+    const { scheduleId, cronExpr, label, prompt, promptFile } = args;
 
     if (!scheduleId || typeof scheduleId !== 'string' || scheduleId.trim() === '') {
       const error = new ToolError('schedule.manage: scheduleId is required for update action');
@@ -217,16 +229,43 @@ export class ScheduleManageHandler {
       }
       fields['next_run_at'] = nextRunResult.value;
     }
-    if (label !== undefined || prompt !== undefined) {
-      fields['payload'] = JSON.stringify({
-        label: label ?? '',
-        prompt: prompt ?? '',
-      });
+    if (label !== undefined || prompt !== undefined || promptFile !== undefined) {
+      const existingSchedule = this.deps.scheduleRepository.findById(scheduleId);
+      if (existingSchedule.isErr()) {
+        const msg = `schedule.manage: failed to load existing schedule — ${existingSchedule.error.message}`;
+        this.deps.logger.error({ requestId, scheduleId, err: existingSchedule.error }, msg);
+        return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+      }
+
+      if (!existingSchedule.value) {
+        const msg = `schedule.manage: schedule "${scheduleId}" not found`;
+        this.deps.logger.warn({ requestId, scheduleId }, msg);
+        return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+      }
+
+      if (existingSchedule.value.persona_id !== context.personaId) {
+        const msg = `schedule.manage: schedule "${scheduleId}" does not belong to this persona`;
+        this.deps.logger.warn({ requestId, scheduleId, personaId: context.personaId }, msg);
+        return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+      }
+
+      const payloadResult = this.buildSchedulePayload(args, existingSchedule.value.payload);
+      if (payloadResult.isErr()) {
+        this.deps.logger.warn({ requestId, scheduleId }, payloadResult.error.message);
+        return {
+          requestId,
+          tool: 'schedule.manage',
+          status: 'error',
+          error: payloadResult.error.message,
+        };
+      }
+
+      fields['payload'] = JSON.stringify(payloadResult.value);
     }
 
     if (Object.keys(fields).length === 0) {
       const error = new ToolError(
-        'schedule.manage: no fields provided to update (provide at least one of: cronExpr, label, prompt)',
+        'schedule.manage: no fields provided to update (provide at least one of: cronExpr, label, prompt, promptFile)',
       );
       this.deps.logger.warn({ requestId, scheduleId }, error.message);
       return { requestId, tool: 'schedule.manage', status: 'error', error: error.message };
@@ -315,7 +354,7 @@ export class ScheduleManageHandler {
           return null;
         }
       })();
-      return {
+      const schedule = {
         scheduleId: row.id,
         type: row.type,
         expression: row.expression,
@@ -325,6 +364,15 @@ export class ScheduleManageHandler {
         nextRunAt: row.next_run_at ? new Date(row.next_run_at).toISOString() : null,
         lastRunAt: row.last_run_at ? new Date(row.last_run_at).toISOString() : null,
       };
+
+      if (typeof payload?.promptFile === 'string') {
+        return {
+          ...schedule,
+          promptFile: payload.promptFile,
+        };
+      }
+
+      return schedule;
     });
 
     this.deps.logger.debug(
@@ -338,5 +386,66 @@ export class ScheduleManageHandler {
       status: 'success',
       result: { schedules, count: schedules.length },
     };
+  }
+
+  private buildSchedulePayload(
+    args: Pick<ScheduleManageArgs, 'label' | 'prompt' | 'promptFile'>,
+    existingPayloadJson?: string,
+  ): Result<SchedulePayload, ToolError> {
+    if (args.prompt !== undefined && args.promptFile !== undefined) {
+      return err(
+        new ToolError('schedule.manage: prompt and promptFile are mutually exclusive'),
+      );
+    }
+
+    const existingPayload = this.parseSchedulePayload(existingPayloadJson);
+    const payload: SchedulePayload = {
+      label: args.label ?? existingPayload.label ?? '',
+    };
+
+    if (args.promptFile !== undefined) {
+      payload.promptFile = args.promptFile;
+      return ok(payload);
+    }
+
+    if (args.prompt !== undefined) {
+      payload.prompt = args.prompt;
+      return ok(payload);
+    }
+
+    if (existingPayload.promptFile !== undefined) {
+      payload.promptFile = existingPayload.promptFile;
+      return ok(payload);
+    }
+
+    if (existingPayload.prompt !== undefined) {
+      payload.prompt = existingPayload.prompt;
+    }
+
+    return ok(payload);
+  }
+
+  private parseSchedulePayload(payloadJson?: string): SchedulePayload {
+    if (!payloadJson) {
+      return { label: '' };
+    }
+
+    try {
+      const parsed = JSON.parse(payloadJson) as Record<string, unknown>;
+      const payload: SchedulePayload = {
+        label: typeof parsed.label === 'string' ? parsed.label : '',
+      };
+
+      if (typeof parsed.prompt === 'string') {
+        payload.prompt = parsed.prompt;
+      }
+      if (typeof parsed.promptFile === 'string') {
+        payload.promptFile = parsed.promptFile;
+      }
+
+      return payload;
+    } catch {
+      return { label: '' };
+    }
   }
 }

@@ -9,9 +9,10 @@
 import type pino from 'pino';
 import type { ScheduleRepository } from '../core/database/repositories/schedule-repository.js';
 import type { ScheduleRow } from '../core/database/repositories/schedule-repository.js';
+import type { PersonaLoader } from '../personas/persona-loader.js';
 import type { QueueManager } from '../queue/queue-manager.js';
 import { getNextCronTime } from './cron-evaluator.js';
-import type { ScheduleConfig } from './schedule-types.js';
+import type { ScheduleConfig, SchedulePayload } from './schedule-types.js';
 
 // ---------------------------------------------------------------------------
 // Scheduler
@@ -26,10 +27,13 @@ import type { ScheduleConfig } from './schedule-types.js';
 export class Scheduler {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
+  /** Generation counter to prevent stale ticks from re-arming after stop()+start(). */
+  private generation = 0;
 
   constructor(
     private readonly scheduleRepo: ScheduleRepository,
     private readonly queueManager: QueueManager,
+    private readonly personaLoader: PersonaLoader,
     private readonly config: ScheduleConfig,
     private readonly logger: pino.Logger,
   ) {}
@@ -50,8 +54,9 @@ export class Scheduler {
       return;
     }
     this.running = true;
+    this.generation += 1;
     this.logger.info({ tickIntervalMs: this.config.tickIntervalMs }, 'scheduler started');
-    void this.tick();
+    void this.tick(this.generation);
   }
 
   /**
@@ -80,31 +85,45 @@ export class Scheduler {
    * disables one-shot / event schedules. Errors on individual schedules are
    * logged and skipped so one bad schedule cannot block the rest.
    */
-  private tick(): void {
-    if (!this.running) {
+  private async tick(gen: number): Promise<void> {
+    if (!this.running || gen !== this.generation) {
       return;
     }
 
-    const now = Date.now();
+    try {
+      const now = Date.now();
 
-    const dueResult = this.scheduleRepo.findDue(now);
-    if (dueResult.isErr()) {
-      this.logger.error({ err: dueResult.error }, 'scheduler: failed to query due schedules');
-    } else {
-      const due = dueResult.value;
-      this.logger.debug({ count: due.length, now }, 'scheduler tick');
+      const dueResult = this.scheduleRepo.findDue(now);
+      if (dueResult.isErr()) {
+        this.logger.error({ err: dueResult.error }, 'scheduler: failed to query due schedules');
+      } else {
+        const due = dueResult.value;
+        this.logger.debug({ count: due.length, now }, 'scheduler tick');
 
-      for (const schedule of due) {
-        this.processSchedule(schedule, now);
+        // Process due schedules serially. Each schedule is wrapped in its own
+        // try/catch so one failure does not block the rest.
+        for (const schedule of due) {
+          try {
+            await this.processSchedule(schedule, now);
+          } catch (scheduleErr) {
+            this.logger.error(
+              { scheduleId: schedule.id, err: scheduleErr },
+              'scheduler: unexpected error processing schedule',
+            );
+          }
+        }
       }
-    }
-
-    // Schedule the next tick only if still running (stop() may have been called
-    // while we were awaiting processSchedule calls above).
-    if (this.running) {
-      this.timer = setTimeout(() => {
-        void this.tick();
-      }, this.config.tickIntervalMs);
+    } catch (err) {
+      this.logger.error({ err }, 'scheduler: unexpected tick failure');
+    } finally {
+      // Schedule the next tick only if still running and this tick belongs to
+      // the current generation (stop()+start() may have spawned a new loop).
+      if (this.running && gen === this.generation) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          void this.tick(gen);
+        }, this.config.tickIntervalMs);
+      }
     }
   }
 
@@ -114,7 +133,7 @@ export class Scheduler {
    * @param schedule - The schedule row to process.
    * @param now      - Current epoch ms (used for last_run_at).
    */
-  private processSchedule(schedule: ScheduleRow, now: number): void {
+  private async processSchedule(schedule: ScheduleRow, now: number): Promise<void> {
     this.logger.info(
       { scheduleId: schedule.id, type: schedule.type, expression: schedule.expression },
       'scheduler: firing schedule',
@@ -131,7 +150,15 @@ export class Scheduler {
     } else {
       let rawPayload: Record<string, unknown> = {};
       try {
-        rawPayload = JSON.parse(schedule.payload) as Record<string, unknown>;
+        const parsed: unknown = JSON.parse(schedule.payload);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          rawPayload = parsed as Record<string, unknown>;
+        } else {
+          this.logger.warn(
+            { scheduleId: schedule.id, raw: schedule.payload },
+            'scheduler: schedule payload is not a JSON object — using empty object',
+          );
+        }
       } catch {
         this.logger.warn(
           { scheduleId: schedule.id, raw: schedule.payload },
@@ -139,12 +166,35 @@ export class Scheduler {
         );
       }
 
+      const schedulePayload = rawPayload as SchedulePayload & Record<string, unknown>;
+      const promptFile =
+        typeof schedulePayload.promptFile === 'string' ? schedulePayload.promptFile : undefined;
+      let content =
+        typeof schedulePayload.prompt === 'string' ? schedulePayload.prompt : '';
+
+      if (promptFile) {
+        const promptResult = await this.personaLoader.resolveTaskPrompt(schedule.persona_id, promptFile);
+        if (promptResult.isErr()) {
+          this.logger.error(
+            {
+              scheduleId: schedule.id,
+              personaId: schedule.persona_id,
+              promptFile,
+              err: promptResult.error,
+            },
+            'scheduler: failed to resolve promptFile',
+          );
+          return;
+        }
+        content = promptResult.value;
+      }
+
       // Map schedule fields to the payload shape AgentRunner expects:
       // personaId (from schedule row) and content (from payload.prompt).
       const payload: Record<string, unknown> = {
-        ...rawPayload,
+        ...schedulePayload,
         personaId: schedule.persona_id,
-        content: typeof rawPayload.prompt === 'string' ? rawPayload.prompt : '',
+        content,
       };
 
       const enqueueResult = this.queueManager.enqueue(schedule.thread_id, 'schedule', payload);

@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFile, unlink, mkdtemp } from 'node:fs/promises';
+import { writeFile, unlink, mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
@@ -238,6 +238,142 @@ describe('PersonaLoader', () => {
       expect(result.isErr()).toBe(true);
       // 'good' should NOT have been inserted since we failed on 'bad'.
       expect(repo.findByName('good')._unsafeUnwrap()).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // loadFromConfig — task prompt files
+  // -------------------------------------------------------------------------
+
+  describe('loadFromConfig — task prompt files', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'persona-loader-prompts-test-'));
+    });
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    async function scaffoldPersonaWithSystemPrompt(personaName: string): Promise<string> {
+      const personaDir = join(tmpDir, personaName);
+      await mkdir(personaDir, { recursive: true });
+
+      const systemPromptFile = join(personaDir, 'system.md');
+      await writeFile(systemPromptFile, `# ${personaName}\n`);
+
+      return systemPromptFile;
+    }
+
+    it('indexes markdown files from prompts/ by basename with absolute paths', async () => {
+      const systemPromptFile = await scaffoldPersonaWithSystemPrompt('assistant');
+      const promptsDir = join(tmpDir, 'assistant', 'prompts');
+      await mkdir(promptsDir, { recursive: true });
+      await writeFile(join(promptsDir, 'morning-briefing.md'), 'Morning briefing');
+      await writeFile(join(promptsDir, 'weekly-review.md'), 'Weekly review');
+      await writeFile(join(promptsDir, 'notes.txt'), 'ignore me');
+
+      const config = makePersonaConfig({ name: 'assistant', systemPromptFile });
+      const result = await loader.loadFromConfig([config]);
+
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()[0].taskPromptPaths).toEqual({
+        'morning-briefing': join(promptsDir, 'morning-briefing.md'),
+        'weekly-review': join(promptsDir, 'weekly-review.md'),
+      });
+    });
+
+    it('leaves taskPromptPaths undefined when prompts/ is missing or empty', async () => {
+      const missingPromptConfig = makePersonaConfig({
+        name: 'missing-prompts',
+        systemPromptFile: await scaffoldPersonaWithSystemPrompt('missing-prompts'),
+      });
+
+      const emptyPromptSystemFile = await scaffoldPersonaWithSystemPrompt('empty-prompts');
+      await mkdir(join(tmpDir, 'empty-prompts', 'prompts'), { recursive: true });
+      const emptyPromptConfig = makePersonaConfig({
+        name: 'empty-prompts',
+        systemPromptFile: emptyPromptSystemFile,
+      });
+
+      const result = await loader.loadFromConfig([missingPromptConfig, emptyPromptConfig]);
+
+      expect(result.isOk()).toBe(true);
+      const [missingPromptPersona, emptyPromptPersona] = result._unsafeUnwrap();
+      expect(missingPromptPersona.taskPromptPaths).toBeUndefined();
+      expect(emptyPromptPersona.taskPromptPaths).toBeUndefined();
+    });
+
+    it('returns loaded personas by id after loadFromConfig', async () => {
+      const config = makePersonaConfig({
+        name: 'lookup-by-id',
+        systemPromptFile: await scaffoldPersonaWithSystemPrompt('lookup-by-id'),
+      });
+
+      await loader.loadFromConfig([config]);
+      const row = repo.findByName('lookup-by-id')._unsafeUnwrap();
+      const result = loader.getById(row!.id);
+
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()?.config.name).toBe('lookup-by-id');
+    });
+
+    it('reads task prompt file contents on demand', async () => {
+      const systemPromptFile = await scaffoldPersonaWithSystemPrompt('reader');
+      const promptsDir = join(tmpDir, 'reader', 'prompts');
+      await mkdir(promptsDir, { recursive: true });
+      const promptPath = join(promptsDir, 'morning-briefing.md');
+      await writeFile(promptPath, 'Original content');
+
+      const config = makePersonaConfig({ name: 'reader', systemPromptFile });
+      await loader.loadFromConfig([config]);
+
+      await writeFile(promptPath, 'Updated content after load');
+
+      const row = repo.findByName('reader')._unsafeUnwrap();
+      const result = await loader.resolveTaskPrompt(row!.id, 'morning-briefing');
+
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBe('Updated content after load');
+    });
+
+    it('discovers prompt files added after startup via filesystem fallback', async () => {
+      const systemPromptFile = await scaffoldPersonaWithSystemPrompt('late-add');
+      const promptsDir = join(tmpDir, 'late-add', 'prompts');
+      // No prompts dir at load time
+      const config = makePersonaConfig({ name: 'late-add', systemPromptFile });
+      await loader.loadFromConfig([config]);
+
+      // Add a prompt file after loading
+      await mkdir(promptsDir, { recursive: true });
+      await writeFile(join(promptsDir, 'new-task.md'), 'Dynamically added prompt');
+
+      const row = repo.findByName('late-add')._unsafeUnwrap();
+      const result = await loader.resolveTaskPrompt(row!.id, 'new-task');
+
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBe('Dynamically added prompt');
+
+      // Second call should use the cached path (no extra filesystem probe)
+      const result2 = await loader.resolveTaskPrompt(row!.id, 'new-task');
+      expect(result2.isOk()).toBe(true);
+    });
+
+    it('returns Err when resolving an unknown prompt alias', async () => {
+      const systemPromptFile = await scaffoldPersonaWithSystemPrompt('unknown-alias');
+      const promptsDir = join(tmpDir, 'unknown-alias', 'prompts');
+      await mkdir(promptsDir, { recursive: true });
+      await writeFile(join(promptsDir, 'known.md'), 'Known prompt');
+
+      const config = makePersonaConfig({ name: 'unknown-alias', systemPromptFile });
+      await loader.loadFromConfig([config]);
+      const row = repo.findByName('unknown-alias')._unsafeUnwrap();
+
+      const result = await loader.resolveTaskPrompt(row!.id, 'missing');
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().message).toMatch(/missing/);
     });
   });
 

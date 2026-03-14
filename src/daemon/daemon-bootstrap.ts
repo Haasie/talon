@@ -329,7 +329,7 @@ export async function bootstrap(
   }
 
   // 14. Scheduler
-  const scheduler = new Scheduler(repos.schedule, queueManager, config.scheduler, logger);
+  const scheduler = new Scheduler(repos.schedule, queueManager, personaLoader, config.scheduler, logger);
 
   // 15. Message pipeline and channel registration
   const router = new ChannelRouter(repos.binding, logger);
