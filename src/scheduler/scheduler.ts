@@ -150,7 +150,15 @@ export class Scheduler {
     } else {
       let rawPayload: Record<string, unknown> = {};
       try {
-        rawPayload = JSON.parse(schedule.payload) as Record<string, unknown>;
+        const parsed: unknown = JSON.parse(schedule.payload);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          rawPayload = parsed as Record<string, unknown>;
+        } else {
+          this.logger.warn(
+            { scheduleId: schedule.id, raw: schedule.payload },
+            'scheduler: schedule payload is not a JSON object — using empty object',
+          );
+        }
       } catch {
         this.logger.warn(
           { scheduleId: schedule.id, raw: schedule.payload },

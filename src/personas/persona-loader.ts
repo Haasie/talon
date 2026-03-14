@@ -55,6 +55,10 @@ export class PersonaLoader {
    * @returns `Ok(LoadedPersona[])` on success, `Err(PersonaError)` on failure.
    */
   async loadFromConfig(configs: PersonaConfig[]): Promise<Result<LoadedPersona[], PersonaError>> {
+    // Clear caches so removed personas don't linger after a reload.
+    this.cache.clear();
+    this.idCache.clear();
+
     const loaded: LoadedPersona[] = [];
 
     for (const config of configs) {
@@ -307,9 +311,9 @@ export class PersonaLoader {
   ): Promise<Record<string, string> | undefined> {
     const promptsDir = join(dirname(resolve(systemPromptFile)), 'prompts');
 
-    let entries: string[];
+    let entries: import('node:fs').Dirent[];
     try {
-      entries = await readdir(promptsDir);
+      entries = await readdir(promptsDir, { withFileTypes: true });
     } catch (cause: unknown) {
       if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') {
         return undefined;
@@ -321,7 +325,10 @@ export class PersonaLoader {
       return undefined;
     }
 
-    const mdFiles = entries.filter((file) => file.endsWith('.md')).sort();
+    const mdFiles = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map((entry) => entry.name)
+      .sort();
     if (mdFiles.length === 0) {
       return undefined;
     }
