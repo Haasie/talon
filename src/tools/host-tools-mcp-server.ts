@@ -209,7 +209,11 @@ const TOOLS = [
         },
         prompt: {
           type: 'string' as const,
-          description: 'Prompt or instruction to execute when the schedule fires',
+          description: 'Inline prompt to execute when the schedule fires. Mutually exclusive with promptFile.',
+        },
+        promptFile: {
+          type: 'string' as const,
+          description: 'Prompt file alias from the persona prompts/ directory. Mutually exclusive with prompt.',
         },
       },
       required: ['action'],

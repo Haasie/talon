@@ -54,6 +54,11 @@ export interface LoadedPersona {
    * `undefined` if the personality folder doesn't exist or is empty.
    */
   personalityContent?: string;
+  /**
+   * Map of task prompt names to absolute markdown file paths from `prompts/*.md`.
+   * Prompt contents are not loaded at startup; files are read on demand.
+   */
+  taskPromptPaths?: Record<string, string>;
   /** Effective capability policy after merging persona + skill grants. */
   resolvedCapabilities: ResolvedCapabilities;
 }

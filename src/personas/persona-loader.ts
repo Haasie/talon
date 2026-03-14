@@ -10,7 +10,7 @@
  */
 
 import { readFile, readdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { ok, err, type Result } from 'neverthrow';
 import type pino from 'pino';
@@ -31,6 +31,8 @@ import type { LoadedPersona, ResolvedCapabilities } from './persona-types.js';
 export class PersonaLoader {
   /** In-process cache populated after `loadFromConfig`. */
   private readonly cache = new Map<string, LoadedPersona>();
+  /** Secondary cache keyed by persisted persona ID. */
+  private readonly idCache = new Map<string, LoadedPersona>();
 
   constructor(
     private readonly personaRepo: PersonaRepository,
@@ -80,6 +82,52 @@ export class PersonaLoader {
     return ok(this.cache.get(name));
   }
 
+  /**
+   * Looks up a previously-loaded persona by its persisted database ID.
+   *
+   * @param id - Persona primary key.
+   * @returns `Ok(LoadedPersona | undefined)`.
+   */
+  getById(id: string): Result<LoadedPersona | undefined, PersonaError> {
+    return ok(this.idCache.get(id));
+  }
+
+  /**
+   * Resolves a task prompt alias to file contents for a loaded persona.
+   *
+   * @param personaId  - Persisted persona ID.
+   * @param promptFile - Prompt basename without `.md`.
+   */
+  async resolveTaskPrompt(
+    personaId: string,
+    promptFile: string,
+  ): Promise<Result<string, PersonaError>> {
+    const loadedPersona = this.idCache.get(personaId);
+    if (!loadedPersona) {
+      return err(new PersonaError(`No loaded persona found for id "${personaId}"`));
+    }
+
+    const promptPath = loadedPersona.taskPromptPaths?.[promptFile];
+    if (!promptPath) {
+      return err(
+        new PersonaError(
+          `Task prompt "${promptFile}" not found for persona "${loadedPersona.config.name}"`,
+        ),
+      );
+    }
+
+    try {
+      return ok(await readFile(promptPath, 'utf-8'));
+    } catch (cause) {
+      return err(
+        new PersonaError(
+          `Failed to read task prompt "${promptFile}" for persona "${loadedPersona.config.name}": ${String(cause)}`,
+          cause instanceof Error ? cause : undefined,
+        ),
+      );
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -105,6 +153,12 @@ export class PersonaLoader {
       personalityContent = await this.readPersonalityFolder(config.systemPromptFile, config.name);
     }
 
+    // 2b. Index task prompt files for on-demand scheduled task resolution.
+    let taskPromptPaths: Record<string, string> | undefined;
+    if (config.systemPromptFile) {
+      taskPromptPaths = await this.readTaskPromptPaths(config.systemPromptFile, config.name);
+    }
+
     // 3. Resolve effective capabilities (persona-level only at load time;
     //    skill-level merging happens at runtime when skills are attached).
     const resolvedCapabilities: ResolvedCapabilities = mergeCapabilities(config.capabilities);
@@ -126,10 +180,12 @@ export class PersonaLoader {
       config,
       systemPromptContent,
       personalityContent,
+      taskPromptPaths,
       resolvedCapabilities,
     };
 
     this.cache.set(config.name, loadedPersona);
+    this.idCache.set(upsertResult.value, loadedPersona);
     this.logger.info({ persona: config.name }, 'persona loaded');
 
     return ok(loadedPersona);
@@ -216,6 +272,48 @@ export class PersonaLoader {
   }
 
   /**
+   * Indexes all `.md` files from the `prompts/` folder adjacent to the system
+   * prompt file. Returns a record keyed by basename without extension.
+   */
+  private async readTaskPromptPaths(
+    systemPromptFile: string,
+    personaName: string,
+  ): Promise<Record<string, string> | undefined> {
+    const promptsDir = join(dirname(resolve(systemPromptFile)), 'prompts');
+
+    let entries: string[];
+    try {
+      entries = await readdir(promptsDir);
+    } catch (cause: unknown) {
+      if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') {
+        return undefined;
+      }
+      this.logger.warn(
+        { persona: personaName, err: cause },
+        'failed to read prompts folder',
+      );
+      return undefined;
+    }
+
+    const mdFiles = entries.filter((file) => file.endsWith('.md')).sort();
+    if (mdFiles.length === 0) {
+      return undefined;
+    }
+
+    const taskPromptPaths: Record<string, string> = {};
+    for (const file of mdFiles) {
+      taskPromptPaths[basename(file, '.md')] = join(promptsDir, file);
+    }
+
+    this.logger.debug(
+      { persona: personaName, files: mdFiles.length },
+      'task prompt files indexed',
+    );
+
+    return taskPromptPaths;
+  }
+
+  /**
    * Upserts a persona to the database.
    *
    * Attempts to find an existing record by name and update it; if none exists,
@@ -223,7 +321,7 @@ export class PersonaLoader {
    *
    * @param config - The persona config to persist.
    */
-  private upsertPersona(config: PersonaConfig): Result<void, PersonaError> {
+  private upsertPersona(config: PersonaConfig): Result<string, PersonaError> {
     // Check if persona already exists.
     const findResult = this.personaRepo.findByName(config.name);
     if (findResult.isErr()) {
@@ -258,6 +356,7 @@ export class PersonaLoader {
       }
 
       this.logger.debug({ persona: config.name }, 'persona record updated in database');
+      return ok(existingRow.id);
     } else {
       // Insert new record.
       const insertResult = this.personaRepo.insert({
@@ -281,8 +380,7 @@ export class PersonaLoader {
       }
 
       this.logger.debug({ persona: config.name }, 'persona record inserted into database');
+      return ok(insertResult.value.id);
     }
-
-    return ok(undefined);
   }
 }

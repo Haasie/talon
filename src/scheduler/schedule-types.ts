@@ -8,6 +8,20 @@
 export type { ScheduleType, ScheduleRow } from '../core/database/repositories/schedule-repository.js';
 
 // ---------------------------------------------------------------------------
+// Schedule payload
+// ---------------------------------------------------------------------------
+
+/** JSON payload stored with a schedule row. */
+export interface SchedulePayload {
+  /** Human-readable label for the schedule. */
+  label: string;
+  /** Inline prompt content, if the schedule stores one directly. */
+  prompt?: string;
+  /** Persona-relative prompt file alias from `prompts/*.md`. */
+  promptFile?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler configuration
 // ---------------------------------------------------------------------------
 
