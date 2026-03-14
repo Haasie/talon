@@ -338,6 +338,28 @@ describe('PersonaLoader', () => {
       expect(result._unsafeUnwrap()).toBe('Updated content after load');
     });
 
+    it('discovers prompt files added after startup via filesystem fallback', async () => {
+      const systemPromptFile = await scaffoldPersonaWithSystemPrompt('late-add');
+      const promptsDir = join(tmpDir, 'late-add', 'prompts');
+      // No prompts dir at load time
+      const config = makePersonaConfig({ name: 'late-add', systemPromptFile });
+      await loader.loadFromConfig([config]);
+
+      // Add a prompt file after loading
+      await mkdir(promptsDir, { recursive: true });
+      await writeFile(join(promptsDir, 'new-task.md'), 'Dynamically added prompt');
+
+      const row = repo.findByName('late-add')._unsafeUnwrap();
+      const result = await loader.resolveTaskPrompt(row!.id, 'new-task');
+
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBe('Dynamically added prompt');
+
+      // Second call should use the cached path (no extra filesystem probe)
+      const result2 = await loader.resolveTaskPrompt(row!.id, 'new-task');
+      expect(result2.isOk()).toBe(true);
+    });
+
     it('returns Err when resolving an unknown prompt alias', async () => {
       const systemPromptFile = await scaffoldPersonaWithSystemPrompt('unknown-alias');
       const promptsDir = join(tmpDir, 'unknown-alias', 'prompts');

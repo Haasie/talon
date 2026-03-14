@@ -107,7 +107,33 @@ export class PersonaLoader {
       return err(new PersonaError(`No loaded persona found for id "${personaId}"`));
     }
 
-    const promptPath = loadedPersona.taskPromptPaths?.[promptFile];
+    let promptPath = loadedPersona.taskPromptPaths?.[promptFile];
+
+    // Filesystem fallback: if the alias isn't in the startup index (e.g. the
+    // file was added after the daemon started), try to resolve it directly.
+    if (!promptPath && loadedPersona.config.systemPromptFile) {
+      const candidate = join(
+        dirname(resolve(loadedPersona.config.systemPromptFile)),
+        'prompts',
+        `${promptFile}.md`,
+      );
+      try {
+        await readFile(candidate, 'utf-8'); // probe existence
+        promptPath = candidate;
+        // Update the index so subsequent lookups are fast.
+        if (!loadedPersona.taskPromptPaths) {
+          loadedPersona.taskPromptPaths = {};
+        }
+        loadedPersona.taskPromptPaths[promptFile] = candidate;
+        this.logger.info(
+          { persona: loadedPersona.config.name, promptFile },
+          'task prompt discovered via filesystem fallback',
+        );
+      } catch {
+        // File doesn't exist — fall through to the error below.
+      }
+    }
+
     if (!promptPath) {
       return err(
         new PersonaError(
