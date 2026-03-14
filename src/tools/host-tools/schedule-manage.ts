@@ -237,7 +237,19 @@ export class ScheduleManageHandler {
         return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
       }
 
-      const payloadResult = this.buildSchedulePayload(args, existingSchedule.value?.payload);
+      if (!existingSchedule.value) {
+        const msg = `schedule.manage: schedule "${scheduleId}" not found`;
+        this.deps.logger.warn({ requestId, scheduleId }, msg);
+        return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+      }
+
+      if (existingSchedule.value.persona_id !== context.personaId) {
+        const msg = `schedule.manage: schedule "${scheduleId}" does not belong to this persona`;
+        this.deps.logger.warn({ requestId, scheduleId, personaId: context.personaId }, msg);
+        return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+      }
+
+      const payloadResult = this.buildSchedulePayload(args, existingSchedule.value.payload);
       if (payloadResult.isErr()) {
         this.deps.logger.warn({ requestId, scheduleId }, payloadResult.error.message);
         return {

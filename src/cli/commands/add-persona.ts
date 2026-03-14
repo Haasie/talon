@@ -118,7 +118,7 @@ export async function addPersona(options: AddPersonaOptions): Promise<AddPersona
       await fs.mkdir(promptsDir, { recursive: true });
       await fs.writeFile(path.join(personalityDir, '01-tone.md'), buildExamplePersonalityFile(), 'utf-8');
     } catch (cause) {
-      throw new Error(`Error creating personality folder "${personalityDir}": ${String(cause)}`);
+      throw new Error(`Error scaffolding persona folders (personality/prompts): ${String(cause)}`);
     }
   }
 

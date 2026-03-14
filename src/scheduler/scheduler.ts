@@ -27,6 +27,8 @@ import type { ScheduleConfig, SchedulePayload } from './schedule-types.js';
 export class Scheduler {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
+  /** Generation counter to prevent stale ticks from re-arming after stop()+start(). */
+  private generation = 0;
 
   constructor(
     private readonly scheduleRepo: ScheduleRepository,
@@ -52,8 +54,9 @@ export class Scheduler {
       return;
     }
     this.running = true;
+    this.generation += 1;
     this.logger.info({ tickIntervalMs: this.config.tickIntervalMs }, 'scheduler started');
-    void this.tick();
+    void this.tick(this.generation);
   }
 
   /**
@@ -82,8 +85,8 @@ export class Scheduler {
    * disables one-shot / event schedules. Errors on individual schedules are
    * logged and skipped so one bad schedule cannot block the rest.
    */
-  private async tick(): Promise<void> {
-    if (!this.running) {
+  private async tick(gen: number): Promise<void> {
+    if (!this.running || gen !== this.generation) {
       return;
     }
 
@@ -97,21 +100,28 @@ export class Scheduler {
         const due = dueResult.value;
         this.logger.debug({ count: due.length, now }, 'scheduler tick');
 
-        // Process due schedules serially. Expected due counts are low, and
-        // keeping fire/update behavior in-order makes retries easier to reason about.
+        // Process due schedules serially. Each schedule is wrapped in its own
+        // try/catch so one failure does not block the rest.
         for (const schedule of due) {
-          await this.processSchedule(schedule, now);
+          try {
+            await this.processSchedule(schedule, now);
+          } catch (scheduleErr) {
+            this.logger.error(
+              { scheduleId: schedule.id, err: scheduleErr },
+              'scheduler: unexpected error processing schedule',
+            );
+          }
         }
       }
     } catch (err) {
       this.logger.error({ err }, 'scheduler: unexpected tick failure');
     } finally {
-      // Schedule the next tick only if still running (stop() may have been
-      // called while we were awaiting processSchedule calls above).
-      if (this.running) {
+      // Schedule the next tick only if still running and this tick belongs to
+      // the current generation (stop()+start() may have spawned a new loop).
+      if (this.running && gen === this.generation) {
         this.timer = setTimeout(() => {
           this.timer = null;
-          void this.tick();
+          void this.tick(gen);
         }, this.config.tickIntervalMs);
       }
     }

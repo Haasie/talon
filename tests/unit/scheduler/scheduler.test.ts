@@ -580,7 +580,7 @@ describe('Scheduler', () => {
       expect(row.last_run_at).toBeNull();
     });
 
-    it('catches unexpected rejected prompt resolution and logs the tick failure', async () => {
+    it('catches unexpected rejected prompt resolution and logs per-schedule error', async () => {
       seedDueSchedule(db, personaId, threadId, {
         type: 'one_shot',
         payload: JSON.stringify({ label: 'Morning briefing', promptFile: 'broken-prompt' }),
@@ -595,7 +595,7 @@ describe('Scheduler', () => {
         expect.objectContaining({
           err: expect.any(Error),
         }),
-        'scheduler: unexpected tick failure',
+        'scheduler: unexpected error processing schedule',
       );
       expect(queueStub.enqueue).not.toHaveBeenCalled();
     });

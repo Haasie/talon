@@ -402,6 +402,36 @@ describe('ScheduleManageHandler — update', () => {
     });
   });
 
+  it('rejects update when schedule does not exist', async () => {
+    const repo = makeRepo({
+      findById: vi.fn().mockReturnValue(ok(null)),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'update', scheduleId: 'nonexistent', label: 'New label' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/not found/);
+  });
+
+  it('rejects update when schedule belongs to a different persona', async () => {
+    const repo = makeRepo({
+      findById: vi.fn().mockReturnValue(ok(makeScheduleRow({ persona_id: 'other-persona' }))),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'update', scheduleId: 'sched-001', label: 'New label' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/does not belong/);
+  });
+
   it('replaces promptFile with inline prompt on update', async () => {
     const updateFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
     const repo = makeRepo({
