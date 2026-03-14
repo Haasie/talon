@@ -87,26 +87,33 @@ export class Scheduler {
       return;
     }
 
-    const now = Date.now();
+    try {
+      const now = Date.now();
 
-    const dueResult = this.scheduleRepo.findDue(now);
-    if (dueResult.isErr()) {
-      this.logger.error({ err: dueResult.error }, 'scheduler: failed to query due schedules');
-    } else {
-      const due = dueResult.value;
-      this.logger.debug({ count: due.length, now }, 'scheduler tick');
+      const dueResult = this.scheduleRepo.findDue(now);
+      if (dueResult.isErr()) {
+        this.logger.error({ err: dueResult.error }, 'scheduler: failed to query due schedules');
+      } else {
+        const due = dueResult.value;
+        this.logger.debug({ count: due.length, now }, 'scheduler tick');
 
-      for (const schedule of due) {
-        await this.processSchedule(schedule, now);
+        // Process due schedules serially. Expected due counts are low, and
+        // keeping fire/update behavior in-order makes retries easier to reason about.
+        for (const schedule of due) {
+          await this.processSchedule(schedule, now);
+        }
       }
-    }
-
-    // Schedule the next tick only if still running (stop() may have been called
-    // while we were awaiting processSchedule calls above).
-    if (this.running) {
-      this.timer = setTimeout(() => {
-        void this.tick();
-      }, this.config.tickIntervalMs);
+    } catch (err) {
+      this.logger.error({ err }, 'scheduler: unexpected tick failure');
+    } finally {
+      // Schedule the next tick only if still running (stop() may have been
+      // called while we were awaiting processSchedule calls above).
+      if (this.running) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          void this.tick();
+        }, this.config.tickIntervalMs);
+      }
     }
   }
 

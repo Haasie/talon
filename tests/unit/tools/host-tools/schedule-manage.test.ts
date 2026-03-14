@@ -552,6 +552,7 @@ describe('ScheduleManageHandler — list', () => {
       expression: '0 9 * * 1',
       enabled: true,
     });
+    expect(data.schedules[0]).not.toHaveProperty('promptFile');
     expect(data.schedules[1]).toMatchObject({
       scheduleId: 'sched-002',
       enabled: false,

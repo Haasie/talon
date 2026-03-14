@@ -342,17 +342,25 @@ export class ScheduleManageHandler {
           return null;
         }
       })();
-      return {
+      const schedule = {
         scheduleId: row.id,
         type: row.type,
         expression: row.expression,
         label: typeof payload?.label === 'string' ? payload.label : '',
         prompt: typeof payload?.prompt === 'string' ? payload.prompt : '',
-        promptFile: typeof payload?.promptFile === 'string' ? payload.promptFile : '',
         enabled: row.enabled === 1,
         nextRunAt: row.next_run_at ? new Date(row.next_run_at).toISOString() : null,
         lastRunAt: row.last_run_at ? new Date(row.last_run_at).toISOString() : null,
       };
+
+      if (typeof payload?.promptFile === 'string') {
+        return {
+          ...schedule,
+          promptFile: payload.promptFile,
+        };
+      }
+
+      return schedule;
     });
 
     this.deps.logger.debug(

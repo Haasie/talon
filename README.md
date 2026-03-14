@@ -1007,7 +1007,7 @@ Agents interact with the host through 5 MCP tools exposed over a Unix socket. Th
 
 | Tool              | Purpose                             |
 | ----------------- | ----------------------------------- |
-| `schedule_manage` | CRUD + list scheduled tasks         |
+| `schedule_manage` | CRUD + list scheduled tasks (supports `promptFile` for reusable prompts) |
 | `channel_send`    | Send messages to channel connectors |
 | `memory_access`   | Read/write per-thread memory        |
 | `net_http`        | Fetch external URLs                 |
@@ -1162,6 +1162,40 @@ Agents create schedules like:
 | One-shot      | (future)    | Single execution at set time |
 
 Scheduled tasks are enqueued through the standard queue pipeline, subject to the same retry and dead-letter policies as regular messages. Cron expressions evaluate in system local time.
+
+### Task Prompt Files
+
+Schedules can reference reusable prompt files stored in a persona's `prompts/` directory instead of embedding prompt text inline. This keeps long or complex prompts version-controlled and editable without touching the schedule itself.
+
+```
+personas/
+  assistant/
+    system.md
+    personality/
+      01-tone.md
+    prompts/               # task prompt files
+      morning-briefing.md
+      weekly-review.md
+```
+
+When creating a schedule, use `promptFile` (the filename without `.md`) instead of `prompt`:
+
+```
+"Create a schedule at 8am weekdays using the morning-briefing prompt file"
+```
+
+The tool call uses `promptFile` in place of `prompt` — they are mutually exclusive:
+
+```json
+{
+  "action": "create",
+  "cronExpr": "0 8 * * 1-5",
+  "label": "Morning briefing",
+  "promptFile": "morning-briefing"
+}
+```
+
+Prompt files are read on demand when the schedule fires, so edits to the file take effect on the next execution without restarting the daemon. The `talonctl add-persona` command scaffolds an empty `prompts/` directory alongside the `personality/` folder.
 
 ---
 
