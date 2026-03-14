@@ -191,9 +191,12 @@ export class AgentRunner {
       const mcpServers: Record<string, unknown> = { ...personaRuntimeContext.mcpServers };
 
       // Determine which host tools this persona may use based on capabilities.
-      const allowedMcpTools = filterAllowedMcpTools(
+      let allowedMcpTools = filterAllowedMcpTools(
         loadedPersona.resolvedCapabilities ?? { allow: [], requireApproval: [] },
       );
+      if (!this.ctx.backgroundAgentManager) {
+        allowedMcpTools = allowedMcpTools.filter((toolName) => toolName !== 'background_agent');
+      }
 
       // Add built-in host-tools MCP server (schedule, channel, memory, http, db).
       // Only tools allowed by persona capabilities are exposed via TALOND_ALLOWED_TOOLS.

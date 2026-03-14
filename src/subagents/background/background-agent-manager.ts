@@ -11,7 +11,8 @@ import type { BackgroundTaskRepository } from '../../core/database/repositories/
 
 export interface SpawnBackgroundAgentInput {
   prompt: string;
-  systemPrompt: string;
+  personaPrompt: string;
+  threadContext?: string;
   mcpServers: Record<string, unknown>;
   personaId: string;
   threadId: string;
@@ -89,6 +90,14 @@ export class BackgroundAgentManager {
     const taskId = randomUUID();
     const timeoutMinutes = input.timeoutMinutes ?? this.deps.defaultTimeoutMinutes;
     const configPath = configResult.value;
+    const systemPrompt = this.configBuilder.buildSystemPrompt({
+      personaPrompt: input.personaPrompt,
+      taskPrompt: input.prompt,
+      taskId,
+      threadId: input.threadId,
+      channelName: input.channelName,
+      threadContext: input.threadContext,
+    });
 
     const createResult = this.deps.repository.create({
       id: taskId,
@@ -116,7 +125,7 @@ export class BackgroundAgentManager {
         '--output-format',
         'json',
         '--append-system-prompt',
-        input.systemPrompt,
+        systemPrompt,
         '--mcp-config',
         configPath,
         '--strict-mcp-config',
@@ -198,7 +207,12 @@ export class BackgroundAgentManager {
       return ok(false);
     }
 
-    this.processes.get(taskId)?.kill();
+    const managedProcess = this.processes.get(taskId);
+    managedProcess?.kill();
+    if (managedProcess) {
+      this.configBuilder.cleanup(managedProcess.configPath);
+      this.processes.delete(taskId);
+    }
     const updateResult = this.deps.repository.updateStatus(
       taskId,
       'cancelled',
@@ -308,9 +322,9 @@ export class BackgroundAgentManager {
     }
 
     const task = taskResult.value;
-    const title = task.status === 'completed' ? 'Complete' : 'Failed';
+    const title = this.notificationTitle(task.status);
     const preview = task.prompt.length > 80 ? `${task.prompt.slice(0, 77)}...` : task.prompt;
-    const summary = (task.output ?? task.error ?? 'No output').slice(0, 500);
+    const summary = this.notificationSummary(task).slice(0, 500);
     const durationSeconds =
       task.completedAt && task.startedAt ? Math.max(0, Math.round((task.completedAt - task.startedAt) / 1000)) : 0;
 
@@ -337,6 +351,27 @@ export class BackgroundAgentManager {
   }
 
   private truncate(value?: string): string | undefined {
-    return value ? value.slice(0, MAX_STORED_OUTPUT) : value;
+    return value === undefined ? undefined : value.slice(0, MAX_STORED_OUTPUT);
+  }
+
+  private notificationTitle(status: BackgroundTask['status']): string {
+    switch (status) {
+      case 'completed':
+        return 'Complete';
+      case 'timed_out':
+        return 'Timed Out';
+      case 'cancelled':
+        return 'Cancelled';
+      default:
+        return 'Failed';
+    }
+  }
+
+  private notificationSummary(task: BackgroundTask): string {
+    if (task.status === 'completed') {
+      return task.output ?? 'No output';
+    }
+
+    return task.error ?? task.output ?? 'No output';
   }
 }

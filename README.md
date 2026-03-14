@@ -52,8 +52,9 @@ It is built for single-user or small-team deployments where you want persistent,
 
 - **Durable queue** — SQLite-backed message queue with crash recovery, retry, and dead-letter
 - **Scheduler** — Agent-managed cron, interval, and one-shot scheduled tasks
-- **Host-tools MCP bridge** — 6 built-in tools (schedule, channel, memory, http, db, subagent) exposed via Unix socket
+- **Host-tools MCP bridge** — 7 built-in tools (schedule, channel, memory, http, db, subagent, background agent) exposed via Unix socket
 - **Sub-agent system** — Route mechanical LLM tasks (summarization, memory grooming, search) to cheap models via pluggable sub-agents
+- **Background agents** — Launch long-running Claude Code workers for deep tasks without blocking the foreground conversation
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
 - **Session persistence** — Agent sessions resume across messages in the same thread
@@ -102,7 +103,7 @@ graph TB
     TG & SL & DC & WA & EM & TM --> CR
     CR --> NP --> RT --> Q
     Q --> A1 & A2
-    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db, subagent"| HT
+    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db, subagent,<br/>background agent"| HT
     HT --> CR
     HT --> DB
     SCH --> Q
@@ -197,6 +198,12 @@ queue:
   backoffMaxMs: 60000
   concurrencyLimit: 5
 
+backgroundAgent:
+  enabled: true
+  maxConcurrent: 3
+  defaultTimeoutMinutes: 30
+  claudePath: claude
+
 personas:
   - name: assistant
     model: claude-sonnet-4-6
@@ -213,6 +220,7 @@ personas:
         - fs.read:*
         - memory.access:*
         - subagent.invoke:*
+        - subagent.background
       requireApproval:
         - fs.write:workspace
     maxConcurrent: 2
@@ -252,6 +260,7 @@ dataDir: data
 | ---------------------- | ----------------------------------------------------------------------------- |
 | `storage`              | Database backend and SQLite path                                              |
 | `queue`                | Retry/backoff/concurrency controls for durable queue processing               |
+| `backgroundAgent`      | Enable and tune long-running background Claude Code workers                   |
 | `personas`             | Persona profiles: model, system prompt, skills, capabilities                  |
 | `channels`             | Channel connector entries with `type`, `name`, and connector `config` payload |
 | `bindings`             | Channel-to-persona routing with default persona per channel                   |
@@ -271,6 +280,55 @@ channels:
     type: telegram
     config:
       botToken: ${TELEGRAM_BOT_TOKEN}
+```
+
+---
+
+### Background Agent Workers
+
+Talon includes a `background_agent` host tool for work that should keep running after the foreground turn returns. Typical examples are repo-wide refactors, large code searches, or longer research/coding tasks that should not block the active conversation.
+
+This was added because Talon already had two extremes:
+
+- the normal foreground agent turn, which is interactive and should stay responsive
+- short synchronous sub-agents, which are useful for mechanical delegation but intentionally limited
+
+Some tasks need the full Claude Code CLI runtime and the persona's prompt + external MCP context, but they should still run out-of-band. Background agents fill that gap: the foreground agent starts a worker, gets a task ID immediately, and Talon tracks the worker to completion in SQLite.
+
+The lifecycle is durable:
+
+- Talon persists task state in the database
+- the daemon enforces a concurrency limit
+- completion, failure, timeout, and cancellation are recorded
+- the originating thread gets a normal completion message through the existing queue and channel-send path
+
+Background workers intentionally do **not** get Talon's own host-tools MCP server. They inherit the persona prompt and external MCP servers from assigned skills, but they cannot recursively spawn more background jobs or directly send messages from the detached process.
+
+#### Configuration
+
+```yaml
+backgroundAgent:
+  enabled: true
+  maxConcurrent: 3
+  defaultTimeoutMinutes: 30
+  claudePath: claude
+```
+
+| Option | Meaning |
+| --- | --- |
+| `enabled` | Globally enable or disable background workers |
+| `maxConcurrent` | Maximum number of background Claude workers allowed at once |
+| `defaultTimeoutMinutes` | Default wall-clock timeout when a tool call does not provide one |
+| `claudePath` | Executable path used to launch the Claude Code CLI |
+
+To let a persona use the feature, grant `subagent.background`:
+
+```yaml
+personas:
+  - name: assistant
+    capabilities:
+      allow:
+        - subagent.background
 ```
 
 ---
@@ -489,6 +547,7 @@ Tools are gated by scoped capability labels. Capabilities are listed in `allow` 
 | `net.http`               | Fetch external URLs                     |
 | `db.query`               | Execute read-only database queries      |
 | `subagent.invoke`        | Invoke sub-agents for delegated tasks   |
+| `subagent.background`    | Launch and manage background workers    |
 
 ### Capability Resolution
 

@@ -44,7 +44,7 @@ function makeResult(overrides: Partial<BackgroundTaskResult> = {}): BackgroundTa
   };
 }
 
-function createHandler() {
+function createHandler(overrides: Record<string, unknown> = {}) {
   const backgroundAgentManager = {
     spawn: vi.fn().mockReturnValue(ok('task-1')),
     listTasksForThread: vi.fn().mockReturnValue(ok([makeTask()])),
@@ -53,7 +53,7 @@ function createHandler() {
     getResult: vi.fn().mockReturnValue(ok(makeResult())),
   };
 
-  const handler = new BackgroundAgentHandler({
+  const deps = {
     backgroundAgentManager: backgroundAgentManager as any,
     personaRepository: {
       findById: vi.fn().mockReturnValue(ok({ id: 'persona-1', name: 'TestBot' })),
@@ -89,6 +89,14 @@ function createHandler() {
       mergePromptFragments: vi.fn().mockReturnValue('Skill instructions.'),
       collectMcpServers: vi.fn().mockReturnValue([
         {
+          name: 'host-tools',
+          config: {
+            transport: 'stdio',
+            command: 'node',
+            args: ['host-tools.js'],
+          },
+        },
+        {
           name: 'perplexity',
           config: {
             transport: 'stdio',
@@ -111,9 +119,12 @@ function createHandler() {
       },
     ] as any,
     logger: makeLogger(),
-  });
+    ...overrides,
+  };
 
-  return { handler, backgroundAgentManager };
+  const handler = new BackgroundAgentHandler(deps as any);
+
+  return { handler, backgroundAgentManager, deps };
 }
 
 describe('BackgroundAgentHandler', () => {
@@ -153,6 +164,7 @@ describe('BackgroundAgentHandler', () => {
         channelName: 'telegram-main',
         workingDirectory: '/workspace/repo',
         timeoutMinutes: 45,
+        threadContext: 'Previous thread summary.',
         mcpServers: {
           perplexity: {
             type: 'stdio',
@@ -161,18 +173,44 @@ describe('BackgroundAgentHandler', () => {
             env: { API_KEY: 'secret' },
           },
         },
-        systemPrompt: expect.stringContaining('Base system prompt.'),
+        personaPrompt: expect.stringContaining('Base system prompt.'),
       }),
     );
-    expect(backgroundAgentManager.spawn.mock.calls[0][0].systemPrompt).toContain(
+    expect(backgroundAgentManager.spawn.mock.calls[0][0].personaPrompt).toContain(
       'Friendly personality.',
     );
-    expect(backgroundAgentManager.spawn.mock.calls[0][0].systemPrompt).toContain(
+    expect(backgroundAgentManager.spawn.mock.calls[0][0].personaPrompt).toContain(
       'Skill instructions.',
     );
-    expect(backgroundAgentManager.spawn.mock.calls[0][0].systemPrompt).toContain(
-      'Previous thread summary.',
+  });
+
+  it('continues without thread context when context assembly throws', async () => {
+    const { backgroundAgentManager, deps } = createHandler();
+    const handler = new BackgroundAgentHandler({
+      ...deps,
+      backgroundAgentManager: backgroundAgentManager as any,
+      contextAssembler: {
+        assemble: vi.fn().mockImplementation(() => {
+          throw new Error('db exploded');
+        }),
+      } as any,
+    } as any);
+
+    const result = await handler.execute(
+      {
+        action: 'spawn',
+        prompt: 'Refactor the auth module',
+      },
+      {
+        runId: 'run-1',
+        threadId: 'thread-1',
+        personaId: 'persona-1',
+        requestId: 'req-1',
+      },
     );
+
+    expect(result.status).toBe('success');
+    expect(backgroundAgentManager.spawn.mock.calls[0][0].threadContext).toBeUndefined();
   });
 
   it('returns current-thread history when status is called without taskId', async () => {
@@ -209,6 +247,24 @@ describe('BackgroundAgentHandler', () => {
 
     expect(result.status).toBe('error');
     expect(result.error).toContain('does not belong to the current thread');
+  });
+
+  it('returns not found when the task does not exist', async () => {
+    const { handler, backgroundAgentManager } = createHandler();
+    backgroundAgentManager.getTask.mockReturnValueOnce(ok(null));
+
+    const result = await handler.execute(
+      { action: 'status', taskId: 'missing-task' },
+      {
+        runId: 'run-1',
+        threadId: 'thread-1',
+        personaId: 'persona-1',
+        requestId: 'req-1',
+      },
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('not found');
   });
 
   it('rejects cancel for a task owned by another thread', async () => {

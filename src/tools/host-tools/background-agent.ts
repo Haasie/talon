@@ -11,6 +11,7 @@ import type { ContextAssembler } from '../../daemon/context-assembler.js';
 import type { LoadedSkill } from '../../skills/skill-types.js';
 import { buildPersonaRuntimeContext } from '../../personas/persona-runtime-context.js';
 import type { BackgroundTask } from '../../subagents/background/background-agent-types.js';
+import { BackgroundAgentError } from '../../core/errors/error-types.js';
 
 export interface BackgroundAgentArgs {
   action: 'spawn' | 'status' | 'cancel' | 'result';
@@ -31,6 +32,12 @@ interface BackgroundAgentHandlerDeps {
   loadedSkills: LoadedSkill[];
   logger: pino.Logger;
 }
+
+type OwnedTaskResult =
+  | { status: 'ok'; task: BackgroundTask }
+  | { status: 'not_found' }
+  | { status: 'wrong_thread' }
+  | { status: 'error'; message: string };
 
 export class BackgroundAgentHandler {
   static readonly manifest: ToolManifest = {
@@ -116,27 +123,27 @@ export class BackgroundAgentHandler {
       loadedPersona,
       resolvedSkills: personaSkills,
       skillResolver: this.deps.skillResolver,
+      excludeServerNames: ['host-tools'],
       logger: this.deps.logger,
     });
 
-    const previousContext = this.deps.contextAssembler.assemble(context.threadId);
-    const systemPrompt = [
-      runtimeContext.personaPrompt,
-      '## Background Task Context',
-      `Thread ID: ${context.threadId}`,
-      `Channel: ${channelResult.value.name}`,
-      previousContext,
-      '## Background Task Instructions',
-      'You are running as an autonomous background agent.',
-      'No human is watching this session, so make reasonable decisions and continue.',
-      'Finish the task and leave a concise final summary of what you changed or learned.',
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+    let previousContext: string | undefined;
+    try {
+      previousContext = this.deps.contextAssembler.assemble(context.threadId) || undefined;
+    } catch (cause) {
+      this.deps.logger.warn(
+        {
+          threadId: context.threadId,
+          error: cause instanceof Error ? cause.message : String(cause),
+        },
+        'background-agent: failed to assemble prior thread context',
+      );
+    }
 
     const spawnResult = this.deps.backgroundAgentManager.spawn({
       prompt: args.prompt,
-      systemPrompt,
+      personaPrompt: runtimeContext.personaPrompt,
+      threadContext: previousContext,
       mcpServers: runtimeContext.mcpServers,
       personaId: context.personaId,
       threadId: context.threadId,
@@ -177,19 +184,16 @@ export class BackgroundAgentHandler {
       };
     }
 
-    const task = this.ensureTaskOwnership(args.taskId, context.threadId, requestId);
-    if (!task) {
-      return this.errorResult(
-        requestId,
-        `Background task ${args.taskId} does not belong to the current thread`,
-      );
+    const ownership = this.ensureTaskOwnership(args.taskId, context.threadId, requestId);
+    if (ownership.status !== 'ok') {
+      return this.taskOwnershipError(args.taskId, ownership, requestId);
     }
 
     return {
       requestId,
       tool: BackgroundAgentHandler.manifest.name,
       status: 'success',
-      result: { task },
+      result: { task: ownership.task },
     };
   }
 
@@ -202,15 +206,12 @@ export class BackgroundAgentHandler {
       return this.errorResult(requestId, 'Missing required field: taskId');
     }
 
-    const task = this.ensureTaskOwnership(args.taskId, context.threadId, requestId);
-    if (!task) {
-      return this.errorResult(
-        requestId,
-        `Background task ${args.taskId} does not belong to the current thread`,
-      );
+    const ownership = this.ensureTaskOwnership(args.taskId, context.threadId, requestId);
+    if (ownership.status !== 'ok') {
+      return this.taskOwnershipError(args.taskId, ownership, requestId);
     }
 
-    const cancelResult = this.deps.backgroundAgentManager.cancel(task.id);
+    const cancelResult = this.deps.backgroundAgentManager.cancel(ownership.task.id);
     if (cancelResult.isErr()) {
       return this.errorResult(requestId, cancelResult.error.message);
     }
@@ -232,15 +233,12 @@ export class BackgroundAgentHandler {
       return this.errorResult(requestId, 'Missing required field: taskId');
     }
 
-    const task = this.ensureTaskOwnership(args.taskId, context.threadId, requestId);
-    if (!task) {
-      return this.errorResult(
-        requestId,
-        `Background task ${args.taskId} does not belong to the current thread`,
-      );
+    const ownership = this.ensureTaskOwnership(args.taskId, context.threadId, requestId);
+    if (ownership.status !== 'ok') {
+      return this.taskOwnershipError(args.taskId, ownership, requestId);
     }
 
-    const result = this.deps.backgroundAgentManager.getResult(task.id);
+    const result = this.deps.backgroundAgentManager.getResult(ownership.task.id);
     if (result.isErr()) {
       return this.errorResult(requestId, result.error.message);
     }
@@ -257,21 +255,45 @@ export class BackgroundAgentHandler {
     taskId: string,
     threadId: string,
     requestId: string,
-  ): BackgroundTask | null {
+  ): OwnedTaskResult {
     const taskResult = this.deps.backgroundAgentManager.getTask(taskId);
     if (taskResult.isErr()) {
       this.deps.logger.warn(
         { requestId, taskId, err: taskResult.error.message },
         'background-agent: failed to load task for ownership check',
       );
-      return null;
+      return { status: 'error', message: taskResult.error.message };
     }
 
-    if (!taskResult.value || taskResult.value.threadId !== threadId) {
-      return null;
+    if (!taskResult.value) {
+      return { status: 'not_found' };
     }
 
-    return taskResult.value;
+    if (taskResult.value.threadId !== threadId) {
+      return { status: 'wrong_thread' };
+    }
+
+    return { status: 'ok', task: taskResult.value };
+  }
+
+  private taskOwnershipError(
+    taskId: string,
+    ownership: Exclude<OwnedTaskResult, { status: 'ok'; task: BackgroundTask }>,
+    requestId: string,
+  ): ToolCallResult {
+    switch (ownership.status) {
+      case 'not_found':
+        return this.errorResult(requestId, `Background task not found: ${taskId}`);
+      case 'wrong_thread':
+        return this.errorResult(
+          requestId,
+          `Background task ${taskId} does not belong to the current thread`,
+        );
+      case 'error':
+        return this.errorResult(requestId, ownership.message);
+      default:
+        return this.errorResult(requestId, new BackgroundAgentError('Unknown task error').message);
+    }
   }
 
   private errorResult(requestId: string, error: string): ToolCallResult {

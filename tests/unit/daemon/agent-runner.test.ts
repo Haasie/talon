@@ -143,6 +143,7 @@ function makeMockContext(): DaemonContext {
     hostToolsBridge: {
       path: '/tmp/test-data/host-tools.sock',
     } as any,
+    backgroundAgentManager: null,
     logger: mockLogger as any,
   };
 }
@@ -556,6 +557,40 @@ describe('AgentRunner', () => {
       const chanIdx = systemPrompt.indexOf('Available channels');
       expect(sysIdx).toBeLessThan(persIdx);
       expect(persIdx).toBeLessThan(chanIdx);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Host-tools exposure when background agents are disabled
+  // -------------------------------------------------------------------------
+
+  describe('background-agent tool exposure', () => {
+    it('does not list background_agent in TALOND_ALLOWED_TOOLS when the manager is unavailable', async () => {
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok({
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          skills: [],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*', 'subagent.background'],
+          requireApproval: [],
+        },
+      } as any));
+
+      const item = makeQueueItem();
+      await runner.run(item);
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      const allowedTools = queryCall.options.mcpServers['host-tools'].env.TALOND_ALLOWED_TOOLS
+        .split(',')
+        .filter(Boolean);
+
+      expect(allowedTools).toContain('channel_send');
+      expect(allowedTools).not.toContain('background_agent');
     });
   });
 

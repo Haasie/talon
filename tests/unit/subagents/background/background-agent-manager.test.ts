@@ -46,10 +46,12 @@ describe('BackgroundAgentManager', () => {
   let db: Database.Database;
   let repository: BackgroundTaskRepository;
   let queueManager: QueueManager;
+  let buildSystemPrompt: ReturnType<typeof vi.fn>;
   let writeMcpConfig: ReturnType<typeof vi.fn>;
   let cleanup: ReturnType<typeof vi.fn>;
   let processStart: ReturnType<typeof vi.fn>;
   let processKill: ReturnType<typeof vi.fn>;
+  let processFactory: ReturnType<typeof vi.fn>;
   let completionResolve: ((value: unknown) => void) | null;
 
   beforeEach(() => {
@@ -59,6 +61,7 @@ describe('BackgroundAgentManager', () => {
       enqueue: vi.fn().mockReturnValue(ok({ id: 'queue-1' })),
     } as unknown as QueueManager;
 
+    buildSystemPrompt = vi.fn().mockReturnValue('Built system prompt');
     writeMcpConfig = vi.fn().mockReturnValue(ok('/tmp/bg/mcp-config.json'));
     cleanup = vi.fn();
     completionResolve = null;
@@ -71,6 +74,10 @@ describe('BackgroundAgentManager', () => {
         }),
       }),
     );
+    processFactory = vi.fn().mockImplementation(() => ({
+      start: processStart,
+      kill: processKill,
+    }));
   });
 
   function createManager() {
@@ -82,13 +89,11 @@ describe('BackgroundAgentManager', () => {
       claudePath: 'claude',
       logger: makeLogger(),
       configBuilder: {
+        buildSystemPrompt,
         writeMcpConfig,
         cleanup,
       } as any,
-      processFactory: vi.fn().mockImplementation(() => ({
-        start: processStart,
-        kill: processKill,
-      })),
+      processFactory,
       isPidAlive: vi.fn().mockReturnValue(false),
       readProcessCommandLine: vi.fn().mockReturnValue('claude --print'),
     });
@@ -96,7 +101,8 @@ describe('BackgroundAgentManager', () => {
 
   const spawnInput = {
     prompt: 'Refactor the auth module',
-    systemPrompt: 'You are helpful.',
+    personaPrompt: 'You are helpful.',
+    threadContext: 'Previous thread summary.',
     mcpServers: {},
     personaId: 'persona-1',
     threadId: 'thread-1',
@@ -115,6 +121,22 @@ describe('BackgroundAgentManager', () => {
     const task = repository.findById(taskId)._unsafeUnwrap();
     expect(task?.status).toBe('running');
     expect(task?.pid).toBe(4242);
+  });
+
+  it('builds the append-system-prompt from persona and task context', () => {
+    const manager = createManager();
+
+    manager.spawn(spawnInput);
+
+    expect(buildSystemPrompt).toHaveBeenCalledWith({
+      personaPrompt: 'You are helpful.',
+      taskPrompt: 'Refactor the auth module',
+      taskId: expect.any(String),
+      threadId: 'thread-1',
+      channelName: 'telegram-main',
+      threadContext: 'Previous thread summary.',
+    });
+    expect(processFactory.mock.calls[0]?.[0].args).toContain('Built system prompt');
   });
 
   it('rejects spawn when concurrency limit is reached', () => {
@@ -202,6 +224,16 @@ describe('BackgroundAgentManager', () => {
     expect(result._unsafeUnwrap()).toBe(true);
     expect(processKill).toHaveBeenCalled();
     expect(repository.findById(taskId)._unsafeUnwrap()?.status).toBe('cancelled');
+  });
+
+  it('cleans up cancelled tasks immediately so shutdown does not clean them twice', () => {
+    const manager = createManager();
+    const taskId = manager.spawn(spawnInput)._unsafeUnwrap();
+
+    manager.cancel(taskId);
+    manager.shutdown();
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
   it('marks orphaned running tasks as failed when their pid is dead', () => {
