@@ -143,7 +143,7 @@ sequenceDiagram
 ### Install
 
 ```bash
-git clone https://github.com/your-org/talon.git
+git clone https://github.com/ivo-toby/talon.git
 cd talon
 npm install
 npm run build
