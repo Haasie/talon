@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { ok, err } from 'neverthrow';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import type { QueueManager } from '../../../../src/queue/queue-manager.js';
 import { BackgroundTaskRepository } from '../../../../src/core/database/repositories/background-task-repository.js';
 import { BackgroundAgentManager } from '../../../../src/subagents/background/background-agent-manager.js';
@@ -47,12 +48,16 @@ describe('BackgroundAgentManager', () => {
   let repository: BackgroundTaskRepository;
   let queueManager: QueueManager;
   let buildSystemPrompt: ReturnType<typeof vi.fn>;
-  let writeMcpConfig: ReturnType<typeof vi.fn>;
+  let writeSpawnFiles: ReturnType<typeof vi.fn>;
   let cleanup: ReturnType<typeof vi.fn>;
   let processStart: ReturnType<typeof vi.fn>;
   let processKill: ReturnType<typeof vi.fn>;
   let processFactory: ReturnType<typeof vi.fn>;
   let completionResolve: ((value: unknown) => void) | null;
+
+  afterEach(() => {
+    rmSync('/tmp/talon-bg-test', { recursive: true, force: true });
+  });
 
   beforeEach(() => {
     db = createTestDb();
@@ -61,8 +66,16 @@ describe('BackgroundAgentManager', () => {
       enqueue: vi.fn().mockReturnValue(ok({ id: 'queue-1' })),
     } as unknown as QueueManager;
 
+    // Create a real temp dir so readFileSync in the manager can read the prompt file
+    mkdirSync('/tmp/talon-bg-test', { recursive: true });
+    writeFileSync('/tmp/talon-bg-test/system-prompt.txt', 'Built system prompt');
+    writeFileSync('/tmp/talon-bg-test/mcp-config.json', '{}');
+
     buildSystemPrompt = vi.fn().mockReturnValue('Built system prompt');
-    writeMcpConfig = vi.fn().mockReturnValue(ok('/tmp/bg/mcp-config.json'));
+    writeSpawnFiles = vi.fn().mockReturnValue(ok({
+      configPath: '/tmp/talon-bg-test/mcp-config.json',
+      promptPath: '/tmp/talon-bg-test/system-prompt.txt',
+    }));
     cleanup = vi.fn();
     completionResolve = null;
     processKill = vi.fn();
@@ -90,7 +103,7 @@ describe('BackgroundAgentManager', () => {
       logger: makeLogger(),
       configBuilder: {
         buildSystemPrompt,
-        writeMcpConfig,
+        writeSpawnFiles,
         cleanup,
       } as any,
       processFactory,
@@ -136,7 +149,16 @@ describe('BackgroundAgentManager', () => {
       channelName: 'telegram-main',
       threadContext: 'Previous thread summary.',
     });
-    expect(processFactory.mock.calls[0]?.[0].args).toContain('Built system prompt');
+    // System prompt is passed at system level via --append-system-prompt,
+    // written to a temp file first and read back into the arg.
+    const options = processFactory.mock.calls[0]?.[0];
+    const args = options.args as string[];
+    const appendIdx = args.indexOf('--append-system-prompt');
+    expect(appendIdx).toBeGreaterThan(-1);
+    expect(args[appendIdx + 1]).toBe('Built system prompt');
+
+    // stdin carries only the task prompt, not the system prompt
+    expect(options.stdin).toBe('Refactor the auth module');
   });
 
   it('rejects spawn when concurrency limit is reached', () => {

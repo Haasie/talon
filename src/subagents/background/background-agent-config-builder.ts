@@ -34,17 +34,26 @@ export class BackgroundAgentConfigBuilder {
       .join('\n\n');
   }
 
-  writeMcpConfig(mcpServers: Record<string, unknown>): Result<string, BackgroundAgentError> {
+  writeSpawnFiles(
+    mcpServers: Record<string, unknown>,
+    systemPrompt: string,
+  ): Result<{ configPath: string; promptPath: string }, BackgroundAgentError> {
+    let dir: string | undefined;
     try {
-      const dir = join(tmpdir(), `talon-background-agent-${randomUUID()}`);
-      mkdirSync(dir, { recursive: true });
+      dir = join(tmpdir(), `talon-background-agent-${randomUUID()}`);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
       const configPath = join(dir, 'mcp-config.json');
-      writeFileSync(configPath, JSON.stringify({ mcpServers }, null, 2), 'utf8');
-      return ok(configPath);
+      writeFileSync(configPath, JSON.stringify({ mcpServers }, null, 2), { encoding: 'utf8', mode: 0o600 });
+      const promptPath = join(dir, 'system-prompt.txt');
+      writeFileSync(promptPath, systemPrompt, { encoding: 'utf8', mode: 0o600 });
+      return ok({ configPath, promptPath });
     } catch (cause) {
+      if (dir) {
+        rmSync(dir, { recursive: true, force: true });
+      }
       return err(
         new BackgroundAgentError(
-          `Failed to write MCP config: ${String(cause)}`,
+          `Failed to write spawn files: ${String(cause)}`,
           cause instanceof Error ? cause : undefined,
         ),
       );

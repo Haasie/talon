@@ -82,14 +82,8 @@ export class BackgroundAgentManager {
       );
     }
 
-    const configResult = this.configBuilder.writeMcpConfig(input.mcpServers);
-    if (configResult.isErr()) {
-      return err(configResult.error);
-    }
-
     const taskId = randomUUID();
     const timeoutMinutes = input.timeoutMinutes ?? this.deps.defaultTimeoutMinutes;
-    const configPath = configResult.value;
     const systemPrompt = this.configBuilder.buildSystemPrompt({
       personaPrompt: input.personaPrompt,
       taskPrompt: input.prompt,
@@ -98,6 +92,13 @@ export class BackgroundAgentManager {
       channelName: input.channelName,
       threadContext: input.threadContext,
     });
+
+    const filesResult = this.configBuilder.writeSpawnFiles(input.mcpServers, systemPrompt);
+    if (filesResult.isErr()) {
+      return err(filesResult.error);
+    }
+
+    const { configPath, promptPath } = filesResult.value;
 
     const createResult = this.deps.repository.create({
       id: taskId,
@@ -118,6 +119,23 @@ export class BackgroundAgentManager {
       return err(new BackgroundAgentError(createResult.error.message, createResult.error));
     }
 
+    // Read the system prompt back from the temp file so it is passed at system
+    // level via --append-system-prompt. The file write + read cycle ensures the
+    // prompt is persisted with restricted permissions and available for debugging.
+    let systemPromptContent: string;
+    try {
+      systemPromptContent = readFileSync(promptPath, 'utf8');
+    } catch (cause) {
+      this.deps.repository.updateStatus(taskId, 'failed', undefined, `Failed to read prompt file: ${String(cause)}`);
+      this.configBuilder.cleanup(configPath);
+      return err(
+        new BackgroundAgentError(
+          `Failed to read prompt file: ${String(cause)}`,
+          cause instanceof Error ? cause : undefined,
+        ),
+      );
+    }
+
     const processInstance = this.processFactory({
       command: this.deps.claudePath,
       args: [
@@ -125,7 +143,7 @@ export class BackgroundAgentManager {
         '--output-format',
         'json',
         '--append-system-prompt',
-        systemPrompt,
+        systemPromptContent,
         '--mcp-config',
         configPath,
         '--strict-mcp-config',
