@@ -9,9 +9,10 @@
 import type pino from 'pino';
 import type { ScheduleRepository } from '../core/database/repositories/schedule-repository.js';
 import type { ScheduleRow } from '../core/database/repositories/schedule-repository.js';
+import type { PersonaLoader } from '../personas/persona-loader.js';
 import type { QueueManager } from '../queue/queue-manager.js';
 import { getNextCronTime } from './cron-evaluator.js';
-import type { ScheduleConfig } from './schedule-types.js';
+import type { ScheduleConfig, SchedulePayload } from './schedule-types.js';
 
 // ---------------------------------------------------------------------------
 // Scheduler
@@ -30,6 +31,7 @@ export class Scheduler {
   constructor(
     private readonly scheduleRepo: ScheduleRepository,
     private readonly queueManager: QueueManager,
+    private readonly personaLoader: PersonaLoader,
     private readonly config: ScheduleConfig,
     private readonly logger: pino.Logger,
   ) {}
@@ -80,7 +82,7 @@ export class Scheduler {
    * disables one-shot / event schedules. Errors on individual schedules are
    * logged and skipped so one bad schedule cannot block the rest.
    */
-  private tick(): void {
+  private async tick(): Promise<void> {
     if (!this.running) {
       return;
     }
@@ -95,7 +97,7 @@ export class Scheduler {
       this.logger.debug({ count: due.length, now }, 'scheduler tick');
 
       for (const schedule of due) {
-        this.processSchedule(schedule, now);
+        await this.processSchedule(schedule, now);
       }
     }
 
@@ -114,7 +116,7 @@ export class Scheduler {
    * @param schedule - The schedule row to process.
    * @param now      - Current epoch ms (used for last_run_at).
    */
-  private processSchedule(schedule: ScheduleRow, now: number): void {
+  private async processSchedule(schedule: ScheduleRow, now: number): Promise<void> {
     this.logger.info(
       { scheduleId: schedule.id, type: schedule.type, expression: schedule.expression },
       'scheduler: firing schedule',
@@ -139,12 +141,35 @@ export class Scheduler {
         );
       }
 
+      const schedulePayload = rawPayload as SchedulePayload & Record<string, unknown>;
+      const promptFile =
+        typeof schedulePayload.promptFile === 'string' ? schedulePayload.promptFile : undefined;
+      let content =
+        typeof schedulePayload.prompt === 'string' ? schedulePayload.prompt : '';
+
+      if (promptFile) {
+        const promptResult = await this.personaLoader.resolveTaskPrompt(schedule.persona_id, promptFile);
+        if (promptResult.isErr()) {
+          this.logger.error(
+            {
+              scheduleId: schedule.id,
+              personaId: schedule.persona_id,
+              promptFile,
+              err: promptResult.error,
+            },
+            'scheduler: failed to resolve promptFile',
+          );
+          return;
+        }
+        content = promptResult.value;
+      }
+
       // Map schedule fields to the payload shape AgentRunner expects:
       // personaId (from schedule row) and content (from payload.prompt).
       const payload: Record<string, unknown> = {
-        ...rawPayload,
+        ...schedulePayload,
         personaId: schedule.persona_id,
-        content: typeof rawPayload.prompt === 'string' ? rawPayload.prompt : '',
+        content,
       };
 
       const enqueueResult = this.queueManager.enqueue(schedule.thread_id, 'schedule', payload);

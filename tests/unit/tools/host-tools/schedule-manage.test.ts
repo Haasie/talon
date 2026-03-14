@@ -67,6 +67,7 @@ function makeRepo(overrides: Partial<ScheduleRepository> = {}): ScheduleReposito
     disable: vi.fn().mockReturnValue(ok(undefined)),
     enable: vi.fn().mockReturnValue(ok(undefined)),
     findByPersona: vi.fn().mockReturnValue(ok([])),
+    findById: vi.fn().mockReturnValue(ok(makeScheduleRow())),
     findDue: vi.fn().mockReturnValue(ok([])),
     updateNextRun: vi.fn().mockReturnValue(ok(null)),
     ...overrides,
@@ -134,6 +135,41 @@ describe('ScheduleManageHandler — create', () => {
     expect(JSON.parse(insertArg.payload)).toEqual({ label: 'Poll', prompt: 'Check status' });
   });
 
+  it('accepts promptFile when creating a schedule', async () => {
+    const insertFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
+    const repo = makeRepo({ insert: insertFn });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'create', cronExpr: '0 7 * * 1-5', label: 'Morning briefing', promptFile: 'morning-briefing' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('success');
+    expect(JSON.parse(insertFn.mock.calls[0][0].payload)).toEqual({
+      label: 'Morning briefing',
+      promptFile: 'morning-briefing',
+    });
+  });
+
+  it('rejects create when prompt and promptFile are both provided', async () => {
+    const repo = makeRepo();
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      {
+        action: 'create',
+        cronExpr: '0 7 * * 1-5',
+        prompt: 'Inline prompt',
+        promptFile: 'morning-briefing',
+      },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/mutually exclusive/i);
+  });
+
   it('returns error when cronExpr is missing', async () => {
     const repo = makeRepo();
     const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
@@ -187,7 +223,7 @@ describe('ScheduleManageHandler — create', () => {
 
     expect(result.status).toBe('success');
     const payload = JSON.parse(insertFn.mock.calls[0][0].payload);
-    expect(payload).toEqual({ label: '', prompt: '' });
+    expect(payload).toEqual({ label: '' });
   });
 });
 
@@ -291,6 +327,104 @@ describe('ScheduleManageHandler — update', () => {
 
     expect(result.status).toBe('error');
     expect(result.error).toMatch(/update failed/);
+  });
+
+  it('accepts promptFile when updating a schedule', async () => {
+    const updateFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
+    const repo = makeRepo({ update: updateFn });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'update', scheduleId: 'sched-001', promptFile: 'meeting-prep' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('success');
+    expect(JSON.parse(updateFn.mock.calls[0][2].payload)).toEqual({
+      label: 'Daily standup',
+      promptFile: 'meeting-prep',
+    });
+  });
+
+  it('rejects update when prompt and promptFile are both provided', async () => {
+    const repo = makeRepo();
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      {
+        action: 'update',
+        scheduleId: 'sched-001',
+        prompt: 'Inline prompt',
+        promptFile: 'meeting-prep',
+      },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/mutually exclusive/i);
+  });
+
+  it('preserves the existing prompt source when only label changes', async () => {
+    const updateFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
+    const repo = makeRepo({
+      update: updateFn,
+      findById: vi.fn().mockReturnValue(ok(makeScheduleRow())),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    await handler.execute(
+      { action: 'update', scheduleId: 'sched-001', label: 'Renamed schedule' },
+      makeContext(),
+    );
+
+    expect(JSON.parse(updateFn.mock.calls[0][2].payload)).toEqual({
+      label: 'Renamed schedule',
+      prompt: 'What should I focus on today?',
+    });
+  });
+
+  it('replaces inline prompt with promptFile on update', async () => {
+    const updateFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
+    const repo = makeRepo({
+      update: updateFn,
+      findById: vi.fn().mockReturnValue(ok(makeScheduleRow())),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    await handler.execute(
+      { action: 'update', scheduleId: 'sched-001', promptFile: 'meeting-prep' },
+      makeContext(),
+    );
+
+    expect(JSON.parse(updateFn.mock.calls[0][2].payload)).toEqual({
+      label: 'Daily standup',
+      promptFile: 'meeting-prep',
+    });
+  });
+
+  it('replaces promptFile with inline prompt on update', async () => {
+    const updateFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
+    const repo = makeRepo({
+      update: updateFn,
+      findById: vi.fn().mockReturnValue(
+        ok(
+          makeScheduleRow({
+            payload: '{"label":"Daily standup","promptFile":"meeting-prep"}',
+          }),
+        ),
+      ),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    await handler.execute(
+      { action: 'update', scheduleId: 'sched-001', prompt: 'Use inline prompt instead' },
+      makeContext(),
+    );
+
+    expect(JSON.parse(updateFn.mock.calls[0][2].payload)).toEqual({
+      label: 'Daily standup',
+      prompt: 'Use inline prompt instead',
+    });
   });
 });
 
@@ -396,7 +530,13 @@ describe('ScheduleManageHandler — list', () => {
   it('returns all schedules for the persona', async () => {
     const schedules = [
       makeScheduleRow({ id: 'sched-001', expression: '0 9 * * 1', next_run_at: 1700000000000 }),
-      makeScheduleRow({ id: 'sched-002', expression: '30 18 * * *', next_run_at: 1700050000000, enabled: 0 }),
+      makeScheduleRow({
+        id: 'sched-002',
+        expression: '30 18 * * *',
+        next_run_at: 1700050000000,
+        enabled: 0,
+        payload: '{"label":"Meeting prep","promptFile":"meeting-prep"}',
+      }),
     ];
     const repo = makeRepo({ findByPersona: vi.fn().mockReturnValue(ok(schedules)) });
     const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
@@ -415,6 +555,7 @@ describe('ScheduleManageHandler — list', () => {
     expect(data.schedules[1]).toMatchObject({
       scheduleId: 'sched-002',
       enabled: false,
+      promptFile: 'meeting-prep',
     });
   });
 

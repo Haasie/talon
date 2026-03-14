@@ -131,6 +131,26 @@ describe('addPersona()', () => {
     expect(example).toContain('Tone');
   });
 
+  it('creates an empty prompts directory for new personas', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    await addPersona({ name: 'briefing-bot', configPath: p, personasDir });
+
+    expect(existsSync(join(personasDir, 'briefing-bot', 'prompts'))).toBe(true);
+  });
+
+  it('mentions prompts/ in the generated system prompt template', async () => {
+    const p = writeMinimalConfig();
+    const personasDir = join(tmpDir, 'personas');
+
+    await addPersona({ name: 'planner', configPath: p, personasDir });
+
+    const content = readFileSync(join(personasDir, 'planner', 'system.md'), 'utf-8');
+    expect(content).toContain('prompts/');
+    expect(content).toContain('promptFile');
+  });
+
   it('does not scaffold personality for existing persona directories', async () => {
     const p = writeMinimalConfig();
     const personasDir = join(tmpDir, 'personas');
@@ -146,6 +166,7 @@ describe('addPersona()', () => {
     // Personality folder should NOT have been created for existing persona
     const { existsSync } = await import('node:fs');
     expect(existsSync(join(personaDir, 'personality'))).toBe(false);
+    expect(existsSync(join(personaDir, 'prompts'))).toBe(false);
   });
 
   it('creates personas array if missing from config', async () => {
@@ -205,6 +226,7 @@ describe('addPersonaCommand()', () => {
 
     const output = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
     expect(output).toContain('assistant');
+    expect(output).toContain('prompts');
     consoleSpy.mockRestore();
   });
 
