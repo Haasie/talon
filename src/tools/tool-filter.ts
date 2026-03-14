@@ -43,6 +43,7 @@ const HOST_TOOL_REGISTRY: ReadonlyArray<{
   { capabilityPrefix: 'net.http', internalName: 'net.http', mcpName: 'net_http' },
   { capabilityPrefix: 'db.query', internalName: 'db.query', mcpName: 'db_query' },
   { capabilityPrefix: 'subagent.invoke', internalName: 'subagent.invoke', mcpName: 'subagent_invoke' },
+  { capabilityPrefix: 'subagent.background', internalName: 'subagent.background', mcpName: 'background_agent' },
 ];
 
 /** Derived lookup: capability prefix → internal tool name. */

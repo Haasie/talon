@@ -141,6 +141,17 @@ export const ContextConfigSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Background agent
+// ---------------------------------------------------------------------------
+
+export const BackgroundAgentConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  maxConcurrent: z.number().int().min(1).max(10).default(3),
+  defaultTimeoutMinutes: z.number().int().min(1).max(480).default(30),
+  claudePath: z.string().default('claude'),
+});
+
+// ---------------------------------------------------------------------------
 // Root config
 // ---------------------------------------------------------------------------
 
@@ -154,6 +165,7 @@ export const TalondConfigSchema = z.object({
   scheduler: SchedulerConfigSchema.default(() => SchedulerConfigSchema.parse({})),
   auth: AuthConfigSchema.default(() => AuthConfigSchema.parse({})),
   context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
+  backgroundAgent: BackgroundAgentConfigSchema.default(() => BackgroundAgentConfigSchema.parse({})),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   dataDir: z.string().default('data'),
 });

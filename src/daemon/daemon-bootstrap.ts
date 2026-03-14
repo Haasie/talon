@@ -21,6 +21,7 @@ import {
   ThreadRepository,
   ChannelRepository,
   PersonaRepository,
+  BackgroundTaskRepository,
   ScheduleRepository,
   AuditRepository,
   MessageRepository,
@@ -45,6 +46,7 @@ import { ThreadWorkspace } from '../memory/thread-workspace.js';
 import { SessionTracker } from '../sandbox/session-tracker.js';
 
 import { HostToolsBridge } from '../tools/host-tools-bridge.js';
+import { BackgroundAgentManager } from '../subagents/background/background-agent-manager.js';
 import { SubAgentLoader } from '../subagents/subagent-loader.js';
 import { SubAgentRunner } from '../subagents/subagent-runner.js';
 import { ModelResolver } from '../subagents/model-resolver.js';
@@ -113,6 +115,7 @@ export async function bootstrap(
     thread: new ThreadRepository(db),
     channel: new ChannelRepository(db),
     persona: new PersonaRepository(db),
+    backgroundTask: new BackgroundTaskRepository(db),
     schedule: new ScheduleRepository(db),
     audit: new AuditRepository(db),
     message: new MessageRepository(db),
@@ -311,10 +314,24 @@ export async function bootstrap(
   // 12. Queue manager
   const queueManager = new QueueManager(repos.queue, repos.thread, config.queue, logger);
 
-  // 13. Scheduler
+  // 13. Background agent manager
+  let backgroundAgentManager: BackgroundAgentManager | null = null;
+  if (config.backgroundAgent.enabled) {
+    backgroundAgentManager = new BackgroundAgentManager({
+      repository: repos.backgroundTask,
+      queueManager,
+      maxConcurrent: config.backgroundAgent.maxConcurrent,
+      defaultTimeoutMinutes: config.backgroundAgent.defaultTimeoutMinutes,
+      claudePath: config.backgroundAgent.claudePath,
+      logger,
+    });
+    backgroundAgentManager.recoverOrphanedTasks();
+  }
+
+  // 14. Scheduler
   const scheduler = new Scheduler(repos.schedule, queueManager, config.scheduler, logger);
 
-  // 14. Message pipeline and channel registration
+  // 15. Message pipeline and channel registration
   const router = new ChannelRouter(repos.binding, logger);
   const messagePipeline = new MessagePipeline(
     repos.message,
@@ -334,7 +351,7 @@ export async function bootstrap(
     logger,
   });
 
-  // 15. Host tools bridge (needs a partial context to construct)
+  // 16. Host tools bridge (needs a partial context to construct)
   // We build the context object first, then create the bridge and attach it.
   // Two-phase init: HostToolsBridge needs ctx, but ctx needs hostToolsBridge.
   // Build a partial context first, then fill in the bridge field.
@@ -355,6 +372,7 @@ export async function bootstrap(
     loadedSkills: loadedSkills.value,
     messagePipeline,
     subAgentRunner,
+    backgroundAgentManager,
     contextRoller,
     contextAssembler,
     logger,

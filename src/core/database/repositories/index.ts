@@ -59,3 +59,5 @@ export { AuditRepository } from './audit-repository.js';
 
 export type { ToolResultRow, ToolResultStatus, InsertToolResultInput } from './tool-result-repository.js';
 export { ToolResultRepository } from './tool-result-repository.js';
+
+export { BackgroundTaskRepository } from './background-task-repository.js';

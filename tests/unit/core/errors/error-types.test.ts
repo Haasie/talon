@@ -15,6 +15,7 @@ import {
   PersonaError,
   PipelineError,
   CollaborationError,
+  BackgroundAgentError,
 } from '../../../../src/core/errors/error-types.js';
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ describeErrorClass('MemoryError', MemoryError, 'MEMORY_ERROR');
 describeErrorClass('PersonaError', PersonaError, 'PERSONA_ERROR');
 describeErrorClass('PipelineError', PipelineError, 'PIPELINE_ERROR');
 describeErrorClass('CollaborationError', CollaborationError, 'COLLABORATION_ERROR');
+describeErrorClass('BackgroundAgentError', BackgroundAgentError, 'BACKGROUND_AGENT_ERROR');
 
 // ---------------------------------------------------------------------------
 // TalonError abstract contract
@@ -118,6 +120,7 @@ describe('TalonError (base class)', () => {
       new PersonaError('l'),
       new PipelineError('m'),
       new CollaborationError('n'),
+      new BackgroundAgentError('o'),
     ] as TalonError[];
 
     const codes = errors.map((e) => e.code);

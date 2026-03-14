@@ -124,11 +124,22 @@ describe('filterAllowedMcpTools', () => {
         'net.http',
         'db.query',
         'subagent.invoke',
+        'subagent.background',
       ],
       requireApproval: [],
     };
     const result = filterAllowedMcpTools(caps);
-    expect(result).toHaveLength(6);
+    expect(result).toHaveLength(7);
+    expect(result).toContain('background_agent');
+  });
+
+  it('maps subagent.background capability to background_agent MCP tool', () => {
+    const caps: ResolvedCapabilities = {
+      allow: ['subagent.background'],
+      requireApproval: [],
+    };
+
+    expect(filterAllowedMcpTools(caps)).toEqual(['background_agent']);
   });
 });
 
@@ -195,13 +206,14 @@ describe('isToolAllowed', () => {
 // ---------------------------------------------------------------------------
 
 describe('ALL_HOST_TOOLS', () => {
-  it('contains all six host tools', () => {
-    expect(ALL_HOST_TOOLS).toHaveLength(6);
+  it('contains all seven host tools', () => {
+    expect(ALL_HOST_TOOLS).toHaveLength(7);
     expect(ALL_HOST_TOOLS).toContain('schedule.manage');
     expect(ALL_HOST_TOOLS).toContain('channel.send');
     expect(ALL_HOST_TOOLS).toContain('memory.access');
     expect(ALL_HOST_TOOLS).toContain('net.http');
     expect(ALL_HOST_TOOLS).toContain('db.query');
     expect(ALL_HOST_TOOLS).toContain('subagent.invoke');
+    expect(ALL_HOST_TOOLS).toContain('subagent.background');
   });
 });

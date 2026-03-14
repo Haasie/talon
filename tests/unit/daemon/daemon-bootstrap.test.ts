@@ -32,6 +32,7 @@ vi.mock('../../../src/core/database/repositories/index.js', () => ({
   ThreadRepository: vi.fn().mockImplementation(() => ({})),
   ChannelRepository: vi.fn().mockImplementation(() => ({})),
   PersonaRepository: vi.fn().mockImplementation(() => ({})),
+  BackgroundTaskRepository: vi.fn().mockImplementation(() => ({})),
   ScheduleRepository: vi.fn().mockImplementation(() => ({})),
   AuditRepository: vi.fn().mockImplementation(() => ({})),
   MessageRepository: vi.fn().mockImplementation(() => ({})),
@@ -115,6 +116,13 @@ vi.mock('../../../src/tools/host-tools-bridge.js', () => ({
   })),
 }));
 
+vi.mock('../../../src/subagents/background/background-agent-manager.js', () => ({
+  BackgroundAgentManager: vi.fn().mockImplementation(() => ({
+    recoverOrphanedTasks: vi.fn(),
+    shutdown: vi.fn(),
+  })),
+}));
+
 vi.mock('../../../src/daemon/lifecycle.js', () => ({
   recoverFromCrash: vi.fn(),
 }));
@@ -132,6 +140,8 @@ import { SkillLoader } from '../../../src/skills/skill-loader.js';
 import { HostToolsBridge } from '../../../src/tools/host-tools-bridge.js';
 import { recoverFromCrash } from '../../../src/daemon/lifecycle.js';
 import { registerChannels } from '../../../src/channels/channel-setup.js';
+import { BackgroundTaskRepository } from '../../../src/core/database/repositories/index.js';
+import { BackgroundAgentManager } from '../../../src/subagents/background/background-agent-manager.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -164,6 +174,12 @@ function makeConfig(overrides: Record<string, unknown> = {}): unknown {
     },
     auth: { mode: 'subscription' },
     context: { thresholdTokens: 80_000, recentMessageCount: 10 },
+    backgroundAgent: {
+      enabled: true,
+      maxConcurrent: 3,
+      defaultTimeoutMinutes: 30,
+      claudePath: 'claude',
+    },
     ...overrides,
   };
 }
@@ -332,6 +348,7 @@ describe('bootstrap', () => {
       expect(ctx.repos.thread).toBeDefined();
       expect(ctx.repos.channel).toBeDefined();
       expect(ctx.repos.persona).toBeDefined();
+      expect(ctx.repos.backgroundTask).toBeDefined();
       expect(ctx.repos.schedule).toBeDefined();
       expect(ctx.repos.audit).toBeDefined();
       expect(ctx.repos.message).toBeDefined();
@@ -348,6 +365,7 @@ describe('bootstrap', () => {
       expect(ctx.skillResolver).toBeDefined();
       expect(ctx.loadedSkills).toBeDefined();
       expect(ctx.hostToolsBridge).toBeDefined();
+      expect(ctx.backgroundAgentManager).toBeDefined();
       expect(ctx.logger).toBeDefined();
     });
 
@@ -372,6 +390,27 @@ describe('bootstrap', () => {
       );
       const ctx = result._unsafeUnwrap();
       expect(ctx.hostToolsBridge).toBeDefined();
+    });
+
+    it('constructs background task persistence and background agent manager', async () => {
+      setupSuccessfulMocks();
+
+      const result = await bootstrap('/config.yaml', logger);
+
+      expect(result.isOk()).toBe(true);
+      expect(BackgroundTaskRepository).toHaveBeenCalledOnce();
+      expect(BackgroundAgentManager).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repository: expect.anything(),
+          queueManager: expect.anything(),
+          maxConcurrent: 3,
+          defaultTimeoutMinutes: 30,
+          claudePath: 'claude',
+        }),
+      );
+      expect(
+        (vi.mocked(BackgroundAgentManager).mock.results[0]?.value as any).recoverOrphanedTasks,
+      ).toHaveBeenCalledOnce();
     });
 
     it('calls registerChannels during bootstrap', async () => {

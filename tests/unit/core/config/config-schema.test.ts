@@ -11,6 +11,7 @@ import {
   QueueConfigSchema,
   SchedulerConfigSchema,
   AuthConfigSchema,
+  BackgroundAgentConfigSchema,
 } from '../../../../src/core/config/config-schema.js';
 
 // ---------------------------------------------------------------------------
@@ -359,6 +360,51 @@ describe('AuthConfigSchema', () => {
 });
 
 // ---------------------------------------------------------------------------
+// BackgroundAgentConfigSchema
+// ---------------------------------------------------------------------------
+
+describe('BackgroundAgentConfigSchema', () => {
+  it('parses an empty object with defaults', () => {
+    const result = BackgroundAgentConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({
+        enabled: true,
+        maxConcurrent: 3,
+        defaultTimeoutMinutes: 30,
+        claudePath: 'claude',
+      });
+    }
+  });
+
+  it('accepts explicit overrides', () => {
+    const result = BackgroundAgentConfigSchema.safeParse({
+      enabled: false,
+      maxConcurrent: 5,
+      defaultTimeoutMinutes: 120,
+      claudePath: '/usr/local/bin/claude',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(false);
+      expect(result.data.maxConcurrent).toBe(5);
+      expect(result.data.defaultTimeoutMinutes).toBe(120);
+      expect(result.data.claudePath).toBe('/usr/local/bin/claude');
+    }
+  });
+
+  it('rejects maxConcurrent below 1', () => {
+    const result = BackgroundAgentConfigSchema.safeParse({ maxConcurrent: 0 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects maxConcurrent above 10', () => {
+    const result = BackgroundAgentConfigSchema.safeParse({ maxConcurrent: 11 });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TalondConfigSchema (root)
 // ---------------------------------------------------------------------------
 
@@ -376,6 +422,12 @@ describe('TalondConfigSchema', () => {
       expect(result.data.queue.maxAttempts).toBe(3);
       expect(result.data.scheduler.tickIntervalMs).toBe(5000);
       expect(result.data.auth.mode).toBe('subscription');
+      expect(result.data.backgroundAgent).toEqual({
+        enabled: true,
+        maxConcurrent: 3,
+        defaultTimeoutMinutes: 30,
+        claudePath: 'claude',
+      });
     }
   });
 
@@ -391,12 +443,19 @@ describe('TalondConfigSchema', () => {
       queue: { maxAttempts: 5 },
       scheduler: { tickIntervalMs: 10000 },
       auth: { mode: 'api_key', apiKey: 'sk-ant-test' },
+      backgroundAgent: {
+        enabled: false,
+        maxConcurrent: 2,
+        defaultTimeoutMinutes: 45,
+        claudePath: '/opt/bin/claude',
+      },
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.logLevel).toBe('debug');
       expect(result.data.channels).toHaveLength(1);
       expect(result.data.personas).toHaveLength(1);
+      expect(result.data.backgroundAgent.enabled).toBe(false);
     }
   });
 

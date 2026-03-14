@@ -5,6 +5,7 @@ import { ok, err, type Result } from 'neverthrow';
 import type { DaemonContext } from './daemon-context.js';
 import type { QueueItem } from '../queue/queue-types.js';
 import { filterAllowedMcpTools } from '../tools/tool-filter.js';
+import { buildPersonaRuntimeContext } from '../personas/persona-runtime-context.js';
 
 /** Default maximum time (ms) an Agent SDK query may run before being aborted. */
 const DEFAULT_QUERY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
@@ -100,11 +101,15 @@ export class AgentRunner {
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
       const content = typeof item.payload.content === 'string' ? item.payload.content : '';
-      const skillPrompt = this.ctx.skillResolver.mergePromptFragments(
-        this.ctx.loadedSkills.filter((skill) =>
-          loadedPersona.config.skills.includes(skill.manifest.name),
-        ),
+      const personaSkills = this.ctx.loadedSkills.filter((skill) =>
+        loadedPersona.config.skills.includes(skill.manifest.name),
       );
+      const personaRuntimeContext = buildPersonaRuntimeContext({
+        loadedPersona,
+        resolvedSkills: personaSkills,
+        skillResolver: this.ctx.skillResolver,
+        logger: this.ctx.logger,
+      });
 
       const model = loadedPersona.config.model;
 
@@ -147,9 +152,7 @@ export class AgentRunner {
       const timeContext = `Current time: ${localISO} (${tzAbbr}, ${dayName})`;
 
       const systemPromptParts = [
-        loadedPersona.systemPromptContent ?? '',
-        loadedPersona.personalityContent ?? '',
-        skillPrompt,
+        personaRuntimeContext.personaPrompt,
         channelContext,
         timeContext,
       ];
@@ -185,58 +188,15 @@ export class AgentRunner {
 
       const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
-      // Collect MCP servers from skills assigned to this persona.
-      const personaSkills = this.ctx.loadedSkills.filter((skill) =>
-        loadedPersona.config.skills.includes(skill.manifest.name),
-      );
-      const mcpServers: Record<string, unknown> = {};
-      for (const skill of personaSkills) {
-        for (const mcpDef of skill.resolvedMcpServers) {
-          const cfg = mcpDef.config;
-          // Substitute env var placeholders in MCP env values.
-          const resolvedEnv: Record<string, string> = {};
-          if (cfg.env) {
-            for (const [key, val] of Object.entries(cfg.env)) {
-              const envVarMatch = /^\$\{(\w+)\}$/.exec(val);
-              resolvedEnv[key] = envVarMatch ? (process.env[envVarMatch[1] ?? ''] ?? '') : val;
-            }
-          }
-          // Substitute env var placeholders in MCP header values (HTTP/SSE only).
-          // Uses global replace to support embedded patterns like "Bearer ${TOKEN}".
-          const resolvedHeaders: Record<string, string> = {};
-          if (cfg.headers && (cfg.transport === 'http' || cfg.transport === 'sse')) {
-            for (const [key, val] of Object.entries(cfg.headers)) {
-              const resolved = val.replace(
-                /\$\{(\w+)\}/g,
-                (_match, varName: string) => {
-                  const envVal = process.env[varName];
-                  if (envVal === undefined) {
-                    this.ctx.logger.warn(
-                      { mcpServer: mcpDef.name, header: key, variable: varName },
-                      'agent-sdk: unresolved env var in MCP header — value will be empty',
-                    );
-                  }
-                  return envVal ?? '';
-                },
-              );
-              resolvedHeaders[key] = resolved;
-            }
-          }
-          mcpServers[mcpDef.name] = {
-            type: cfg.transport,
-            command: cfg.command,
-            args: cfg.args ?? [],
-            ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
-            ...(cfg.url ? { url: cfg.url } : {}),
-            ...(Object.keys(resolvedHeaders).length > 0 ? { headers: resolvedHeaders } : {}),
-          };
-        }
-      }
+      const mcpServers: Record<string, unknown> = { ...personaRuntimeContext.mcpServers };
 
       // Determine which host tools this persona may use based on capabilities.
-      const allowedMcpTools = filterAllowedMcpTools(
+      let allowedMcpTools = filterAllowedMcpTools(
         loadedPersona.resolvedCapabilities ?? { allow: [], requireApproval: [] },
       );
+      if (!this.ctx.backgroundAgentManager) {
+        allowedMcpTools = allowedMcpTools.filter((toolName) => toolName !== 'background_agent');
+      }
 
       // Add built-in host-tools MCP server (schedule, channel, memory, http, db).
       // Only tools allowed by persona capabilities are exposed via TALOND_ALLOWED_TOOLS.
