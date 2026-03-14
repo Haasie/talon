@@ -113,6 +113,7 @@ describe('HostToolsBridge', () => {
         persona: {
           findById: vi.fn().mockReturnValue(ok({ id: 'test-persona', name: 'test' })),
         } as any,
+        backgroundTask: {} as any,
         audit: {} as any,
         message: {} as any,
         run: {} as any,
@@ -130,8 +131,18 @@ describe('HostToolsBridge', () => {
       scheduler: {} as any,
       personaLoader: {
         getByName: vi.fn().mockReturnValue(ok({
+          config: { skills: [] },
+          systemPromptContent: 'Base system prompt.',
+          personalityContent: 'Friendly personality.',
           resolvedCapabilities: {
-            allow: ['schedule.manage', 'channel.send:*', 'memory.access', 'net.http', 'db.query'],
+            allow: [
+              'schedule.manage',
+              'channel.send:*',
+              'memory.access',
+              'net.http',
+              'db.query',
+              'subagent.background',
+            ],
             requireApproval: [],
           },
         })),
@@ -139,12 +150,38 @@ describe('HostToolsBridge', () => {
       sessionTracker: {} as any,
       threadWorkspace: {} as any,
       auditLogger: {} as any,
-      skillResolver: {} as any,
+      skillResolver: {
+        mergePromptFragments: vi.fn().mockReturnValue(''),
+        collectMcpServers: vi.fn().mockReturnValue([]),
+      } as any,
       loadedSkills: [],
       messagePipeline: {} as any,
+      backgroundAgentManager: {
+        spawn: vi.fn().mockReturnValue(ok('bg-task-1')),
+        listTasksForThread: vi.fn().mockReturnValue(ok([])),
+        getTask: vi.fn().mockReturnValue(ok(null)),
+        cancel: vi.fn().mockReturnValue(ok(false)),
+        getResult: vi.fn().mockReturnValue(ok(null)),
+      } as any,
+      contextAssembler: {
+        assemble: vi.fn().mockReturnValue('Previous thread summary.'),
+      } as any,
       hostToolsBridge: {} as any,
       logger: mockLogger as any,
     };
+
+    mockCtx.repos.thread = {
+      findById: vi.fn().mockReturnValue(
+        ok({
+          id: 'thread-001',
+          channel_id: 'channel-001',
+          external_id: 'telegram-thread-001',
+        }),
+      ),
+    } as any;
+    mockCtx.repos.channel = {
+      findById: vi.fn().mockReturnValue(ok({ id: 'channel-001', name: 'telegram-main' })),
+    } as any;
   });
 
   afterEach(async () => {
@@ -205,6 +242,39 @@ describe('HostToolsBridge', () => {
 
       expect(response.result).toBeDefined();
       expect((response.result as any)?.status).toBe('success');
+    });
+
+    it('dispatches background_agent spawn when the manager is present', async () => {
+      bridge = new HostToolsBridge(mockCtx);
+      bridge.start();
+      await waitForSocket(bridge.path);
+
+      const response = await sendRequest(bridge.path, {
+        id: randomUUID(),
+        tool: 'background_agent',
+        args: {
+          action: 'spawn',
+          prompt: 'Refactor the auth module',
+          workingDirectory: '/workspace/repo',
+        },
+        context: {
+          runId: 'run-001',
+          threadId: 'thread-001',
+          personaId: 'persona-001',
+          requestId: 'req-001',
+        },
+      });
+
+      expect(response.result).toBeDefined();
+      expect((response.result as any)?.status).toBe('success');
+      expect((response.result as any)?.result).toEqual({ taskId: 'bg-task-1' });
+      expect((mockCtx.backgroundAgentManager as any).spawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: 'Refactor the auth module',
+          threadId: 'thread-001',
+          channelName: 'telegram-main',
+        }),
+      );
     });
 
     it('returns error for unknown tool', async () => {

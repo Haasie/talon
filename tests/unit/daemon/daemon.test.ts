@@ -99,6 +99,7 @@ function makeMockContext(overrides: Partial<DaemonContext> = {}): DaemonContext 
       thread: {} as any,
       channel: {} as any,
       persona: {} as any,
+      backgroundTask: {} as any,
       schedule: {} as any,
       audit: {} as any,
       message: {} as any,
@@ -136,6 +137,10 @@ function makeMockContext(overrides: Partial<DaemonContext> = {}): DaemonContext 
     skillResolver: {} as any,
     loadedSkills: [],
     messagePipeline: {} as any,
+    backgroundAgentManager: {
+      shutdown: vi.fn(),
+    } as any,
+    contextAssembler: {} as any,
     hostToolsBridge: { path: '/tmp/host-tools.sock', start: vi.fn(), stop: vi.fn() } as any,
     logger: mockLogger as any,
     ...overrides,
@@ -376,6 +381,20 @@ describe('TalondDaemon', () => {
       await daemon.stop();
 
       expect(ctx.queueManager.stopProcessing).toHaveBeenCalledOnce();
+    });
+
+    it('shuts down the background agent manager before closing the database', async () => {
+      const backgroundAgentManager = { shutdown: vi.fn() } as any;
+      const db = { close: vi.fn() } as any;
+      const ctx = setupSuccessfulBootstrap({ backgroundAgentManager, db });
+      await daemon.start('/config.yaml');
+
+      await daemon.stop();
+
+      expect(backgroundAgentManager.shutdown).toHaveBeenCalledOnce();
+      expect(backgroundAgentManager.shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+        db.close.mock.invocationCallOrder[0],
+      );
     });
 
     it('clears session tracker during shutdown', async () => {

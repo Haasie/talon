@@ -180,6 +180,7 @@ export class TalondDaemon {
       this.ctx.sessionTracker.clearAll();
       this.ctx.queueManager.stopProcessing();
       this.ctx.hostToolsBridge.stop();
+      this.ctx.backgroundAgentManager?.shutdown();
     }
 
     if (this.ipcServer !== null) {

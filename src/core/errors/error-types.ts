@@ -118,3 +118,8 @@ export class SkillError extends TalonError {
 export class SubAgentError extends TalonError {
   readonly code = 'SUBAGENT_ERROR' as const;
 }
+
+/** Background Claude Code worker lifecycle error. */
+export class BackgroundAgentError extends TalonError {
+  readonly code = 'BACKGROUND_AGENT_ERROR' as const;
+}

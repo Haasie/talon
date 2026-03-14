@@ -44,6 +44,7 @@ personas:
         - fs.read:*
         - memory.access:*
         - subagent.invoke:*
+        - subagent.background
       requireApproval:
         - fs.write:workspace
     mounts:
@@ -64,6 +65,12 @@ queue:
   backoffBaseMs: 1000
   backoffMaxMs: 60000
   concurrencyLimit: 5
+
+backgroundAgent:
+  enabled: true
+  maxConcurrent: 3
+  defaultTimeoutMinutes: 30
+  claudePath: claude
 
 scheduler:
   tickIntervalMs: 5000

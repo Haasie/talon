@@ -334,6 +334,37 @@ const TOOLS = [
       required: ['name'],
     },
   },
+  {
+    name: 'background_agent',
+    description: 'Starts or manages a background Claude Code worker for the current thread.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        action: {
+          type: 'string' as const,
+          enum: ['spawn', 'status', 'cancel', 'result'],
+          description: 'Operation to perform on the current thread background task set.',
+        },
+        prompt: {
+          type: 'string' as const,
+          description: 'Task prompt to execute when action is "spawn".',
+        },
+        taskId: {
+          type: 'string' as const,
+          description: 'Background task identifier for status/cancel/result actions.',
+        },
+        workingDirectory: {
+          type: 'string' as const,
+          description: 'Optional working directory for the spawned worker.',
+        },
+        timeoutMinutes: {
+          type: 'number' as const,
+          description: 'Optional timeout override for spawn, in minutes.',
+        },
+      },
+      required: ['action'],
+    },
+  },
 ];
 
 function getEnvRequired(name: string): string {

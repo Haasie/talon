@@ -26,6 +26,7 @@ export {
   CollaborationError,
   SkillError,
   SubAgentError,
+  BackgroundAgentError,
 } from './error-types.js';
 
 export { ErrorCodes } from './error-codes.js';

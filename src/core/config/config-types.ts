@@ -20,6 +20,7 @@ import type {
   SchedulerConfigSchema,
   AuthConfigSchema,
   ContextConfigSchema,
+  BackgroundAgentConfigSchema,
 } from './config-schema.js';
 
 /** The full daemon configuration, validated and frozen at startup. */
@@ -60,3 +61,6 @@ export type AuthConfig = z.infer<typeof AuthConfigSchema>;
 
 /** Rolling context window settings. */
 export type ContextConfig = z.infer<typeof ContextConfigSchema>;
+
+/** Background Claude Code worker settings. */
+export type BackgroundAgentConfig = z.infer<typeof BackgroundAgentConfigSchema>;
