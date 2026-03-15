@@ -1,5 +1,6 @@
 import type { AgentProvider } from './provider.js';
-import type { ProviderConfig, ProviderName } from './provider-types.js';
+import type { ProviderConfig } from '../core/config/config-types.js';
+import type { ProviderName } from './provider-types.js';
 
 interface ProviderFactoryMap {
   [name: string]: (config: ProviderConfig) => AgentProvider;
@@ -46,6 +47,8 @@ export class ProviderRegistry {
       }
     }
 
+    // Map preserves insertion order, so this falls back to the first enabled
+    // provider defined in config when no preferred provider matches.
     return this.providers.values().next().value;
   }
 

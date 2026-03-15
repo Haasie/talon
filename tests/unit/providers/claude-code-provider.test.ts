@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { ClaudeCodeProvider } from '../../../src/providers/claude-code-provider.js';
 
 describe('ClaudeCodeProvider', () => {
@@ -16,6 +17,14 @@ describe('ClaudeCodeProvider', () => {
       rmSync(path, { recursive: true, force: true });
     }
     cleanupPaths.length = 0;
+  });
+
+  it('creates an SDK execution strategy with session resumption enabled', () => {
+    const strategy = provider.createExecutionStrategy();
+
+    expect(strategy.type).toBe('sdk');
+    expect(strategy.supportsSessionResumption).toBe(true);
+    expect(typeof strategy.run).toBe('function');
   });
 
   it('prepares background CLI invocations with provider-native config files', () => {
@@ -66,6 +75,26 @@ describe('ClaudeCodeProvider', () => {
           headers: { Authorization: 'Bearer token' },
         },
       },
+    });
+    expect(readdirSync(dirname(configPath)).sort()).toEqual(['mcp-config.json']);
+  });
+
+  it('writes an empty MCP config when no background MCP servers are configured', () => {
+    const result = provider.prepareBackgroundInvocation({
+      prompt: 'Ping.',
+      systemPrompt: 'You are a helpful assistant.',
+      mcpServers: {},
+      cwd: '/tmp',
+      timeoutMs: 60_000,
+    });
+
+    expect(result.isOk()).toBe(true);
+    const invocation = result._unsafeUnwrap();
+    cleanupPaths.push(...invocation.cleanupPaths);
+
+    const configPath = invocation.args[invocation.args.indexOf('--mcp-config') + 1];
+    expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual({
+      mcpServers: {},
     });
   });
 

@@ -169,7 +169,7 @@ Long-running Claude Code CLI workers for tasks that should not block the foregro
 Automatic session rotation when the Agent SDK's context window fills up.
 
 - Monitors `cacheReadTokens` after each agent run
-- Triggers at 80K tokens (configurable via `context.thresholdTokens`)
+- Triggers by provider rotation ratio, with legacy fallback via `context.thresholdTokens`
 - Calls `session-summarizer` to compress the transcript
 - Stores summary as a `memory_items` entry (type `summary`)
 - Clears session; next run starts fresh with injected context:

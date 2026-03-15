@@ -204,6 +204,48 @@ backgroundAgent:
       });
     }
   });
+
+  it('maps deprecated context.thresholdTokens to the default provider rotation threshold', () => {
+    const yaml = `
+context:
+  thresholdTokens: 100000
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agentRunner.providers['claude-code']).toEqual({
+        enabled: true,
+        command: 'claude',
+        contextWindowTokens: 200000,
+        rotationThreshold: 0.5,
+      });
+    }
+  });
+
+  it('keeps explicit provider rotationThreshold over deprecated context.thresholdTokens', () => {
+    const yaml = `
+context:
+  thresholdTokens: 100000
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.65
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agentRunner.providers['claude-code']?.rotationThreshold).toBe(0.65);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

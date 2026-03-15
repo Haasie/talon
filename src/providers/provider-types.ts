@@ -1,8 +1,3 @@
-import type { z } from 'zod';
-import type {
-  ProviderConfigSchema,
-} from '../core/config/config-schema.js';
-
 export type ProviderName = string;
 
 export interface AgentUsage {
@@ -59,5 +54,3 @@ export interface PreparedProviderInvocation {
   timeoutMs: number;
   cleanupPaths: string[];
 }
-
-export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;

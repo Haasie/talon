@@ -162,7 +162,7 @@ export const AgentRunnerConfigSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const ContextConfigSchema = z.object({
-  /** Token count threshold for triggering session rotation. Default: 80 000. */
+  /** Legacy token threshold fallback converted to provider rotation ratios. Default: 80 000. */
   thresholdTokens: z.number().int().min(10_000).default(80_000),
   /** Number of recent messages to include verbatim in fresh sessions. Default: 10. */
   recentMessageCount: z.number().int().min(0).default(10),

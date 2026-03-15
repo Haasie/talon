@@ -247,7 +247,7 @@ auth:
       apiKey: ${OPENAI_API_KEY}
 
 context:
-  thresholdTokens: 80000
+  thresholdTokens: 80000  # legacy fallback if provider rotationThreshold is omitted
   recentMessageCount: 10
 
 logLevel: info
@@ -267,7 +267,7 @@ dataDir: data
 | `schedules`            | Agent-managed schedule entries (cron, interval, one-shot)                     |
 | `scheduler`            | Scheduler tick interval                                                       |
 | `auth`                 | `subscription` or `api_key` authentication mode                               |
-| `context`              | Rolling context window: cache threshold and verbatim message count            |
+| `context`              | Rolling context window: legacy threshold fallback and verbatim message count  |
 | `logLevel` / `dataDir` | Runtime logging level and data root                                           |
 
 ### Environment Variable Substitution

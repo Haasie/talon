@@ -10,10 +10,10 @@ import type {
   CanonicalMcpServer,
   ContextUsage,
   PreparedProviderInvocation,
-  ProviderConfig,
   ProviderResult,
   ProviderSpawnInput,
 } from './provider-types.js';
+import type { ProviderConfig } from '../core/config/config-types.js';
 
 export class ClaudeCodeProvider implements AgentProvider {
   readonly name = 'claude-code';
@@ -43,9 +43,6 @@ export class ClaudeCodeProvider implements AgentProvider {
         JSON.stringify({ mcpServers: this.toClaudeMcpServers(input.mcpServers) }, null, 2),
         { encoding: 'utf8', mode: 0o600 },
       );
-
-      const promptPath = join(tempDir, 'system-prompt.txt');
-      writeFileSync(promptPath, input.systemPrompt, { encoding: 'utf8', mode: 0o600 });
 
       return ok({
         command: this.config.command,

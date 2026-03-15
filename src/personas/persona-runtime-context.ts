@@ -86,6 +86,14 @@ export function buildPersonaRuntimeContext(
     }
 
     if (cfg.transport === 'stdio') {
+      if (!cfg.command) {
+        options.logger?.warn(
+          { mcpServer: server.name, transport: 'stdio' },
+          'agent-sdk: skipping stdio MCP server without command',
+        );
+        continue;
+      }
+
       mcpServers[server.name] = {
         transport: 'stdio',
         command: cfg.command,
@@ -95,9 +103,17 @@ export function buildPersonaRuntimeContext(
       continue;
     }
 
+    if (!cfg.url) {
+      options.logger?.warn(
+        { mcpServer: server.name, transport: cfg.transport },
+        'agent-sdk: skipping remote MCP server without URL',
+      );
+      continue;
+    }
+
     mcpServers[server.name] = {
       transport: cfg.transport,
-      ...(cfg.url ? { url: cfg.url } : {}),
+      url: cfg.url,
       ...(Object.keys(resolvedHeaders).length > 0 ? { headers: resolvedHeaders } : {}),
     };
   }
