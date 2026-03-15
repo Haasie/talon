@@ -1,10 +1,11 @@
 import type { LoadedPersona } from './persona-types.js';
 import type { LoadedSkill } from '../skills/skill-types.js';
 import type { SkillResolver } from '../skills/skill-resolver.js';
+import type { CanonicalMcpServer } from '../providers/provider-types.js';
 
 export interface PersonaRuntimeContext {
   personaPrompt: string;
-  mcpServers: Record<string, unknown>;
+  mcpServers: Record<string, CanonicalMcpServer>;
 }
 
 interface BuildPersonaRuntimeContextOptions {
@@ -53,7 +54,7 @@ export function buildPersonaRuntimeContext(
     .join('\n\n');
 
   const excluded = new Set(options.excludeServerNames ?? []);
-  const mcpServers: Record<string, unknown> = {};
+  const mcpServers: Record<string, CanonicalMcpServer> = {};
   const serverDefs =
     typeof options.skillResolver.collectMcpServers === 'function'
       ? options.skillResolver.collectMcpServers(options.resolvedSkills)
@@ -86,7 +87,7 @@ export function buildPersonaRuntimeContext(
 
     if (cfg.transport === 'stdio') {
       mcpServers[server.name] = {
-        type: 'stdio',
+        transport: 'stdio',
         command: cfg.command,
         args: cfg.args ?? [],
         ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
@@ -95,7 +96,7 @@ export function buildPersonaRuntimeContext(
     }
 
     mcpServers[server.name] = {
-      type: cfg.transport,
+      transport: cfg.transport,
       ...(cfg.url ? { url: cfg.url } : {}),
       ...(Object.keys(resolvedHeaders).length > 0 ? { headers: resolvedHeaders } : {}),
     };

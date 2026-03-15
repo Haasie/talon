@@ -167,7 +167,7 @@ describe('BackgroundAgentHandler', () => {
         threadContext: 'Previous thread summary.',
         mcpServers: {
           perplexity: {
-            type: 'stdio',
+            transport: 'stdio',
             command: 'npx',
             args: ['perplexity-mcp'],
             env: { API_KEY: 'secret' },

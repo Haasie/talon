@@ -83,13 +83,13 @@ describe('buildPersonaRuntimeContext', () => {
     expect(result.personaPrompt).toBe('You are helpful.\n\nStay concise.\n\nsearch prompt\nbrowser prompt');
     expect(result.mcpServers).toEqual({
       perplexity: {
-        type: 'stdio',
+        transport: 'stdio',
         command: 'npx',
         args: ['perplexity-mcp'],
         env: { API_KEY: 'secret-token' },
       },
       browser: {
-        type: 'http',
+        transport: 'http',
         url: 'https://mcp.example.test',
         headers: { Authorization: 'Bearer bearer-token' },
       },
@@ -132,7 +132,7 @@ describe('buildPersonaRuntimeContext', () => {
 
     expect(result.mcpServers).toEqual({
       duplicate: {
-        type: 'stdio',
+        transport: 'stdio',
         command: 'second',
         args: [],
       },

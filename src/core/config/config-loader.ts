@@ -47,6 +47,41 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
+function normalizeDeprecatedProviderConfig(raw: unknown): unknown {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return raw;
+  }
+
+  const root = { ...(raw as Record<string, unknown>) };
+  const backgroundAgent = root['backgroundAgent'];
+  if (
+    backgroundAgent === null
+    || typeof backgroundAgent !== 'object'
+    || Array.isArray(backgroundAgent)
+  ) {
+    return root;
+  }
+
+  const normalizedBackgroundAgent = { ...(backgroundAgent as Record<string, unknown>) };
+  const claudePath = normalizedBackgroundAgent['claudePath'];
+  const hasExplicitProviders = normalizedBackgroundAgent['providers'] !== undefined;
+
+  if (typeof claudePath === 'string' && !hasExplicitProviders) {
+    normalizedBackgroundAgent['defaultProvider'] ??= 'claude-code';
+    normalizedBackgroundAgent['providers'] = {
+      'claude-code': {
+        enabled: true,
+        command: claudePath,
+        contextWindowTokens: 200000,
+        rotationThreshold: 0.4,
+      },
+    };
+  }
+
+  root['backgroundAgent'] = normalizedBackgroundAgent;
+  return root;
+}
+
 /**
  * Parses and validates raw YAML content (as a string) into a TalondConfig.
  * Returns a ConfigError when the YAML is malformed or fails schema validation.
@@ -72,6 +107,8 @@ function parseAndValidate(yamlContent: string, source: string): Result<TalondCon
   if (raw === undefined || raw === null) {
     raw = {};
   }
+
+  raw = normalizeDeprecatedProviderConfig(raw);
 
   const result = TalondConfigSchema.safeParse(raw);
   if (!result.success) {
@@ -140,7 +177,7 @@ export function loadConfigFromString(yamlContent: string): Result<TalondConfig, 
  * @returns    Ok(TalondConfig) on success, Err(ConfigError) on failure.
  */
 export function validateConfig(raw: unknown): Result<TalondConfig, ConfigError> {
-  const result = TalondConfigSchema.safeParse(raw);
+  const result = TalondConfigSchema.safeParse(normalizeDeprecatedProviderConfig(raw));
   if (!result.success) {
     const issues = result.error.issues.map(formatIssue);
     const summary = issues.slice(0, 5).join('; ');

@@ -19,8 +19,10 @@ import type {
   QueueConfigSchema,
   SchedulerConfigSchema,
   AuthConfigSchema,
+  AgentRunnerConfigSchema,
   ContextConfigSchema,
   BackgroundAgentConfigSchema,
+  ProviderConfigSchema,
 } from './config-schema.js';
 
 /** The full daemon configuration, validated and frozen at startup. */
@@ -58,6 +60,12 @@ export type SchedulerConfig = z.infer<typeof SchedulerConfigSchema>;
 
 /** Authentication mode and credentials. */
 export type AuthConfig = z.infer<typeof AuthConfigSchema>;
+
+/** Provider execution settings shared by agent runners and background agents. */
+export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+
+/** Main agent runner provider settings. */
+export type AgentRunnerConfig = z.infer<typeof AgentRunnerConfigSchema>;
 
 /** Rolling context window settings. */
 export type ContextConfig = z.infer<typeof ContextConfigSchema>;

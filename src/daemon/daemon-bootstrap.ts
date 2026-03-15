@@ -50,6 +50,8 @@ import { BackgroundAgentManager } from '../subagents/background/background-agent
 import { SubAgentLoader } from '../subagents/subagent-loader.js';
 import { SubAgentRunner } from '../subagents/subagent-runner.js';
 import { ModelResolver } from '../subagents/model-resolver.js';
+import { ClaudeCodeProvider } from '../providers/claude-code-provider.js';
+import { ProviderRegistry } from '../providers/provider-registry.js';
 import { recoverFromCrash } from './lifecycle.js';
 import { ContextRoller } from './context-roller.js';
 import { ContextAssembler } from './context-assembler.js';
@@ -247,6 +249,16 @@ export async function bootstrap(
   // 9. Session tracker
   const sessionTracker = new SessionTracker();
 
+  const providerFactories = {
+    'claude-code': (providerConfig: typeof config.agentRunner.providers[string]) =>
+      new ClaudeCodeProvider(providerConfig),
+  };
+  const providerRegistry = new ProviderRegistry(config.agentRunner.providers, providerFactories);
+  const backgroundProviderRegistry = new ProviderRegistry(
+    config.backgroundAgent.providers,
+    providerFactories,
+  );
+
   // 9b. Context roller (needs sessionTracker + session-summarizer sub-agent)
   let contextRoller: ContextRoller | null = null;
   const summarizerAgent = mergedAgentMap.get('session-summarizer');
@@ -290,11 +302,17 @@ export async function bootstrap(
         sessionTracker,
         summarizerRun: boundSummarizer,
         logger,
-        thresholdTokens: config.context.thresholdTokens,
+        thresholdRatio:
+          providerRegistry.getDefault([config.agentRunner.defaultProvider, 'claude-code'])?.config.rotationThreshold
+          ?? 0.4,
       });
 
       logger.info(
-        { thresholdTokens: config.context.thresholdTokens },
+        {
+          thresholdRatio:
+            providerRegistry.getDefault([config.agentRunner.defaultProvider, 'claude-code'])?.config.rotationThreshold
+            ?? 0.4,
+        },
         'bootstrap: context roller initialized',
       );
     } else {
@@ -322,7 +340,8 @@ export async function bootstrap(
       queueManager,
       maxConcurrent: config.backgroundAgent.maxConcurrent,
       defaultTimeoutMinutes: config.backgroundAgent.defaultTimeoutMinutes,
-      claudePath: config.backgroundAgent.claudePath,
+      defaultProvider: config.backgroundAgent.defaultProvider,
+      providerRegistry: backgroundProviderRegistry,
       logger,
     });
     backgroundAgentManager.recoverOrphanedTasks();
@@ -372,6 +391,7 @@ export async function bootstrap(
     loadedSkills: loadedSkills.value,
     messagePipeline,
     subAgentRunner,
+    providerRegistry,
     backgroundAgentManager,
     contextRoller,
     contextAssembler,

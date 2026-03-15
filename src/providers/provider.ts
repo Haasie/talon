@@ -1,0 +1,62 @@
+import type { Result } from 'neverthrow';
+import type { BackgroundAgentError } from '../core/errors/error-types.js';
+import type {
+  AgentUsage,
+  CanonicalMcpServer,
+  ContextUsage,
+  PreparedProviderInvocation,
+  ProviderName,
+  ProviderResult,
+  ProviderSpawnInput,
+} from './provider-types.js';
+
+export interface AgentRunInput {
+  prompt: string;
+  systemPrompt: string;
+  mcpServers: Record<string, CanonicalMcpServer>;
+  cwd: string;
+  model: string;
+  maxTurns: number;
+  timeoutMs: number;
+  sessionId?: string;
+}
+
+export interface AgentRunResult {
+  output: string;
+  sessionId?: string;
+  usage: AgentUsage;
+  isError: boolean;
+}
+
+export type AgentStreamEvent =
+  | { type: 'text'; content: string }
+  | { type: 'tool_event'; messageType: string; tool?: string; subtype?: string }
+  | { type: 'result'; result: AgentRunResult }
+  | { type: 'error'; message: string };
+
+export interface SDKExecutionStrategy {
+  readonly type: 'sdk';
+  readonly supportsSessionResumption: true;
+  run(input: AgentRunInput): AsyncIterable<AgentStreamEvent>;
+}
+
+export interface CLIExecutionStrategy {
+  readonly type: 'cli';
+  readonly supportsSessionResumption: false;
+  run(input: AgentRunInput): Promise<AgentRunResult>;
+}
+
+export type ExecutionStrategy = SDKExecutionStrategy | CLIExecutionStrategy;
+
+export interface AgentProvider {
+  readonly name: ProviderName;
+  createExecutionStrategy(): ExecutionStrategy;
+  prepareBackgroundInvocation(input: ProviderSpawnInput): Result<PreparedProviderInvocation, BackgroundAgentError>;
+  parseBackgroundResult(raw: {
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut: boolean;
+  }): ProviderResult;
+  estimateContextUsage(usage: AgentUsage): ContextUsage;
+}

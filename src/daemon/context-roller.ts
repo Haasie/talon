@@ -20,6 +20,7 @@ import type { MemoryRepository } from '../core/database/repositories/memory-repo
 import type { SessionTracker } from '../sandbox/session-tracker.js';
 import type { SubAgentResult } from '../subagents/subagent-types.js';
 import type { SubAgentError } from '../core/errors/index.js';
+import type { ContextUsage } from '../providers/provider-types.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,8 +56,8 @@ export interface ContextRollerDeps {
   /** Pre-bound summarizer function. Model, prompt, and services are captured at bootstrap. */
   summarizerRun: SummarizerRunFn;
   logger: pino.Logger;
-  /** Token count threshold for triggering rotation. Default: 80_000. */
-  thresholdTokens: number;
+  /** Context ratio threshold for triggering rotation. Default: 0.4. */
+  thresholdRatio: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,21 +74,21 @@ export class ContextRoller {
   /**
    * Check if context usage exceeds the threshold and rotate if needed.
    *
-   * Call this after every successful agent run with the cacheReadTokens
-   * from the run result.
+   * Call this after every successful agent run with provider-normalized
+   * context usage metrics from the run result.
    */
   async checkAndRotate(
     threadId: string,
     personaId: string,
-    cacheReadTokens: number,
+    contextUsage: ContextUsage,
   ): Promise<void> {
-    if (cacheReadTokens < this.deps.thresholdTokens) {
+    if (contextUsage.ratio < this.deps.thresholdRatio) {
       return;
     }
 
     this.deps.logger.info(
-      { threadId, cacheReadTokens, threshold: this.deps.thresholdTokens },
-      'context-roller: threshold exceeded, rotating session',
+      { threadId, contextUsage, thresholdRatio: this.deps.thresholdRatio },
+      'context-roller: threshold exceeded, rotating session based on provider usage',
     );
 
     // 1. Reconstruct transcript from the most recent messages.
@@ -150,7 +151,10 @@ export class ContextRoller {
       metadata: JSON.stringify({
         source: 'context-roller',
         messageCount: messages.length,
-        cacheReadTokens,
+        contextUsage,
+        ...(contextUsage.rawMetricName === 'cache_read_input_tokens'
+          ? { cacheReadTokens: contextUsage.rawMetric }
+          : {}),
         createdAt: new Date().toISOString(),
       }),
     });

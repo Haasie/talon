@@ -160,6 +160,50 @@ personas:
       expect(result.value.personas).toEqual([]);
     }
   });
+
+  it('maps deprecated backgroundAgent.claudePath to providers when providers are omitted', () => {
+    const yaml = `
+backgroundAgent:
+  claudePath: /usr/local/bin/claude
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.backgroundAgent.defaultProvider).toBe('claude-code');
+      expect(result.value.backgroundAgent.providers).toEqual({
+        'claude-code': {
+          enabled: true,
+          command: '/usr/local/bin/claude',
+          contextWindowTokens: 200000,
+          rotationThreshold: 0.4,
+        },
+      });
+      expect(result.value.backgroundAgent.claudePath).toBe('/usr/local/bin/claude');
+    }
+  });
+
+  it('prefers explicit backgroundAgent.providers over deprecated claudePath', () => {
+    const yaml = `
+backgroundAgent:
+  claudePath: /usr/local/bin/claude
+  providers:
+    claude-code:
+      enabled: true
+      command: /custom/claude
+      contextWindowTokens: 210000
+      rotationThreshold: 0.5
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.backgroundAgent.providers['claude-code']).toEqual({
+        enabled: true,
+        command: '/custom/claude',
+        contextWindowTokens: 210000,
+        rotationThreshold: 0.5,
+      });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

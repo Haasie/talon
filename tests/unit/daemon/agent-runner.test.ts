@@ -25,6 +25,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import { AgentRunner } from '../../../src/daemon/agent-runner.js';
 import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
 import { type QueueItem, QueueItemStatus } from '../../../src/queue/queue-types.js';
+import { ProviderRegistry } from '../../../src/providers/provider-registry.js';
+import { ClaudeCodeProvider } from '../../../src/providers/claude-code-provider.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -56,7 +58,19 @@ function makeMockContext(): DaemonContext {
 
   return {
     db: {} as any,
-    config: {} as any,
+    config: {
+      agentRunner: {
+        defaultProvider: 'claude-code',
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+            rotationThreshold: 0.4,
+          },
+        },
+      },
+    } as any,
     configPath: '',
     dataDir: '/tmp/test-data',
     repos: {
@@ -143,6 +157,19 @@ function makeMockContext(): DaemonContext {
     hostToolsBridge: {
       path: '/tmp/test-data/host-tools.sock',
     } as any,
+    providerRegistry: new ProviderRegistry(
+      {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          rotationThreshold: 0.4,
+        },
+      },
+      {
+        'claude-code': (config) => new ClaudeCodeProvider(config),
+      },
+    ),
     backgroundAgentManager: null,
     logger: mockLogger as any,
   };
@@ -316,6 +343,35 @@ describe('AgentRunner', () => {
         expect.any(String),
         'completed',
         expect.objectContaining({ ended_at: expect.any(Number) }),
+      );
+    });
+
+    it('passes normalized context usage into the roller', async () => {
+      ctx.contextRoller = {
+        checkAndRotate: vi.fn().mockResolvedValue(undefined),
+      } as any;
+      mockQuery.mockReturnValue(
+        makeAgentStream({
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 80_000,
+            cache_creation_input_tokens: 2_000,
+          },
+        }),
+      );
+
+      await runner.run(makeQueueItem());
+
+      expect(ctx.contextRoller.checkAndRotate).toHaveBeenCalledWith(
+        'thread-001',
+        'persona-001',
+        {
+          ratio: 0.4,
+          inputTokens: 100,
+          rawMetric: 80_000,
+          rawMetricName: 'cache_read_input_tokens',
+        },
       );
     });
   });

@@ -20,7 +20,7 @@ const makeDeps = (overrides: Partial<ContextRollerDeps> = {}): ContextRollerDeps
     info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
     child: vi.fn().mockReturnThis(),
   } as any,
-  thresholdTokens: 80_000,
+  thresholdRatio: 0.4,
   ...overrides,
 });
 
@@ -29,17 +29,22 @@ describe('ContextRoller', () => {
     vi.clearAllMocks();
   });
 
-  it('does nothing when cacheReadTokens is below threshold', async () => {
+  it('does nothing when context usage is below threshold', async () => {
     const deps = makeDeps();
     const roller = new ContextRoller(deps);
 
-    await roller.checkAndRotate('thread-1', 'persona-1', 50_000);
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.25,
+      inputTokens: 50_000,
+      rawMetric: 50_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     expect(deps.messageRepo.findLatestByThread).not.toHaveBeenCalled();
     expect(mockSummarizerRun).not.toHaveBeenCalled();
   });
 
-  it('triggers rotation when cacheReadTokens exceeds threshold', async () => {
+  it('triggers rotation when context usage exceeds threshold', async () => {
     const messages = [
       { direction: 'inbound', content: JSON.stringify({ body: 'hello' }), created_at: 1000 },
       { direction: 'outbound', content: JSON.stringify({ body: 'hi there' }), created_at: 2000 },
@@ -61,7 +66,12 @@ describe('ContextRoller', () => {
     });
     const roller = new ContextRoller(deps);
 
-    await roller.checkAndRotate('thread-1', 'persona-1', 90_000);
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.45,
+      inputTokens: 90_000,
+      rawMetric: 90_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     expect(deps.messageRepo.findLatestByThread).toHaveBeenCalledWith('thread-1', 10000);
     expect(mockSummarizerRun).toHaveBeenCalled();
@@ -89,7 +99,12 @@ describe('ContextRoller', () => {
     });
     const roller = new ContextRoller(deps);
 
-    await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     const insertCalls = (deps.memoryRepo.insert as any).mock.calls;
     expect(insertCalls.length).toBeGreaterThanOrEqual(1);
@@ -117,7 +132,12 @@ describe('ContextRoller', () => {
     });
     const roller = new ContextRoller(deps);
 
-    await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
   });
@@ -126,7 +146,12 @@ describe('ContextRoller', () => {
     const deps = makeDeps();
     const roller = new ContextRoller(deps);
 
-    await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     expect(mockSummarizerRun).not.toHaveBeenCalled();
     expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
@@ -151,7 +176,12 @@ describe('ContextRoller', () => {
     });
     const roller = new ContextRoller(deps);
 
-    await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
   });
@@ -172,7 +202,12 @@ describe('ContextRoller', () => {
     });
     const roller = new ContextRoller(deps);
 
-    await roller.checkAndRotate('thread-1', 'persona-1', 100_000);
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     // Should have called summarizer with the plain text content
     // New signature: summarizerRun(threadId, personaId, input)

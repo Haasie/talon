@@ -11,7 +11,9 @@ import {
   QueueConfigSchema,
   SchedulerConfigSchema,
   AuthConfigSchema,
+  AgentRunnerConfigSchema,
   BackgroundAgentConfigSchema,
+  ProviderConfigSchema,
 } from '../../../../src/core/config/config-schema.js';
 
 // ---------------------------------------------------------------------------
@@ -372,7 +374,15 @@ describe('BackgroundAgentConfigSchema', () => {
         enabled: true,
         maxConcurrent: 3,
         defaultTimeoutMinutes: 30,
-        claudePath: 'claude',
+        defaultProvider: 'claude-code',
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+            rotationThreshold: 0.4,
+          },
+        },
       });
     }
   });
@@ -382,14 +392,28 @@ describe('BackgroundAgentConfigSchema', () => {
       enabled: false,
       maxConcurrent: 5,
       defaultTimeoutMinutes: 120,
-      claudePath: '/usr/local/bin/claude',
+      defaultProvider: 'claude-code',
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: '/usr/local/bin/claude',
+          contextWindowTokens: 250000,
+          rotationThreshold: 0.55,
+        },
+      },
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.enabled).toBe(false);
       expect(result.data.maxConcurrent).toBe(5);
       expect(result.data.defaultTimeoutMinutes).toBe(120);
-      expect(result.data.claudePath).toBe('/usr/local/bin/claude');
+      expect(result.data.defaultProvider).toBe('claude-code');
+      expect(result.data.providers['claude-code']).toEqual({
+        enabled: true,
+        command: '/usr/local/bin/claude',
+        contextWindowTokens: 250000,
+        rotationThreshold: 0.55,
+      });
     }
   });
 
@@ -401,6 +425,54 @@ describe('BackgroundAgentConfigSchema', () => {
   it('rejects maxConcurrent above 10', () => {
     const result = BackgroundAgentConfigSchema.safeParse({ maxConcurrent: 11 });
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ProviderConfigSchema / AgentRunnerConfigSchema
+// ---------------------------------------------------------------------------
+
+describe('ProviderConfigSchema', () => {
+  it('parses provider defaults', () => {
+    const result = ProviderConfigSchema.safeParse({ command: 'claude' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({
+        enabled: false,
+        command: 'claude',
+        contextWindowTokens: 200000,
+        rotationThreshold: 0.4,
+      });
+    }
+  });
+
+  it('rejects invalid rotationThreshold values', () => {
+    expect(
+      ProviderConfigSchema.safeParse({ command: 'claude', rotationThreshold: -0.1 }).success,
+    ).toBe(false);
+    expect(
+      ProviderConfigSchema.safeParse({ command: 'claude', rotationThreshold: 1.1 }).success,
+    ).toBe(false);
+  });
+});
+
+describe('AgentRunnerConfigSchema', () => {
+  it('parses defaults with a Claude provider', () => {
+    const result = AgentRunnerConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({
+        defaultProvider: 'claude-code',
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+            rotationThreshold: 0.4,
+          },
+        },
+      });
+    }
   });
 });
 
@@ -422,11 +494,30 @@ describe('TalondConfigSchema', () => {
       expect(result.data.queue.maxAttempts).toBe(3);
       expect(result.data.scheduler.tickIntervalMs).toBe(5000);
       expect(result.data.auth.mode).toBe('subscription');
+      expect(result.data.agentRunner).toEqual({
+        defaultProvider: 'claude-code',
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+            rotationThreshold: 0.4,
+          },
+        },
+      });
       expect(result.data.backgroundAgent).toEqual({
         enabled: true,
         maxConcurrent: 3,
         defaultTimeoutMinutes: 30,
-        claudePath: 'claude',
+        defaultProvider: 'claude-code',
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+            rotationThreshold: 0.4,
+          },
+        },
       });
     }
   });
@@ -443,11 +534,30 @@ describe('TalondConfigSchema', () => {
       queue: { maxAttempts: 5 },
       scheduler: { tickIntervalMs: 10000 },
       auth: { mode: 'api_key', apiKey: 'sk-ant-test' },
+      agentRunner: {
+        defaultProvider: 'claude-code',
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: '/opt/bin/claude-sdk',
+            contextWindowTokens: 220000,
+            rotationThreshold: 0.6,
+          },
+        },
+      },
       backgroundAgent: {
         enabled: false,
         maxConcurrent: 2,
         defaultTimeoutMinutes: 45,
-        claudePath: '/opt/bin/claude',
+        defaultProvider: 'claude-code',
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: '/opt/bin/claude',
+            contextWindowTokens: 220000,
+            rotationThreshold: 0.6,
+          },
+        },
       },
     });
     expect(result.success).toBe(true);

@@ -1,6 +1,11 @@
 # talond.example.yaml
 # Copy to talond.yaml and edit for your environment.
 # Canonical config shape validated by src/core/config/config-schema.ts
+#
+# Deployment modes:
+# - Native daemon: see `deploy/talond.service`
+# - Container daemon: see `deploy/docker-compose.yaml`
+# - Wake-only / timer mode: see `deploy/talond.timer`
 
 storage:
   type: sqlite
@@ -66,11 +71,26 @@ queue:
   backoffMaxMs: 60000
   concurrencyLimit: 5
 
+agentRunner:
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.4
+
 backgroundAgent:
   enabled: true
   maxConcurrent: 3
   defaultTimeoutMinutes: 30
-  claudePath: claude
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.4
 
 scheduler:
   tickIntervalMs: 5000

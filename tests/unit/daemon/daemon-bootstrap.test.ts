@@ -173,12 +173,31 @@ function makeConfig(overrides: Record<string, unknown> = {}): unknown {
       resourceLimits: { memoryMb: 1024, cpus: 1, pidsLimit: 256 },
     },
     auth: { mode: 'subscription' },
+    agentRunner: {
+      defaultProvider: 'claude-code',
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          rotationThreshold: 0.4,
+        },
+      },
+    },
     context: { thresholdTokens: 80_000, recentMessageCount: 10 },
     backgroundAgent: {
       enabled: true,
       maxConcurrent: 3,
       defaultTimeoutMinutes: 30,
-      claudePath: 'claude',
+      defaultProvider: 'claude-code',
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          rotationThreshold: 0.4,
+        },
+      },
     },
     ...overrides,
   };
@@ -366,6 +385,7 @@ describe('bootstrap', () => {
       expect(ctx.loadedSkills).toBeDefined();
       expect(ctx.hostToolsBridge).toBeDefined();
       expect(ctx.backgroundAgentManager).toBeDefined();
+      expect(ctx.providerRegistry).toBeDefined();
       expect(ctx.logger).toBeDefined();
     });
 
@@ -405,7 +425,8 @@ describe('bootstrap', () => {
           queueManager: expect.anything(),
           maxConcurrent: 3,
           defaultTimeoutMinutes: 30,
-          claudePath: 'claude',
+          defaultProvider: 'claude-code',
+          providerRegistry: expect.anything(),
         }),
       );
       expect(
