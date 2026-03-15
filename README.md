@@ -48,6 +48,40 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Skills** — Modular prompt fragments and tool bundles that snap onto personas
 - **MCP integration** — Connect external MCP tool servers via stdio, policy-enforced through host-tools bridge
 
+### Provider abstraction
+
+Agent execution is decoupled from any specific SDK or CLI. A provider layer sits between the daemon core and the actual model runtime, so swapping or adding providers doesn't require changes to the runner, queue, or context management.
+
+Each provider implements a small interface: prepare a background CLI invocation, parse its output, estimate context usage, and create an SDK execution strategy. The daemon resolves which provider to use from config, both for the main agent runner and for background agents independently. Claude Code ships as the default (and currently only) provider.
+
+This matters because it means you can:
+
+- Run different providers for foreground vs background work (e.g., Claude for interactive, a local model for batch tasks)
+- Add new providers without touching core pipeline code — implement the interface, register in config, done
+- Configure provider-specific settings like context window size and rotation thresholds per provider instance
+- Keep backward compatibility — existing configs without provider sections still work, the loader normalizes them
+
+```yaml
+agentRunner:
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.5
+
+backgroundAgent:
+  enabled: true
+  maxConcurrent: 3
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+```
+
 ### Infrastructure
 
 - **Durable queue** — SQLite-backed message queue with crash recovery, retry, and dead-letter
@@ -58,7 +92,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
 - **Session persistence** — Agent sessions resume across messages in the same thread
-- **Rolling context window** — Automatic session rotation when context usage exceeds 80K tokens, with compressed history injection into fresh sessions for seamless continuity
+- **Rolling context window** — Automatic session rotation when context usage hits a configurable ratio of the provider's context window, with compressed history injection into fresh sessions
 
 ### Security
 
