@@ -185,7 +185,20 @@ A persona is the agent's identity: system prompt, model, tools, and permissions.
 npx talonctl add-persona --name assistant
 ```
 
-Write the system prompt in `personas/assistant/system.md`. This is where you define the agent's personality, tool access, constraints, and behavior.
+This scaffolds:
+
+```
+personas/assistant/
+  system.md                    # main system prompt
+  personality/01-tone.md       # personality fragments (loaded alphabetically)
+  prompts/memory-grooming.md   # default task prompt
+```
+
+**System prompt** (`system.md`): the core instruction set. Define what the agent does, what tools it has access to, constraints, and behavior rules.
+
+**Personality files** (`personality/*.md`): optional markdown files that get appended to the system prompt in alphabetical order. Use these to separate tone, communication style, and domain knowledge from the core instructions. You can add as many as you want. Examples: `01-tone.md` for communication style, `02-domain.md` for domain-specific knowledge, `03-preferences.md` for user preferences. The numbering controls load order.
+
+**Task prompts** (`prompts/*.md`): markdown files the agent executes on schedule. The `memory-grooming.md` prompt ships by default. Copy more from `prompt-templates/scheduled-tasks/` in the repo.
 
 Bind the persona to a channel:
 
@@ -195,7 +208,7 @@ npx talonctl bind --persona assistant --channel my-telegram
 
 ## Task prompts and schedules
 
-Task prompts are markdown files in `personas/<name>/prompts/` that the agent executes on a schedule. This is where Talon becomes a proactive assistant instead of a reactive chatbot.
+Task prompts are markdown files in `personas/<name>/prompts/` that the agent executes on a schedule. This is where Talon becomes a proactive assistant instead of a reactive chatbot. Ready-to-use templates are in `prompt-templates/scheduled-tasks/` at the repo root. Copy what you need into your persona's `prompts/` folder and adapt.
 
 ### How schedules work
 
