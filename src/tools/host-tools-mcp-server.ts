@@ -363,7 +363,7 @@ const TOOLS = [
         },
         timeoutMinutes: {
           type: 'number' as const,
-          description: 'Optional timeout override for spawn, in minutes.',
+          description: 'Optional timeout override for spawn, in minutes. Default is 30 minutes. Use at least 15 for simple tasks and 30+ for complex tasks (spec writing, multi-file refactors, research). The agent process is killed when the timeout expires.',
         },
       },
       required: ['action'],

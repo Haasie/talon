@@ -83,7 +83,11 @@ export class BackgroundAgentManager {
     }
 
     const taskId = randomUUID();
-    const timeoutMinutes = input.timeoutMinutes ?? this.deps.defaultTimeoutMinutes;
+    const MIN_TIMEOUT_MINUTES = 15;
+    const timeoutMinutes = Math.max(
+      MIN_TIMEOUT_MINUTES,
+      input.timeoutMinutes ?? this.deps.defaultTimeoutMinutes,
+    );
     const systemPrompt = this.configBuilder.buildSystemPrompt({
       personaPrompt: input.personaPrompt,
       taskPrompt: input.prompt,
