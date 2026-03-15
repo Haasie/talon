@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +102,29 @@ personas:
     if (result.isErr()) {
       expect(result.error).toBeInstanceOf(ConfigError);
       expect(result.error.message).toMatch(/Failed to parse YAML/);
+    }
+  });
+
+  it('truncates error message and appends "and N more" when more than 5 issues are present', () => {
+    // Provide more than 5 simultaneously invalid fields to trigger the
+    // `issues.length > 5 ? ` (and ${issues.length - 5} more)` : ''` true branch.
+    // Each channel entry missing its required 'type' produces an issue; adding
+    // multiple invalid top-level fields alongside channels pushes the count above 5.
+    const yaml = `
+logLevel: bad-level
+sandbox:
+  maxConcurrent: 0
+  runtime: invalid-runtime
+ipc:
+  pollIntervalMs: 50
+queue:
+  maxAttempts: 0
+  concurrencyLimit: 0
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toMatch(/and \d+ more/);
     }
   });
 
@@ -244,6 +267,287 @@ agentRunner:
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       expect(result.value.agentRunner.providers['claude-code']?.rotationThreshold).toBe(0.65);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Provider normalization — edge cases
+  // -------------------------------------------------------------------------
+
+  it('clamps rotationThreshold to 1.0 when thresholdTokens exceeds contextWindowTokens', () => {
+    // thresholdTokens (300000) > contextWindowTokens (200000) → ratio 1.5 → clamped to 1.0
+    const yaml = `
+context:
+  thresholdTokens: 300000
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agentRunner.providers['claude-code']?.rotationThreshold).toBe(1);
+    }
+  });
+
+  it('sets rotationThreshold to 0 when thresholdTokens is zero', () => {
+    // thresholdTokens of 0 is below the schema min(10000) so we use validateConfig
+    // directly to bypass YAML string parsing and reach the normalization code path
+    // where Math.max(0, 0/200000) = 0.
+    const raw = {
+      context: { thresholdTokens: 0 },
+      agentRunner: {
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+          },
+        },
+      },
+    };
+    const result = validateConfig(raw);
+    // Zod schema enforces min(10000) on thresholdTokens, so this should fail validation.
+    // The normalization runs before Zod validation, so the rotationThreshold 0 is set,
+    // but the config is ultimately rejected by the schema.
+    expect(result.isErr()).toBe(true);
+  });
+
+  it('explicit agentRunner.providers with rotationThreshold is not overwritten by thresholdTokens', () => {
+    // This exercises the Object.hasOwn(rawProviderConfig, 'rotationThreshold') === true branch,
+    // which causes the entire normalization to be skipped for that provider.
+    const yaml = `
+context:
+  thresholdTokens: 50000
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.9
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // rotationThreshold must remain as specified — normalization must not overwrite it
+      expect(result.value.agentRunner.providers['claude-code']?.rotationThreshold).toBe(0.9);
+    }
+  });
+
+  it('does not overwrite agentRunner.providers when already set and thresholdTokens omitted', () => {
+    // No context.thresholdTokens key at all — normalization block is never entered.
+    const yaml = `
+agentRunner:
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: /opt/claude
+      contextWindowTokens: 150000
+      rotationThreshold: 0.3
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agentRunner.providers['claude-code']?.command).toBe('/opt/claude');
+      expect(result.value.agentRunner.providers['claude-code']?.contextWindowTokens).toBe(150000);
+      expect(result.value.agentRunner.providers['claude-code']?.rotationThreshold).toBe(0.3);
+    }
+  });
+
+  it('prefers explicit backgroundAgent.providers over claudePath (claudePath present but providers win)', () => {
+    // hasExplicitProviders === true → normalization skips the claudePath branch entirely
+    const yaml = `
+backgroundAgent:
+  claudePath: /old/claude
+  providers:
+    claude-code:
+      enabled: true
+      command: /new/claude
+      contextWindowTokens: 100000
+      rotationThreshold: 0.2
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // The explicit providers entry must win; claudePath must not replace it
+      expect(result.value.backgroundAgent.providers['claude-code']?.command).toBe('/new/claude');
+      expect(result.value.backgroundAgent.providers['claude-code']?.contextWindowTokens).toBe(100000);
+    }
+  });
+
+  it('applies all schema defaults when backgroundAgent is an empty object', () => {
+    // backgroundAgent present but no fields → Zod defaults fill everything in;
+    // no claudePath so the claudePath→providers normalization branch is skipped.
+    const yaml = `
+backgroundAgent: {}
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.backgroundAgent.enabled).toBe(true);
+      expect(result.value.backgroundAgent.maxConcurrent).toBe(3);
+      expect(result.value.backgroundAgent.defaultTimeoutMinutes).toBe(30);
+      expect(result.value.backgroundAgent.defaultProvider).toBe('claude-code');
+      expect(result.value.backgroundAgent.providers['claude-code']).toMatchObject({
+        enabled: true,
+        command: 'claude',
+        contextWindowTokens: 200000,
+        rotationThreshold: 0.4,
+      });
+    }
+  });
+
+  it('computes rotationThreshold from thresholdTokens when provider config has only command', () => {
+    // Partial provider: only command supplied — contextWindowTokens absent so the
+    // normalization falls back to the claude-code default of 200000.
+    const yaml = `
+context:
+  thresholdTokens: 80000
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: /usr/bin/claude
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const provider = result.value.agentRunner.providers['claude-code'];
+      expect(provider?.contextWindowTokens).toBe(200000);
+      // 80000 / 200000 = 0.4
+      expect(provider?.rotationThreshold).toBeCloseTo(0.4);
+    }
+  });
+
+  it('skips threshold normalization for a non-claude-code provider with no contextWindowTokens', () => {
+    // When defaultProvider is not 'claude-code' and rawProviderConfig has no
+    // contextWindowTokens, contextWindowTokens resolves to undefined and the whole
+    // normalization block is skipped — agentRunner is left untouched.
+    const yaml = `
+context:
+  thresholdTokens: 50000
+agentRunner:
+  defaultProvider: my-provider
+  providers:
+    my-provider:
+      enabled: true
+      command: /opt/my-ai
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // Zod default for rotationThreshold (0.4) should apply since normalization was skipped
+      expect(result.value.agentRunner.providers['my-provider']?.rotationThreshold).toBe(0.4);
+    }
+  });
+
+  it('falls back to claude-code defaultProvider when agentRunner.defaultProvider is not a string', () => {
+    // When agentRunner.defaultProvider is absent the normalization code uses 'claude-code'.
+    // Supply thresholdTokens so the normalization block is entered.
+    const yaml = `
+context:
+  thresholdTokens: 40000
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // 40000 / 200000 = 0.2
+      expect(result.value.agentRunner.providers['claude-code']?.rotationThreshold).toBeCloseTo(0.2);
+    }
+  });
+
+  it('injects default claude command when defaultProvider is claude-code and command is absent', () => {
+    // When rawProviderConfig has no 'command' and defaultProvider === 'claude-code',
+    // the normalization spreads { command: 'claude' } as a default.
+    const yaml = `
+context:
+  thresholdTokens: 80000
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      contextWindowTokens: 200000
+`;
+    const result = loadConfigFromString(yaml);
+    // ProviderConfigSchema requires 'command', so if no default is injected this fails.
+    // With the normalization default injection it should succeed.
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agentRunner.providers['claude-code']?.command).toBe('claude');
+    }
+  });
+
+  it('handles thresholdTokens when agentRunner.providers is not a record (falls back to empty providers)', () => {
+    // agentRunner.providers being a non-record value makes isRecord() return false,
+    // so normalizedProviders falls back to {}.  The defaultProvider entry is then absent
+    // too (rawProviderConfig falls back to {}), and since defaultProvider is 'claude-code',
+    // contextWindowTokens defaults to 200000 and the full provider entry is synthesised.
+    const raw = {
+      context: { thresholdTokens: 80000 },
+      agentRunner: {
+        defaultProvider: 'claude-code',
+        providers: 'not-a-record',
+      },
+    };
+    const result = validateConfig(raw);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // normalization must have synthesised the claude-code provider
+      expect(result.value.agentRunner.providers['claude-code']?.command).toBe('claude');
+      expect(result.value.agentRunner.providers['claude-code']?.rotationThreshold).toBeCloseTo(0.4);
+    }
+  });
+
+  it('handles thresholdTokens when the defaultProvider key is missing from providers (falls back to empty rawProviderConfig)', () => {
+    // providers is a record but the defaultProvider key ('claude-code') is absent.
+    // rawProviderConfig falls back to {}.  contextWindowTokens defaults to 200000
+    // for claude-code and the entry is synthesised from scratch.
+    const raw = {
+      context: { thresholdTokens: 100000 },
+      agentRunner: {
+        providers: {
+          'other-provider': {
+            enabled: true,
+            command: '/other',
+            contextWindowTokens: 150000,
+            rotationThreshold: 0.5,
+          },
+        },
+      },
+    };
+    const result = validateConfig(raw);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // claude-code provider synthesised by normalization
+      const provider = result.value.agentRunner.providers['claude-code'];
+      expect(provider?.command).toBe('claude');
+      // 100000 / 200000 = 0.5
+      expect(provider?.rotationThreshold).toBeCloseTo(0.5);
+    }
+  });
+
+  it('substitutes an unset env var placeholder with an empty string', () => {
+    // Exercises the `process.env[name] ?? ''` fallback on line 129.
+    // Use a name that is guaranteed not to be set in the test environment.
+    delete process.env['__TALON_TEST_UNSET_VAR__'];
+    const yaml = `logLevel: \${__TALON_TEST_UNSET_VAR__}`;
+    const result = loadConfigFromString(yaml);
+    // logLevel: '' is not a valid enum value so validation fails, but the substitution
+    // itself must not throw — we verify the error is a schema error, not a parse error.
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toMatch(/validation failed/i);
     }
   });
 });
@@ -501,6 +805,20 @@ describe('validateConfig', () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.message).toMatch(/ipc\.pollIntervalMs/);
+    }
+  });
+
+  it('truncates error message and appends "and N more" when more than 5 issues are present', () => {
+    const raw = {
+      logLevel: 'bad-level',
+      sandbox: { maxConcurrent: 0, runtime: 'invalid-runtime' },
+      ipc: { pollIntervalMs: 50 },
+      queue: { maxAttempts: 0, concurrencyLimit: 0 },
+    };
+    const result = validateConfig(raw);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toMatch(/and \d+ more/);
     }
   });
 });

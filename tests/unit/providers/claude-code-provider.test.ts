@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { ClaudeCodeProvider } from '../../../src/providers/claude-code-provider.js';
@@ -155,5 +155,165 @@ describe('ClaudeCodeProvider', () => {
       rawMetric: 50000,
       rawMetricName: 'cache_read_input_tokens',
     });
+  });
+
+  it('returns err and cleans up the temp dir when writeFileSync throws', async () => {
+    // Track whether rmSync was called for our temp dir. We use a wrapper
+    // around the real rmSync rather than trying to spy on the non-configurable
+    // node:fs named export directly.
+    const capturedRmCalls: Array<[string, unknown]> = [];
+    const realFs = await import('node:fs');
+
+    // Temporarily replace the module in the registry via doMock + resetModules.
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      let writeCount = 0;
+      return {
+        ...actual,
+        writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+          if (writeCount++ === 0) {
+            throw new Error('disk full');
+          }
+          return actual.writeFileSync(...args);
+        },
+        rmSync: (path: string, opts: unknown) => {
+          capturedRmCalls.push([path, opts]);
+          return actual.rmSync(path, opts as Parameters<typeof actual.rmSync>[1]);
+        },
+      };
+    });
+
+    vi.resetModules();
+
+    try {
+      const { ClaudeCodeProvider: IsolatedProvider } = await import(
+        '../../../src/providers/claude-code-provider.js'
+      );
+      const isolatedProvider = new IsolatedProvider({
+        enabled: true,
+        command: 'claude',
+        contextWindowTokens: 200000,
+        rotationThreshold: 0.4,
+      });
+
+      const result = isolatedProvider.prepareBackgroundInvocation({
+        prompt: 'Test prompt.',
+        systemPrompt: 'System.',
+        mcpServers: {},
+        cwd: '/tmp',
+        timeoutMs: 30_000,
+      });
+
+      expect(result.isErr()).toBe(true);
+      const error = result._unsafeUnwrapErr();
+      expect(error.message).toContain('failed to prepare background invocation');
+      expect(error.message).toContain('disk full');
+
+      const talonRmCalls = capturedRmCalls.filter(([p]) =>
+        p.includes('talon-provider-claude-code-'),
+      );
+      expect(talonRmCalls.length).toBeGreaterThanOrEqual(1);
+      expect(talonRmCalls[0][1]).toEqual({ recursive: true, force: true });
+    } finally {
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+      // Suppress unused-variable lint warning
+      void realFs;
+    }
+  });
+
+  it('createExecutionStrategy returns the correct shape with a run method', () => {
+    const strategy = provider.createExecutionStrategy();
+
+    expect(strategy).toMatchObject({
+      type: 'sdk',
+      supportsSessionResumption: true,
+    });
+    expect(typeof strategy.run).toBe('function');
+    // run must return an async iterable (has Symbol.asyncIterator)
+    const iterable = strategy.run({
+      prompt: 'hi',
+      systemPrompt: '',
+      model: 'claude-3-5-sonnet-20241022',
+      mcpServers: {},
+      cwd: '/tmp',
+      maxTurns: 1,
+      timeoutMs: 30_000,
+    });
+    expect(iterable).toBeDefined();
+    expect(typeof iterable[Symbol.asyncIterator]).toBe('function');
+  });
+
+  it('parseBackgroundResult with timedOut:true preserves the flag and surfaces stderr', () => {
+    const result = provider.parseBackgroundResult({
+      stdout: '',
+      stderr: 'process killed after timeout',
+      exitCode: null,
+      timedOut: true,
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBeNull();
+    expect(result.stderr).toBe('process killed after timeout');
+    // stdout was empty so output falls back to the raw empty string
+    expect(result.output).toBe('');
+  });
+
+  it('parseBackgroundResult extracts JSON result even when exitCode is non-zero', () => {
+    const result = provider.parseBackgroundResult({
+      stdout: JSON.stringify({
+        result: 'Partial output before crash.',
+        usage: { input_tokens: 50, output_tokens: 10 },
+      }),
+      stderr: 'something went wrong',
+      exitCode: 1,
+      timedOut: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toBe('Partial output before crash.');
+    expect(result.usage).toEqual({
+      inputTokens: 50,
+      outputTokens: 10,
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+      totalCostUsd: undefined,
+    });
+  });
+
+  it('estimateContextUsage returns ratio 0 when all token counts are zero', () => {
+    const result = provider.estimateContextUsage({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+    });
+
+    expect(result).toEqual({
+      ratio: 0,
+      inputTokens: 0,
+      rawMetric: 0,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+  });
+
+  it('prepareBackgroundInvocation with empty mcpServers writes a valid empty JSON config', () => {
+    const result = provider.prepareBackgroundInvocation({
+      prompt: 'Empty servers test.',
+      systemPrompt: 'Be brief.',
+      mcpServers: {},
+      cwd: '/tmp',
+      timeoutMs: 10_000,
+    });
+
+    expect(result.isOk()).toBe(true);
+    const invocation = result._unsafeUnwrap();
+    cleanupPaths.push(...invocation.cleanupPaths);
+
+    const configPath = invocation.args[invocation.args.indexOf('--mcp-config') + 1];
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as unknown;
+    expect(parsed).toEqual({ mcpServers: {} });
+    // Confirm the written config is valid JSON (no parse errors would reach here)
+    expect(typeof configPath).toBe('string');
+    expect(existsSync(configPath)).toBe(true);
   });
 });

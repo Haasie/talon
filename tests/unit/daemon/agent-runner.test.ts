@@ -655,6 +655,157 @@ describe('AgentRunner', () => {
 
       expect(result.isOk()).toBe(true);
     });
+
+    it('calls return() on the active iterator when timeout fires on a slow-resolving stream', async () => {
+      // Use a very short timeout so the test is fast.
+      const shortRunner = new AgentRunner(ctx, { queryTimeoutMs: 50 });
+
+      const returnSpy = vi.fn().mockResolvedValue({ done: true, value: undefined });
+
+      // Iterator that emits one event immediately then stalls on the second next() call.
+      let callCount = 0;
+      const slowIterable: AsyncIterable<{ type: 'text'; content: string }> = {
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<{ type: 'text'; content: string }>> {
+              callCount += 1;
+              if (callCount === 1) {
+                // Emit one event so the iterator is "active"
+                return Promise.resolve({ done: false, value: { type: 'text', content: 'partial' } });
+              }
+              // Stall indefinitely — simulates a slow provider
+              return new Promise(() => {});
+            },
+            return: returnSpy,
+          };
+        },
+      };
+
+      ctx.config.agentRunner.defaultProvider = 'slow-sdk';
+      ctx.providerRegistry = {
+        getDefault: vi.fn().mockReturnValue({
+          provider: {
+            name: 'slow-sdk',
+            createExecutionStrategy: () => ({
+              type: 'sdk' as const,
+              supportsSessionResumption: true as const,
+              run: () => slowIterable,
+            }),
+            prepareBackgroundInvocation: vi.fn(),
+            parseBackgroundResult: vi.fn(),
+            estimateContextUsage: vi.fn().mockReturnValue({
+              ratio: 0,
+              inputTokens: 0,
+              rawMetric: 0,
+              rawMetricName: 'test',
+            }),
+          },
+          config: {
+            enabled: true,
+            command: 'slow-sdk',
+            contextWindowTokens: 1000,
+            rotationThreshold: 0.4,
+          },
+        }),
+      } as any;
+
+      const result = await shortRunner.run(makeQueueItem());
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().message).toContain('timed out after');
+      // The P1 fix: return() must be called exactly once on the active iterator
+      expect(returnSpy).toHaveBeenCalledTimes(1);
+    }, 10_000);
+  });
+
+  // -------------------------------------------------------------------------
+  // Provider-related error paths
+  // -------------------------------------------------------------------------
+
+  describe('provider error paths', () => {
+    it('returns error gracefully when no default provider is configured', async () => {
+      ctx.providerRegistry = {
+        getDefault: vi.fn().mockReturnValue(undefined),
+      } as any;
+      const item = makeQueueItem();
+
+      const result = await runner.run(item);
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().message).toContain('No enabled agent runner provider is configured');
+      expect(ctx.repos.run.updateStatus).toHaveBeenCalledWith(
+        expect.any(String),
+        'failed',
+        expect.objectContaining({ error: expect.stringContaining('No enabled agent runner provider') }),
+      );
+    });
+
+    it('wraps mid-stream error as AgentQueryAttemptError with sawEvents=true and does not retry', async () => {
+      // Stream that emits one text event then throws — sawEvents will be true.
+      // Because sawEvents=true, shouldRetryFreshSession returns false and the error
+      // propagates all the way out (run() returns err).
+      async function* streamThatThrowsMidway() {
+        yield {
+          type: 'assistant',
+          message: { content: [{ text: 'partial output' }] },
+        };
+        // Throw after emitting at least one event
+        throw new Error('upstream connection reset mid-stream');
+      }
+
+      mockQuery.mockReturnValue(streamThatThrowsMidway());
+      const item = makeQueueItem();
+
+      const result = await runner.run(item);
+
+      // Should fail — mid-stream errors with sawEvents=true are not retried
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().message).toContain('upstream connection reset mid-stream');
+      // Must NOT have retried (query called exactly once)
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(ctx.repos.run.updateStatus).toHaveBeenCalledWith(
+        expect.any(String),
+        'failed',
+        expect.objectContaining({ error: expect.stringContaining('upstream connection reset mid-stream') }),
+      );
+    });
+
+    it('completes without error when provider returns all-zero usage tokens', async () => {
+      // Attach a context roller to verify it is correctly skipped when rawMetric is 0.
+      ctx.contextRoller = {
+        checkAndRotate: vi.fn().mockResolvedValue(undefined),
+      } as any;
+
+      async function* zeroUsageStream() {
+        yield {
+          type: 'assistant',
+          message: { content: [{ text: 'response' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: 'response',
+          session_id: 'session-zero',
+          total_cost_usd: 0,
+          usage: { input_tokens: 0, output_tokens: 0 },
+          is_error: false,
+        };
+      }
+
+      mockQuery.mockReturnValue(zeroUsageStream());
+      const item = makeQueueItem();
+
+      const result = await runner.run(item);
+
+      expect(result.isOk()).toBe(true);
+      // Token persistence should still be called with zeros
+      expect(ctx.repos.run.updateTokens).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ input_tokens: 0, output_tokens: 0, cost_usd: 0 }),
+      );
+      // Context roller must NOT be invoked when rawMetric is 0
+      expect(ctx.contextRoller!.checkAndRotate).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

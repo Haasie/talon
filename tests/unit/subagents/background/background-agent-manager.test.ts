@@ -332,4 +332,132 @@ describe('BackgroundAgentManager', () => {
     expect(repository.findById(taskId)._unsafeUnwrap()?.status).toBe('cancelled');
     expect(existsSync('/tmp/talon-bg-test')).toBe(false);
   });
+
+  it('returns error when providerRegistry.getDefault returns undefined', () => {
+    const manager = new BackgroundAgentManager({
+      repository,
+      queueManager,
+      maxConcurrent: 2,
+      defaultTimeoutMinutes: 30,
+      defaultProvider: 'claude-code',
+      providerRegistry: {
+        getDefault: vi.fn().mockReturnValue(undefined),
+        listEnabled: vi.fn().mockReturnValue([]),
+        get: vi.fn().mockReturnValue(undefined),
+      } as any,
+      logger: makeLogger(),
+      processFactory,
+      isPidAlive: vi.fn().mockReturnValue(false),
+      readProcessCommandLine: vi.fn().mockReturnValue(null),
+    });
+
+    const result = manager.spawn(spawnInput);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toBeInstanceOf(BackgroundAgentError);
+    expect(result._unsafeUnwrapErr().message).toContain('No enabled background agent provider found');
+    // No task should have been created
+    expect(repository.findByThread('thread-1')._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it('returns error when prepareBackgroundInvocation returns err', () => {
+    prepareBackgroundInvocation.mockReturnValueOnce(
+      err(new BackgroundAgentError('invocation prep failed')),
+    );
+    const manager = createManager();
+
+    const result = manager.spawn(spawnInput);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toBeInstanceOf(BackgroundAgentError);
+    expect(result._unsafeUnwrapErr().message).toBe('invocation prep failed');
+    // No task should have been persisted
+    expect(repository.findByThread('thread-1')._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it('marks task timed_out and enqueues notification when process times out', async () => {
+    const manager = createManager();
+    const taskId = manager.spawn(spawnInput)._unsafeUnwrap();
+
+    completionResolve?.(
+      ok({
+        stdout: 'partial output',
+        stderr: '',
+        exitCode: null,
+        signal: null,
+        timedOut: true,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const task = repository.findById(taskId)._unsafeUnwrap();
+    expect(task?.status).toBe('timed_out');
+    expect(task?.output).toBe('partial output');
+    expect(task?.error).toBe('Process timed out');
+    expect(queueManager.enqueue as any).toHaveBeenCalledWith(
+      'thread-1',
+      'collaboration',
+      expect.objectContaining({
+        status: 'timed_out',
+        content: expect.stringContaining('Timed Out'),
+      }),
+    );
+  });
+
+  it('marks task failed and enqueues notification when process exits with non-zero code', async () => {
+    const manager = createManager();
+    const taskId = manager.spawn(spawnInput)._unsafeUnwrap();
+
+    completionResolve?.(
+      ok({
+        stdout: '',
+        stderr: 'something went wrong',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const task = repository.findById(taskId)._unsafeUnwrap();
+    expect(task?.status).toBe('failed');
+    expect(task?.error).toBe('something went wrong');
+    expect(queueManager.enqueue as any).toHaveBeenCalledWith(
+      'thread-1',
+      'collaboration',
+      expect.objectContaining({
+        status: 'failed',
+        content: expect.stringContaining('Failed'),
+      }),
+    );
+  });
+
+  it('rejects spawn when maxConcurrent limit is exactly reached', () => {
+    // Fill up to exactly the maxConcurrent limit (2)
+    for (let i = 1; i <= 2; i++) {
+      repository.create({
+        id: `slot-${i}`,
+        personaId: 'persona-1',
+        threadId: 'thread-1',
+        channelId: 'channel-1',
+        prompt: `task ${i}`,
+        workingDirectory: null,
+        status: 'running',
+        output: null,
+        error: null,
+        pid: 1000 + i,
+        timeoutMinutes: 30,
+      });
+    }
+
+    const manager = createManager();
+    const result = manager.spawn(spawnInput);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toBeInstanceOf(BackgroundAgentError);
+    expect(result._unsafeUnwrapErr().message).toContain('concurrency limit reached');
+    expect(result._unsafeUnwrapErr().message).toContain('2');
+    // process.start must never have been called
+    expect(processStart).not.toHaveBeenCalled();
+  });
 });
