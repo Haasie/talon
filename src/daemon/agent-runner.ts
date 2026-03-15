@@ -263,7 +263,7 @@ export class AgentRunner {
 
       if (strategy.type === 'cli' && connector && externalId) {
         const waitingResult = await connector.send(externalId, {
-          body: 'Waiting for agent...',
+          body: 'Thinking...',
         });
         if (waitingResult.isErr()) {
           this.ctx.logger.debug({ err: waitingResult.error }, 'agent-runner: waiting notification failed');

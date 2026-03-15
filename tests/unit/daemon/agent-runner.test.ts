@@ -476,7 +476,7 @@ describe('AgentRunner', () => {
       expect(ctx.sessionTracker.setSessionId).not.toHaveBeenCalled();
       expect(ctx.repos.run.updateSessionId).not.toHaveBeenCalled();
       expect(connector.send).toHaveBeenNthCalledWith(1, 'ext-001', {
-        body: 'Waiting for agent...',
+        body: 'Thinking...',
       });
       expect(connector.send).toHaveBeenNthCalledWith(2, 'ext-001', {
         body: 'Gemini result',
