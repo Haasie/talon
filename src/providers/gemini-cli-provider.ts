@@ -183,8 +183,10 @@ export class GeminiCliProvider implements AgentProvider {
         mode: 0o600,
       });
 
-      const configuredDefaultModel = this.readDefaultModel();
-      const model = input.model || configuredDefaultModel;
+      // Ignore input.model (persona model, e.g. "claude-opus-4-6") — it is
+      // provider-specific and meaningless to Gemini CLI. Use the provider's
+      // own configured default model, or let Gemini pick its own default.
+      const model = this.readDefaultModel();
       const args = ['--approval-mode', 'yolo', '--output-format', 'json'];
 
       if (model) {
