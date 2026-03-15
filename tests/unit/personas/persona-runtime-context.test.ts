@@ -83,13 +83,13 @@ describe('buildPersonaRuntimeContext', () => {
     expect(result.personaPrompt).toBe('You are helpful.\n\nStay concise.\n\nsearch prompt\nbrowser prompt');
     expect(result.mcpServers).toEqual({
       perplexity: {
-        type: 'stdio',
+        transport: 'stdio',
         command: 'npx',
         args: ['perplexity-mcp'],
         env: { API_KEY: 'secret-token' },
       },
       browser: {
-        type: 'http',
+        transport: 'http',
         url: 'https://mcp.example.test',
         headers: { Authorization: 'Bearer bearer-token' },
       },
@@ -132,10 +132,80 @@ describe('buildPersonaRuntimeContext', () => {
 
     expect(result.mcpServers).toEqual({
       duplicate: {
-        type: 'stdio',
+        transport: 'stdio',
         command: 'second',
         args: [],
       },
     });
+  });
+
+  it('skips remote MCP servers that do not define a URL', () => {
+    const resolvedSkills = [
+      makeLoadedSkill('broken-remote', [
+        {
+          name: 'remote-without-url',
+          config: {
+            name: 'remote-without-url',
+            transport: 'http',
+            headers: { Authorization: 'Bearer token' },
+          },
+        },
+      ]),
+    ];
+    const logger = { warn: vi.fn() };
+    const skillResolver = {
+      mergePromptFragments: vi.fn().mockReturnValue(''),
+      collectMcpServers: vi
+        .fn()
+        .mockReturnValue(resolvedSkills.flatMap((skill) => skill.resolvedMcpServers)),
+    };
+
+    const result = buildPersonaRuntimeContext({
+      loadedPersona,
+      resolvedSkills,
+      skillResolver: skillResolver as any,
+      logger,
+    });
+
+    expect(result.mcpServers).toEqual({});
+    expect(logger.warn).toHaveBeenCalledWith(
+      { mcpServer: 'remote-without-url', transport: 'http' },
+      'agent-sdk: skipping remote MCP server without URL',
+    );
+  });
+
+  it('skips stdio MCP servers that do not define a command', () => {
+    const resolvedSkills = [
+      makeLoadedSkill('broken-stdio', [
+        {
+          name: 'stdio-without-command',
+          config: {
+            name: 'stdio-without-command',
+            transport: 'stdio',
+            args: ['server.js'],
+          },
+        },
+      ]),
+    ];
+    const logger = { warn: vi.fn() };
+    const skillResolver = {
+      mergePromptFragments: vi.fn().mockReturnValue(''),
+      collectMcpServers: vi
+        .fn()
+        .mockReturnValue(resolvedSkills.flatMap((skill) => skill.resolvedMcpServers)),
+    };
+
+    const result = buildPersonaRuntimeContext({
+      loadedPersona,
+      resolvedSkills,
+      skillResolver: skillResolver as any,
+      logger,
+    });
+
+    expect(result.mcpServers).toEqual({});
+    expect(logger.warn).toHaveBeenCalledWith(
+      { mcpServer: 'stdio-without-command', transport: 'stdio' },
+      'agent-sdk: skipping stdio MCP server without command',
+    );
   });
 });

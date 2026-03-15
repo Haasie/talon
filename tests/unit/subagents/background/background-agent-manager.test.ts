@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { ok, err } from 'neverthrow';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import type { QueueManager } from '../../../../src/queue/queue-manager.js';
 import { BackgroundTaskRepository } from '../../../../src/core/database/repositories/background-task-repository.js';
 import { BackgroundAgentManager } from '../../../../src/subagents/background/background-agent-manager.js';
@@ -47,9 +47,8 @@ describe('BackgroundAgentManager', () => {
   let db: Database.Database;
   let repository: BackgroundTaskRepository;
   let queueManager: QueueManager;
-  let buildSystemPrompt: ReturnType<typeof vi.fn>;
-  let writeSpawnFiles: ReturnType<typeof vi.fn>;
-  let cleanup: ReturnType<typeof vi.fn>;
+  let prepareBackgroundInvocation: ReturnType<typeof vi.fn>;
+  let parseBackgroundResult: ReturnType<typeof vi.fn>;
   let processStart: ReturnType<typeof vi.fn>;
   let processKill: ReturnType<typeof vi.fn>;
   let processFactory: ReturnType<typeof vi.fn>;
@@ -66,17 +65,22 @@ describe('BackgroundAgentManager', () => {
       enqueue: vi.fn().mockReturnValue(ok({ id: 'queue-1' })),
     } as unknown as QueueManager;
 
-    // Create a real temp dir so readFileSync in the manager can read the prompt file
     mkdirSync('/tmp/talon-bg-test', { recursive: true });
-    writeFileSync('/tmp/talon-bg-test/system-prompt.txt', 'Built system prompt');
-    writeFileSync('/tmp/talon-bg-test/mcp-config.json', '{}');
 
-    buildSystemPrompt = vi.fn().mockReturnValue('Built system prompt');
-    writeSpawnFiles = vi.fn().mockReturnValue(ok({
-      configPath: '/tmp/talon-bg-test/mcp-config.json',
-      promptPath: '/tmp/talon-bg-test/system-prompt.txt',
+    prepareBackgroundInvocation = vi.fn().mockReturnValue(ok({
+      command: 'claude',
+      args: ['--print', '--output-format', 'json'],
+      stdin: 'Refactor the auth module',
+      cwd: '/workspace/repo',
+      timeoutMs: 30 * 60 * 1000,
+      cleanupPaths: ['/tmp/talon-bg-test'],
     }));
-    cleanup = vi.fn();
+    parseBackgroundResult = vi.fn().mockImplementation((raw) => ({
+      output: raw.stdout,
+      stderr: raw.stderr,
+      exitCode: raw.exitCode,
+      timedOut: raw.timedOut,
+    }));
     completionResolve = null;
     processKill = vi.fn();
     processStart = vi.fn().mockImplementation(() =>
@@ -94,18 +98,36 @@ describe('BackgroundAgentManager', () => {
   });
 
   function createManager() {
+    const provider = {
+      name: 'claude-code',
+      createExecutionStrategy: vi.fn(),
+      prepareBackgroundInvocation,
+      parseBackgroundResult,
+      estimateContextUsage: vi.fn(),
+    };
+
+    const providerEntry = {
+      provider,
+      config: {
+        enabled: true,
+        command: 'claude',
+        contextWindowTokens: 200000,
+        rotationThreshold: 0.4,
+      },
+    };
+
     return new BackgroundAgentManager({
       repository,
       queueManager,
       maxConcurrent: 2,
       defaultTimeoutMinutes: 30,
-      claudePath: 'claude',
-      logger: makeLogger(),
-      configBuilder: {
-        buildSystemPrompt,
-        writeSpawnFiles,
-        cleanup,
+      defaultProvider: 'claude-code',
+      providerRegistry: {
+        getDefault: vi.fn().mockReturnValue(providerEntry),
+        listEnabled: vi.fn().mockReturnValue(['claude-code']),
+        get: vi.fn().mockReturnValue(providerEntry),
       } as any,
+      logger: makeLogger(),
       processFactory,
       isPidAlive: vi.fn().mockReturnValue(false),
       readProcessCommandLine: vi.fn().mockReturnValue('claude --print'),
@@ -141,23 +163,25 @@ describe('BackgroundAgentManager', () => {
 
     manager.spawn(spawnInput);
 
-    expect(buildSystemPrompt).toHaveBeenCalledWith({
-      personaPrompt: 'You are helpful.',
-      taskPrompt: 'Refactor the auth module',
-      taskId: expect.any(String),
-      threadId: 'thread-1',
-      channelName: 'telegram-main',
-      threadContext: 'Previous thread summary.',
-    });
-    // System prompt is passed at system level via --append-system-prompt,
-    // written to a temp file first and read back into the arg.
-    const options = processFactory.mock.calls[0]?.[0];
-    const args = options.args as string[];
-    const appendIdx = args.indexOf('--append-system-prompt');
-    expect(appendIdx).toBeGreaterThan(-1);
-    expect(args[appendIdx + 1]).toBe('Built system prompt');
+    expect(prepareBackgroundInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Refactor the auth module',
+        cwd: '/workspace/repo',
+        timeoutMs: 30 * 60 * 1000,
+      }),
+    );
 
-    // stdin carries only the task prompt, not the system prompt
+    const systemPrompt = prepareBackgroundInvocation.mock.calls[0]?.[0]?.systemPrompt as string;
+    expect(systemPrompt).toContain('You are helpful.');
+    expect(systemPrompt).toContain('Task ID:');
+    expect(systemPrompt).toContain('Thread ID: thread-1');
+    expect(systemPrompt).toContain('Channel: telegram-main');
+    expect(systemPrompt).toContain('Previous thread summary.');
+    expect(systemPrompt.toLowerCase()).toContain('autonomous');
+
+    const options = processFactory.mock.calls[0]?.[0];
+    expect(options.command).toBe('claude');
+    expect(options.args).toEqual(['--print', '--output-format', 'json']);
     expect(options.stdin).toBe('Refactor the auth module');
   });
 
@@ -206,7 +230,7 @@ describe('BackgroundAgentManager', () => {
     const tasks = repository.findByThread('thread-1')._unsafeUnwrap();
     expect(tasks[0]?.status).toBe('failed');
     expect(tasks[0]?.error).toContain('spawn failed');
-    expect(cleanup).toHaveBeenCalled();
+    expect(existsSync('/tmp/talon-bg-test')).toBe(false);
   });
 
   it('marks the task completed and enqueues both direct and agent notifications when the process resolves', async () => {
@@ -225,6 +249,12 @@ describe('BackgroundAgentManager', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const task = repository.findById(taskId)._unsafeUnwrap();
+    expect(parseBackgroundResult).toHaveBeenCalledWith({
+      stdout: 'Done!',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+    });
     expect(task?.status).toBe('completed');
     expect(task?.output).toBe('Done!');
     expect((queueManager.enqueue as any)).toHaveBeenNthCalledWith(
@@ -268,7 +298,7 @@ describe('BackgroundAgentManager', () => {
     manager.cancel(taskId);
     manager.shutdown();
 
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(existsSync('/tmp/talon-bg-test')).toBe(false);
   });
 
   it('marks orphaned running tasks as failed when their pid is dead', () => {
@@ -300,5 +330,134 @@ describe('BackgroundAgentManager', () => {
 
     expect(processKill).toHaveBeenCalled();
     expect(repository.findById(taskId)._unsafeUnwrap()?.status).toBe('cancelled');
+    expect(existsSync('/tmp/talon-bg-test')).toBe(false);
+  });
+
+  it('returns error when providerRegistry.getDefault returns undefined', () => {
+    const manager = new BackgroundAgentManager({
+      repository,
+      queueManager,
+      maxConcurrent: 2,
+      defaultTimeoutMinutes: 30,
+      defaultProvider: 'claude-code',
+      providerRegistry: {
+        getDefault: vi.fn().mockReturnValue(undefined),
+        listEnabled: vi.fn().mockReturnValue([]),
+        get: vi.fn().mockReturnValue(undefined),
+      } as any,
+      logger: makeLogger(),
+      processFactory,
+      isPidAlive: vi.fn().mockReturnValue(false),
+      readProcessCommandLine: vi.fn().mockReturnValue(null),
+    });
+
+    const result = manager.spawn(spawnInput);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toBeInstanceOf(BackgroundAgentError);
+    expect(result._unsafeUnwrapErr().message).toContain('No enabled background agent provider found');
+    // No task should have been created
+    expect(repository.findByThread('thread-1')._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it('returns error when prepareBackgroundInvocation returns err', () => {
+    prepareBackgroundInvocation.mockReturnValueOnce(
+      err(new BackgroundAgentError('invocation prep failed')),
+    );
+    const manager = createManager();
+
+    const result = manager.spawn(spawnInput);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toBeInstanceOf(BackgroundAgentError);
+    expect(result._unsafeUnwrapErr().message).toBe('invocation prep failed');
+    // No task should have been persisted
+    expect(repository.findByThread('thread-1')._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it('marks task timed_out and enqueues notification when process times out', async () => {
+    const manager = createManager();
+    const taskId = manager.spawn(spawnInput)._unsafeUnwrap();
+
+    completionResolve?.(
+      ok({
+        stdout: 'partial output',
+        stderr: '',
+        exitCode: null,
+        signal: null,
+        timedOut: true,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const task = repository.findById(taskId)._unsafeUnwrap();
+    expect(task?.status).toBe('timed_out');
+    expect(task?.output).toBe('partial output');
+    expect(task?.error).toBe('Process timed out');
+    expect(queueManager.enqueue as any).toHaveBeenCalledWith(
+      'thread-1',
+      'collaboration',
+      expect.objectContaining({
+        status: 'timed_out',
+        content: expect.stringContaining('Timed Out'),
+      }),
+    );
+  });
+
+  it('marks task failed and enqueues notification when process exits with non-zero code', async () => {
+    const manager = createManager();
+    const taskId = manager.spawn(spawnInput)._unsafeUnwrap();
+
+    completionResolve?.(
+      ok({
+        stdout: '',
+        stderr: 'something went wrong',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const task = repository.findById(taskId)._unsafeUnwrap();
+    expect(task?.status).toBe('failed');
+    expect(task?.error).toBe('something went wrong');
+    expect(queueManager.enqueue as any).toHaveBeenCalledWith(
+      'thread-1',
+      'collaboration',
+      expect.objectContaining({
+        status: 'failed',
+        content: expect.stringContaining('Failed'),
+      }),
+    );
+  });
+
+  it('rejects spawn when maxConcurrent limit is exactly reached', () => {
+    // Fill up to exactly the maxConcurrent limit (2)
+    for (let i = 1; i <= 2; i++) {
+      repository.create({
+        id: `slot-${i}`,
+        personaId: 'persona-1',
+        threadId: 'thread-1',
+        channelId: 'channel-1',
+        prompt: `task ${i}`,
+        workingDirectory: null,
+        status: 'running',
+        output: null,
+        error: null,
+        pid: 1000 + i,
+        timeoutMinutes: 30,
+      });
+    }
+
+    const manager = createManager();
+    const result = manager.spawn(spawnInput);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toBeInstanceOf(BackgroundAgentError);
+    expect(result._unsafeUnwrapErr().message).toContain('concurrency limit reached');
+    expect(result._unsafeUnwrapErr().message).toContain('2');
+    // process.start must never have been called
+    expect(processStart).not.toHaveBeenCalled();
   });
 });

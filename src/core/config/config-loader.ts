@@ -47,6 +47,78 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeLegacyConfig(raw: unknown): unknown {
+  if (!isRecord(raw)) {
+    return raw;
+  }
+
+  const root = { ...raw };
+  const backgroundAgent = root['backgroundAgent'];
+  if (isRecord(backgroundAgent)) {
+    const normalizedBackgroundAgent = { ...backgroundAgent };
+    const claudePath = normalizedBackgroundAgent['claudePath'];
+    const hasExplicitProviders = normalizedBackgroundAgent['providers'] !== undefined;
+
+    if (typeof claudePath === 'string' && !hasExplicitProviders) {
+      normalizedBackgroundAgent['defaultProvider'] ??= 'claude-code';
+      normalizedBackgroundAgent['providers'] = {
+        'claude-code': {
+          enabled: true,
+          command: claudePath,
+          contextWindowTokens: 200000,
+          rotationThreshold: 0.4,
+        },
+      };
+    }
+
+    root['backgroundAgent'] = normalizedBackgroundAgent;
+  }
+
+  const context = isRecord(root['context']) ? root['context'] : undefined;
+  const thresholdTokens = context?.['thresholdTokens'];
+  if (typeof thresholdTokens === 'number') {
+    const normalizedAgentRunner = isRecord(root['agentRunner']) ? { ...root['agentRunner'] } : {};
+    const defaultProvider =
+      typeof normalizedAgentRunner['defaultProvider'] === 'string'
+        ? normalizedAgentRunner['defaultProvider']
+        : 'claude-code';
+    const normalizedProviders = isRecord(normalizedAgentRunner['providers'])
+      ? { ...normalizedAgentRunner['providers'] }
+      : {};
+    const rawProviderConfig = isRecord(normalizedProviders[defaultProvider])
+      ? { ...normalizedProviders[defaultProvider] }
+      : {};
+
+    if (!Object.hasOwn(rawProviderConfig, 'rotationThreshold')) {
+      const contextWindowTokens =
+        typeof rawProviderConfig['contextWindowTokens'] === 'number'
+          ? rawProviderConfig['contextWindowTokens']
+          : defaultProvider === 'claude-code'
+            ? 200000
+            : undefined;
+
+      if (contextWindowTokens !== undefined) {
+        normalizedProviders[defaultProvider] = {
+          enabled: true,
+          ...(defaultProvider === 'claude-code' ? { command: 'claude' } : {}),
+          ...rawProviderConfig,
+          contextWindowTokens,
+          rotationThreshold: Math.min(1, Math.max(0, thresholdTokens / contextWindowTokens)),
+        };
+        normalizedAgentRunner['defaultProvider'] ??= defaultProvider;
+        normalizedAgentRunner['providers'] = normalizedProviders;
+        root['agentRunner'] = normalizedAgentRunner;
+      }
+    }
+  }
+
+  return root;
+}
+
 /**
  * Parses and validates raw YAML content (as a string) into a TalondConfig.
  * Returns a ConfigError when the YAML is malformed or fails schema validation.
@@ -72,6 +144,8 @@ function parseAndValidate(yamlContent: string, source: string): Result<TalondCon
   if (raw === undefined || raw === null) {
     raw = {};
   }
+
+  raw = normalizeLegacyConfig(raw);
 
   const result = TalondConfigSchema.safeParse(raw);
   if (!result.success) {
@@ -140,7 +214,7 @@ export function loadConfigFromString(yamlContent: string): Result<TalondConfig, 
  * @returns    Ok(TalondConfig) on success, Err(ConfigError) on failure.
  */
 export function validateConfig(raw: unknown): Result<TalondConfig, ConfigError> {
-  const result = TalondConfigSchema.safeParse(raw);
+  const result = TalondConfigSchema.safeParse(normalizeLegacyConfig(raw));
   if (!result.success) {
     const issues = result.error.issues.map(formatIssue);
     const summary = issues.slice(0, 5).join('; ');

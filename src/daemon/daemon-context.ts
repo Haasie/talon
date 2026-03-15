@@ -38,6 +38,7 @@ import type { MessagePipeline } from '../pipeline/message-pipeline.js';
 import type { HostToolsBridge } from '../tools/host-tools-bridge.js';
 import type { SubAgentRunner } from '../subagents/subagent-runner.js';
 import type { BackgroundAgentManager } from '../subagents/background/background-agent-manager.js';
+import type { ProviderRegistry } from '../providers/provider-registry.js';
 import type { ContextRoller } from './context-roller.js';
 import type { ContextAssembler } from './context-assembler.js';
 
@@ -87,6 +88,7 @@ export interface DaemonContext {
   readonly loadedSkills: LoadedSkill[];
   readonly messagePipeline: MessagePipeline;
   readonly hostToolsBridge: HostToolsBridge;
+  readonly providerRegistry: ProviderRegistry;
   readonly subAgentRunner: SubAgentRunner | null;
   readonly backgroundAgentManager: BackgroundAgentManager | null;
   readonly contextRoller: ContextRoller | null;

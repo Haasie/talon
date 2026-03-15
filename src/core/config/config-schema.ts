@@ -130,11 +130,39 @@ export const AuthConfigSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Providers
+// ---------------------------------------------------------------------------
+
+export const ProviderConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  command: z.string(),
+  contextWindowTokens: z.number().int().min(1000).default(200_000),
+  rotationThreshold: z.number().min(0).max(1).default(0.4),
+  options: z.record(z.string(), z.unknown()).optional(),
+});
+
+function defaultClaudeProviderConfig() {
+  return ProviderConfigSchema.parse({
+    enabled: true,
+    command: 'claude',
+    contextWindowTokens: 200_000,
+    rotationThreshold: 0.4,
+  });
+}
+
+export const AgentRunnerConfigSchema = z.object({
+  defaultProvider: z.string().default('claude-code'),
+  providers: z
+    .record(z.string(), ProviderConfigSchema)
+    .default(() => ({ 'claude-code': defaultClaudeProviderConfig() })),
+});
+
+// ---------------------------------------------------------------------------
 // Context (rolling context window)
 // ---------------------------------------------------------------------------
 
 export const ContextConfigSchema = z.object({
-  /** Token count threshold for triggering session rotation. Default: 80 000. */
+  /** Legacy token threshold fallback converted to provider rotation ratios. Default: 80 000. */
   thresholdTokens: z.number().int().min(10_000).default(80_000),
   /** Number of recent messages to include verbatim in fresh sessions. Default: 10. */
   recentMessageCount: z.number().int().min(0).default(10),
@@ -148,7 +176,11 @@ export const BackgroundAgentConfigSchema = z.object({
   enabled: z.boolean().default(true),
   maxConcurrent: z.number().int().min(1).max(10).default(3),
   defaultTimeoutMinutes: z.number().int().min(15).max(480).default(30),
-  claudePath: z.string().default('claude'),
+  defaultProvider: z.string().default('claude-code'),
+  providers: z
+    .record(z.string(), ProviderConfigSchema)
+    .default(() => ({ 'claude-code': defaultClaudeProviderConfig() })),
+  claudePath: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -164,6 +196,7 @@ export const TalondConfigSchema = z.object({
   queue: QueueConfigSchema.default(() => QueueConfigSchema.parse({})),
   scheduler: SchedulerConfigSchema.default(() => SchedulerConfigSchema.parse({})),
   auth: AuthConfigSchema.default(() => AuthConfigSchema.parse({})),
+  agentRunner: AgentRunnerConfigSchema.default(() => AgentRunnerConfigSchema.parse({})),
   context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
   backgroundAgent: BackgroundAgentConfigSchema.default(() => BackgroundAgentConfigSchema.parse({})),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),

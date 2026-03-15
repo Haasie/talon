@@ -159,11 +159,16 @@ describe('Rolling context window integration', () => {
       sessionTracker,
       summarizerRun: mockSummarizerRun,
       logger: mockLogger,
-      thresholdTokens: 80_000,
+      thresholdRatio: 0.4,
     });
 
     // 3. Trigger rotation (simulate 90K tokens)
-    await roller.checkAndRotate(threadId, personaId, 90_000);
+    await roller.checkAndRotate(threadId, personaId, {
+      ratio: 0.45,
+      inputTokens: 90_000,
+      rawMetric: 90_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     // 4. Verify: session was cleared
     expect(sessionTracker.getSessionId(threadId)).toBeUndefined();
@@ -188,6 +193,12 @@ describe('Rolling context window integration', () => {
     const metadata = JSON.parse(summaryItems[0].metadata);
     expect(metadata.source).toBe('context-roller');
     expect(metadata.messageCount).toBe(6);
+    expect(metadata.contextUsage).toEqual({
+      ratio: 0.45,
+      inputTokens: 90_000,
+      rawMetric: 90_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
     expect(metadata.cacheReadTokens).toBe(90_000);
 
     // 7. Now test ContextAssembler picks up the stored summary
@@ -220,12 +231,17 @@ describe('Rolling context window integration', () => {
       sessionTracker,
       summarizerRun: mockSummarizerRun,
       logger: mockLogger,
-      thresholdTokens: 80_000,
+      thresholdRatio: 0.4,
     });
 
     sessionTracker.setSessionId(threadId, 'active-session');
 
-    await roller.checkAndRotate(threadId, personaId, 50_000);
+    await roller.checkAndRotate(threadId, personaId, {
+      ratio: 0.25,
+      inputTokens: 50_000,
+      rawMetric: 50_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     // Session should be untouched
     expect(sessionTracker.getSessionId(threadId)).toBe('active-session');
@@ -301,10 +317,15 @@ describe('Rolling context window integration', () => {
       sessionTracker,
       summarizerRun: mockSummarizerRun,
       logger: mockLogger,
-      thresholdTokens: 80_000,
+      thresholdRatio: 0.4,
     });
 
-    await roller.checkAndRotate(threadId, personaId, 100_000);
+    await roller.checkAndRotate(threadId, personaId, {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
 
     // Session must be preserved
     expect(sessionTracker.getSessionId(threadId)).toBe('keep-this-session');

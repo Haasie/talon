@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { err, ok, type Result } from 'neverthrow';
 import type pino from 'pino';
@@ -6,14 +6,16 @@ import { BackgroundAgentError } from '../../core/errors/error-types.js';
 import type { QueueManager } from '../../queue/queue-manager.js';
 import type { BackgroundTask, BackgroundTaskResult } from './background-agent-types.js';
 import { BackgroundAgentProcess, type BackgroundAgentProcessOptions } from './background-agent-process.js';
-import { BackgroundAgentConfigBuilder } from './background-agent-config-builder.js';
 import type { BackgroundTaskRepository } from '../../core/database/repositories/background-task-repository.js';
+import type { CanonicalMcpServer } from '../../providers/provider-types.js';
+import type { AgentProvider } from '../../providers/provider.js';
+import type { ProviderRegistry } from '../../providers/provider-registry.js';
 
 export interface SpawnBackgroundAgentInput {
   prompt: string;
   personaPrompt: string;
   threadContext?: string;
-  mcpServers: Record<string, unknown>;
+  mcpServers: Record<string, CanonicalMcpServer>;
   personaId: string;
   threadId: string;
   channelId: string;
@@ -27,9 +29,9 @@ interface BackgroundAgentManagerDeps {
   queueManager: QueueManager;
   maxConcurrent: number;
   defaultTimeoutMinutes: number;
-  claudePath: string;
+  defaultProvider: string;
+  providerRegistry: Pick<ProviderRegistry, 'get' | 'getDefault' | 'listEnabled'>;
   logger: pino.Logger;
-  configBuilder?: BackgroundAgentConfigBuilder;
   processFactory?: (options: BackgroundAgentProcessOptions) => BackgroundAgentProcess;
   isPidAlive?: (pid: number) => boolean;
   readProcessCommandLine?: (pid: number) => string | null;
@@ -37,20 +39,19 @@ interface BackgroundAgentManagerDeps {
 
 interface ManagedProcess {
   kill: () => void;
-  configPath: string;
+  cleanupPaths: string[];
+  provider: AgentProvider;
 }
 
 const MAX_STORED_OUTPUT = 100 * 1024;
 
 export class BackgroundAgentManager {
-  private readonly configBuilder: BackgroundAgentConfigBuilder;
   private readonly processFactory: (options: BackgroundAgentProcessOptions) => BackgroundAgentProcess;
   private readonly isPidAlive: (pid: number) => boolean;
   private readonly readProcessCommandLine: (pid: number) => string | null;
   private readonly processes = new Map<string, ManagedProcess>();
 
   constructor(private readonly deps: BackgroundAgentManagerDeps) {
-    this.configBuilder = deps.configBuilder ?? new BackgroundAgentConfigBuilder();
     this.processFactory = deps.processFactory ?? ((options) => new BackgroundAgentProcess(options));
     this.isPidAlive = deps.isPidAlive ?? ((pid) => {
       try {
@@ -82,6 +83,15 @@ export class BackgroundAgentManager {
       );
     }
 
+    const providerEntry = this.deps.providerRegistry.getDefault([this.deps.defaultProvider]);
+    if (!providerEntry) {
+      return err(
+        new BackgroundAgentError(
+          `No enabled background agent provider found (default: ${this.deps.defaultProvider})`,
+        ),
+      );
+    }
+
     const taskId = randomUUID();
     const MIN_TIMEOUT_MINUTES = 15;
     const requested = input.timeoutMinutes ?? this.deps.defaultTimeoutMinutes;
@@ -92,7 +102,7 @@ export class BackgroundAgentManager {
         'background-agent: timeout clamped to minimum',
       );
     }
-    const systemPrompt = this.configBuilder.buildSystemPrompt({
+    const systemPrompt = this.buildSystemPrompt({
       personaPrompt: input.personaPrompt,
       taskPrompt: input.prompt,
       taskId,
@@ -101,12 +111,18 @@ export class BackgroundAgentManager {
       threadContext: input.threadContext,
     });
 
-    const filesResult = this.configBuilder.writeSpawnFiles(input.mcpServers, systemPrompt);
-    if (filesResult.isErr()) {
-      return err(filesResult.error);
+    const invocationResult = providerEntry.provider.prepareBackgroundInvocation({
+      prompt: input.prompt,
+      systemPrompt,
+      mcpServers: input.mcpServers,
+      cwd: input.workingDirectory ?? process.cwd(),
+      timeoutMs: timeoutMinutes * 60 * 1000,
+    });
+    if (invocationResult.isErr()) {
+      return err(invocationResult.error);
     }
 
-    const { configPath, promptPath } = filesResult.value;
+    const invocation = invocationResult.value;
 
     const createResult = this.deps.repository.create({
       id: taskId,
@@ -123,50 +139,22 @@ export class BackgroundAgentManager {
     });
 
     if (createResult.isErr()) {
-      this.configBuilder.cleanup(configPath);
+      this.cleanupPaths(invocation.cleanupPaths);
       return err(new BackgroundAgentError(createResult.error.message, createResult.error));
     }
 
-    // Read the system prompt back from the temp file so it is passed at system
-    // level via --append-system-prompt. The file write + read cycle ensures the
-    // prompt is persisted with restricted permissions and available for debugging.
-    let systemPromptContent: string;
-    try {
-      systemPromptContent = readFileSync(promptPath, 'utf8');
-    } catch (cause) {
-      this.deps.repository.updateStatus(taskId, 'failed', undefined, `Failed to read prompt file: ${String(cause)}`);
-      this.configBuilder.cleanup(configPath);
-      return err(
-        new BackgroundAgentError(
-          `Failed to read prompt file: ${String(cause)}`,
-          cause instanceof Error ? cause : undefined,
-        ),
-      );
-    }
-
     const processInstance = this.processFactory({
-      command: this.deps.claudePath,
-      args: [
-        '--print',
-        '--output-format',
-        'json',
-        '--append-system-prompt',
-        systemPromptContent,
-        '--mcp-config',
-        configPath,
-        '--strict-mcp-config',
-        '--dangerously-skip-permissions',
-        '--no-session-persistence',
-      ],
-      cwd: input.workingDirectory ?? process.cwd(),
-      stdin: input.prompt,
-      timeoutMs: timeoutMinutes * 60 * 1000,
+      command: invocation.command,
+      args: invocation.args,
+      cwd: invocation.cwd,
+      stdin: invocation.stdin,
+      timeoutMs: invocation.timeoutMs,
     });
 
     const startResult = processInstance.start();
     if (startResult.isErr()) {
       this.deps.repository.updateStatus(taskId, 'failed', undefined, startResult.error.message);
-      this.configBuilder.cleanup(configPath);
+      this.cleanupPaths(invocation.cleanupPaths);
       return err(startResult.error);
     }
 
@@ -177,7 +165,8 @@ export class BackgroundAgentManager {
 
     this.processes.set(taskId, {
       kill: () => processInstance.kill(),
-      configPath,
+      cleanupPaths: invocation.cleanupPaths,
+      provider: providerEntry.provider,
     });
 
     void completion.then((result) => {
@@ -236,7 +225,7 @@ export class BackgroundAgentManager {
     const managedProcess = this.processes.get(taskId);
     managedProcess?.kill();
     if (managedProcess) {
-      this.configBuilder.cleanup(managedProcess.configPath);
+      this.cleanupPaths(managedProcess.cleanupPaths);
       this.processes.delete(taskId);
     }
     const updateResult = this.deps.repository.updateStatus(
@@ -270,7 +259,10 @@ export class BackgroundAgentManager {
       }
 
       const commandLine = this.readProcessCommandLine(task.pid);
-      if (!commandLine || !commandLine.includes('claude')) {
+      if (
+        !commandLine
+        || !this.enabledProviderCommands().some((command) => commandLine.includes(command))
+      ) {
         this.deps.repository.updateStatus(task.id, 'failed', undefined, 'daemon restarted during execution (pid reused)');
         continue;
       }
@@ -288,7 +280,7 @@ export class BackgroundAgentManager {
     for (const [taskId, process] of this.processes) {
       process.kill();
       this.deps.repository.updateStatus(taskId, 'cancelled', undefined, 'Daemon shutting down');
-      this.configBuilder.cleanup(process.configPath);
+      this.cleanupPaths(process.cleanupPaths);
     }
     this.processes.clear();
   }
@@ -318,22 +310,36 @@ export class BackgroundAgentManager {
       exitCode: number | null;
       timedOut: boolean;
     };
+    const managedProcess = this.processes.get(taskId);
+    const parsedResult = managedProcess
+      ? managedProcess.provider.parseBackgroundResult({
+          stdout: processResult.stdout,
+          stderr: processResult.stderr,
+          exitCode: processResult.exitCode,
+          timedOut: processResult.timedOut,
+        })
+      : {
+          output: processResult.stdout,
+          stderr: processResult.stderr,
+          exitCode: processResult.exitCode,
+          timedOut: processResult.timedOut,
+        };
 
-    if (processResult.timedOut) {
+    if (parsedResult.timedOut) {
       this.deps.repository.updateStatus(
         taskId,
         'timed_out',
-        this.truncate(processResult.stdout),
+        this.truncate(parsedResult.output),
         'Process timed out',
       );
-    } else if (processResult.exitCode === 0) {
-      this.deps.repository.updateStatus(taskId, 'completed', this.truncate(processResult.stdout));
+    } else if (parsedResult.exitCode === 0) {
+      this.deps.repository.updateStatus(taskId, 'completed', this.truncate(parsedResult.output));
     } else {
       this.deps.repository.updateStatus(
         taskId,
         'failed',
-        this.truncate(processResult.stdout),
-        this.truncate(processResult.stderr || `Process exited with code ${processResult.exitCode}`),
+        this.truncate(parsedResult.output),
+        this.truncate(parsedResult.stderr || `Process exited with code ${parsedResult.exitCode}`),
       );
     }
 
@@ -391,9 +397,48 @@ export class BackgroundAgentManager {
   private cleanupTask(taskId: string): void {
     const managedProcess = this.processes.get(taskId);
     if (managedProcess) {
-      this.configBuilder.cleanup(managedProcess.configPath);
+      this.cleanupPaths(managedProcess.cleanupPaths);
       this.processes.delete(taskId);
     }
+  }
+
+  private cleanupPaths(paths: string[]): void {
+    for (const path of new Set(paths)) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  }
+
+  private enabledProviderCommands(): string[] {
+    return this.deps.providerRegistry
+      .listEnabled()
+      .map((name) => this.deps.providerRegistry.get(name)?.config.command)
+      .filter((command): command is string => typeof command === 'string' && command.length > 0);
+  }
+
+  private buildSystemPrompt(options: {
+    personaPrompt: string;
+    taskPrompt: string;
+    taskId: string;
+    threadId: string;
+    channelName: string;
+    threadContext?: string;
+  }): string {
+    return [
+      options.personaPrompt,
+      '## Background Task Context',
+      `Task ID: ${options.taskId}`,
+      `Thread ID: ${options.threadId}`,
+      `Channel: ${options.channelName}`,
+      options.threadContext ? `Thread summary:\n${options.threadContext}` : '',
+      '## Background Task Instructions',
+      'You are running as an autonomous background agent.',
+      'No human is watching this session, so make reasonable decisions and continue.',
+      'Finish the task and leave a concise final summary of what you changed or learned.',
+      '## Task',
+      options.taskPrompt,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   private truncate(value?: string): string | undefined {

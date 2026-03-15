@@ -139,7 +139,7 @@ auth:
 # Context — rolling context window (auto-summarize + rotate long conversations)
 # ---------------------------------------------------------------------------
 context:
-  thresholdTokens: 80000             # token count that triggers session rotation
+  thresholdTokens: 80000             # legacy fallback converted to default provider rotationThreshold
   recentMessageCount: 10             # recent messages included verbatim in new session
 
 # ---------------------------------------------------------------------------

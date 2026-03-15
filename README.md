@@ -48,6 +48,40 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Skills** — Modular prompt fragments and tool bundles that snap onto personas
 - **MCP integration** — Connect external MCP tool servers via stdio, policy-enforced through host-tools bridge
 
+### Provider abstraction
+
+Agent execution is decoupled from any specific SDK or CLI. A provider layer sits between the daemon core and the actual model runtime, so swapping or adding providers doesn't require changes to the runner, queue, or context management.
+
+Each provider implements a small interface: prepare a background CLI invocation, parse its output, estimate context usage, and create an SDK execution strategy. The daemon resolves which provider to use from config, both for the main agent runner and for background agents independently. Claude Code ships as the default (and currently only) provider.
+
+This matters because it means you can:
+
+- Run different providers for foreground vs background work (e.g., Claude for interactive, a local model for batch tasks)
+- Add new providers without touching core pipeline code — implement the interface, register in config, done
+- Configure provider-specific settings like context window size and rotation thresholds per provider instance
+- Keep backward compatibility — existing configs without provider sections still work, the loader normalizes them
+
+```yaml
+agentRunner:
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.5
+
+backgroundAgent:
+  enabled: true
+  maxConcurrent: 3
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+```
+
 ### Infrastructure
 
 - **Durable queue** — SQLite-backed message queue with crash recovery, retry, and dead-letter
@@ -58,7 +92,7 @@ It is built for single-user or small-team deployments where you want persistent,
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
 - **Session persistence** — Agent sessions resume across messages in the same thread
-- **Rolling context window** — Automatic session rotation when context usage exceeds 80K tokens, with compressed history injection into fresh sessions for seamless continuity
+- **Rolling context window** — Automatic session rotation when context usage hits a configurable ratio of the provider's context window, with compressed history injection into fresh sessions
 
 ### Security
 
@@ -71,7 +105,7 @@ It is built for single-user or small-team deployments where you want persistent,
 
 ## Architecture
 
-The daemon receives messages from channels, routes them through a durable queue, and dispatches them to the Claude Agent SDK. Agents interact with the host via MCP host-tools exposed over a Unix socket.
+Messages arrive from channels, pass through a durable queue, and get dispatched to the agent runner. The runner resolves a provider from the registry and executes via that provider's strategy (SDK streaming or CLI). Agents interact with the host through MCP host-tools on a Unix socket. Background agents run as separate provider-managed processes.
 
 ```mermaid
 graph TB
@@ -91,43 +125,64 @@ graph TB
         Q[Durable Queue]
         SCH[Scheduler]
         HT[Host-Tools MCP Server]
+        AR[Agent Runner]
+        PR[Provider Registry]
+        CXR[Context Roller]
     end
 
-    subgraph "Agent SDK (Host Process)"
-        A1[Agent: Thread A]
-        A2[Agent: Thread B]
+    subgraph "Provider Layer"
+        P1[Claude Code Provider]
+        P2[Future Provider...]
+    end
+
+    subgraph "Execution"
+        SDK[SDK Strategy]
+        BG[Background CLI]
     end
 
     DB[(SQLite)]
 
     TG & SL & DC & WA & EM & TM --> CR
     CR --> NP --> RT --> Q
-    Q --> A1 & A2
-    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db, subagent,<br/>background agent"| HT
+    Q --> AR
+    AR --> PR
+    PR --> P1 & P2
+    P1 --> SDK
+    P1 --> BG
+    SDK & BG -->|"MCP: schedule, channel,<br/>memory, http, db, subagent,<br/>background agent"| HT
     HT --> CR
     HT --> DB
     SCH --> Q
     Q --> DB
+    AR --> CXR
+    CXR --> DB
 ```
 
-### Message Flow
+### Message flow
 
 ```mermaid
 sequenceDiagram
     participant Ch as Channel
     participant D as talond
     participant Q as Queue
-    participant A as Agent SDK
+    participant AR as Agent Runner
+    participant PR as Provider Registry
+    participant P as Provider
 
     Ch->>D: Inbound message
     D->>D: Normalize + dedup
     D->>D: Route via bindings
     D->>Q: Enqueue (FIFO per thread)
-    Q->>A: Dispatch to Agent SDK
-    A->>D: MCP: host-tool call (Unix socket)
+    Q->>AR: Dispatch
+    AR->>PR: Resolve provider
+    PR-->>AR: Provider + strategy
+    AR->>P: Execute (SDK stream or CLI)
+    P->>D: MCP host-tool call (Unix socket)
     D->>D: Execute tool
-    D->>A: Tool result
-    A->>D: MCP: channel.send
+    D->>P: Tool result
+    P-->>AR: Result + usage metrics
+    AR->>AR: Check context rotation
+    AR->>D: MCP: channel.send
     D->>Ch: Outbound reply
 ```
 
@@ -247,7 +302,7 @@ auth:
       apiKey: ${OPENAI_API_KEY}
 
 context:
-  thresholdTokens: 80000
+  thresholdTokens: 80000  # legacy fallback if provider rotationThreshold is omitted
   recentMessageCount: 10
 
 logLevel: info
@@ -267,7 +322,7 @@ dataDir: data
 | `schedules`            | Agent-managed schedule entries (cron, interval, one-shot)                     |
 | `scheduler`            | Scheduler tick interval                                                       |
 | `auth`                 | `subscription` or `api_key` authentication mode                               |
-| `context`              | Rolling context window: cache threshold and verbatim message count            |
+| `context`              | Rolling context window: legacy threshold fallback and verbatim message count  |
 | `logLevel` / `dataDir` | Runtime logging level and data root                                           |
 
 ### Environment Variable Substitution
