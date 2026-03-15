@@ -20,6 +20,7 @@ export interface SpawnBackgroundAgentInput {
   threadId: string;
   channelId: string;
   channelName: string;
+  provider?: string;
   workingDirectory?: string;
   timeoutMinutes?: number;
 }
@@ -83,7 +84,27 @@ export class BackgroundAgentManager {
       );
     }
 
-    const providerEntry = this.deps.providerRegistry.getDefault([this.deps.defaultProvider]);
+    const requestedProvider = typeof input.provider === 'string' && input.provider.trim().length > 0
+      ? input.provider.trim()
+      : undefined;
+
+    // Explicit provider requests (from tool args) must be honored strictly.
+    // If the requested provider is unavailable, fail with a clear error rather
+    // than silently running on the wrong backend.
+    let providerEntry;
+    if (requestedProvider) {
+      providerEntry = this.deps.providerRegistry.get(requestedProvider);
+      if (!providerEntry) {
+        const enabled = this.deps.providerRegistry.listEnabled().join(', ') || 'none';
+        return err(
+          new BackgroundAgentError(
+            `Requested provider "${requestedProvider}" is not available. Enabled providers: ${enabled}.`,
+          ),
+        );
+      }
+    } else {
+      providerEntry = this.deps.providerRegistry.getDefault([this.deps.defaultProvider]);
+    }
     if (!providerEntry) {
       return err(
         new BackgroundAgentError(
@@ -127,6 +148,7 @@ export class BackgroundAgentManager {
     const createResult = this.deps.repository.create({
       id: taskId,
       personaId: input.personaId,
+      providerName: providerEntry.provider.name,
       threadId: input.threadId,
       channelId: input.channelId,
       prompt: input.prompt,
@@ -148,6 +170,7 @@ export class BackgroundAgentManager {
       args: invocation.args,
       cwd: invocation.cwd,
       stdin: invocation.stdin,
+      env: invocation.env,
       timeoutMs: invocation.timeoutMs,
     });
 
@@ -206,6 +229,7 @@ export class BackgroundAgentManager {
 
     return ok({
       taskId: task.id,
+      providerName: task.providerName,
       status: task.status,
       output: task.output,
       error: task.error,
@@ -363,6 +387,7 @@ export class BackgroundAgentManager {
     const content = [
       `[Background Task ${title}] Task ${task.id}: "${preview}"`,
       `Status: ${task.status}`,
+      `Provider: ${task.providerName}`,
       `Output summary: ${summary}`,
       `Working directory: ${task.workingDirectory ?? 'n/a'}`,
       `Duration: ${durationSeconds}s`,
@@ -372,6 +397,7 @@ export class BackgroundAgentManager {
       personaId: task.personaId,
       kind: 'background_task_notification',
       taskId: task.id,
+      providerName: task.providerName,
       status: task.status,
       content,
     });
@@ -385,6 +411,7 @@ export class BackgroundAgentManager {
     const messageResult = this.deps.queueManager.enqueue(task.threadId, 'message', {
       personaId: task.personaId,
       content,
+      providerName: task.providerName,
     });
     if (messageResult.isErr()) {
       this.deps.logger.error(

@@ -59,6 +59,7 @@ describe('RunRepository', () => {
       id: uuid(),
       thread_id: threadId,
       persona_id: personaId,
+      provider_name: 'claude-code',
       sandbox_id: null,
       session_id: null,
       status: 'pending' as const,
@@ -82,6 +83,7 @@ describe('RunRepository', () => {
       const result = repo.insert(input);
       expect(result.isOk()).toBe(true);
       expect(result._unsafeUnwrap().id).toBe(input.id);
+      expect(result._unsafeUnwrap().provider_name).toBe('claude-code');
       expect(result._unsafeUnwrap().status).toBe('pending');
     });
 
@@ -132,6 +134,18 @@ describe('RunRepository', () => {
       const parent = makeRun();
       repo.insert(parent);
       expect(repo.findByParent(parent.id)._unsafeUnwrap()).toHaveLength(0);
+    });
+  });
+
+  describe('getLatestProviderName', () => {
+    it('returns the most recent provider_name for the thread', () => {
+      repo.insert(makeRun({ provider_name: 'claude-code' }));
+      repo.insert(makeRun({ provider_name: 'gemini-cli' }));
+
+      const result = repo.getLatestProviderName(threadId);
+
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBe('gemini-cli');
     });
   });
 

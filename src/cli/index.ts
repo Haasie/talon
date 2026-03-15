@@ -38,6 +38,10 @@ import { addScheduleCommand } from './commands/add-schedule.js';
 import { listSchedulesCommand } from './commands/list-schedules.js';
 import { removeScheduleCommand } from './commands/remove-schedule.js';
 import { runSubAgentCommand } from './commands/run-subagent.js';
+import { listProvidersCommand } from './commands/list-providers.js';
+import { addProviderCommand } from './commands/add-provider.js';
+import { setDefaultProviderCommand } from './commands/set-default-provider.js';
+import { testProviderCommand } from './commands/test-provider.js';
 
 // Load .env before anything else so ${VAR} substitution works in config.
 const envPath = resolve(process.env.TALOND_ENV_FILE || '.env');
@@ -375,6 +379,70 @@ program
       input: opts.input,
       configPath: opts.config,
       subagentsDir: opts.subagentsDir,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// Provider commands
+// ---------------------------------------------------------------------------
+
+program
+  .command('list-providers')
+  .description('List all configured providers from agentRunner and backgroundAgent')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { config: string }) => {
+    await listProvidersCommand({ configPath: opts.config });
+  });
+
+program
+  .command('add-provider')
+  .description('Add a provider to agentRunner, backgroundAgent, or both')
+  .requiredOption('--name <name>', 'Provider name (e.g. gemini-cli)')
+  .requiredOption('--command <cmd>', 'CLI binary path (e.g. gemini or /usr/local/bin/gemini)')
+  .option('--context <ctx>', 'Context: agent-runner, background, or both', 'both')
+  .option('--context-window <tokens>', 'Context window size in tokens', '200000')
+  .option('--rotation-threshold <ratio>', 'Rotation threshold 0-1 float', '0.4')
+  .option('--enabled', 'Enable the provider immediately (default: disabled)')
+  .option('--default-model <model>', 'Set options.defaultModel (e.g. gemini-2.5-pro)')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; command: string; context: string; contextWindow: string; rotationThreshold: string; enabled?: boolean; defaultModel?: string; config: string }) => {
+    await addProviderCommand({
+      name: opts.name,
+      command: opts.command,
+      context: opts.context as 'agent-runner' | 'background' | 'both',
+      contextWindowTokens: parseInt(opts.contextWindow, 10),
+      rotationThreshold: parseFloat(opts.rotationThreshold),
+      enabled: opts.enabled ?? false,
+      defaultModel: opts.defaultModel,
+      configPath: opts.config,
+    });
+  });
+
+program
+  .command('set-default-provider')
+  .description('Switch the default provider for agent-runner or background context')
+  .requiredOption('--name <name>', 'Provider name to set as default')
+  .requiredOption('--context <ctx>', 'Context: agent-runner or background')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; context: string; config: string }) => {
+    await setDefaultProviderCommand({
+      name: opts.name,
+      context: opts.context as 'agent-runner' | 'background',
+      configPath: opts.config,
+    });
+  });
+
+program
+  .command('test-provider')
+  .description('Test a provider by running a version check and minimal prompt')
+  .requiredOption('--name <name>', 'Provider name to test')
+  .option('--context <ctx>', 'Context: agent-runner or background', 'agent-runner')
+  .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
+  .action(async (opts: { name: string; context: string; config: string }) => {
+    await testProviderCommand({
+      name: opts.name,
+      context: opts.context as 'agent-runner' | 'background',
+      configPath: opts.config,
     });
   });
 

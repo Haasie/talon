@@ -50,6 +50,7 @@ export interface PreparedProviderInvocation {
   command: string;
   args: string[];
   stdin: string;
+  env?: Record<string, string>;
   cwd: string;
   timeoutMs: number;
   cleanupPaths: string[];

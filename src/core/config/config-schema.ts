@@ -66,6 +66,7 @@ export const MountConfigSchema = z.object({
 export const PersonaConfigSchema = z.object({
   name: z.string().min(1),
   model: z.string().default('claude-sonnet-4-6'),
+  provider: z.string().trim().min(1).optional(),
   systemPromptFile: z.string().optional(),
   skills: z.array(z.string()).default([]),
   subagents: z.array(z.string()).default([]),

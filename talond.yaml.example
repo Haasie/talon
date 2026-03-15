@@ -103,13 +103,45 @@ queue:
   concurrencyLimit: 5                # max messages processed in parallel
 
 # ---------------------------------------------------------------------------
-# Background workers — detached Claude Code jobs spawned by the foreground agent
+# Agent runner providers - foreground thread execution
+# ---------------------------------------------------------------------------
+agentRunner:
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.4
+    gemini-cli:
+      enabled: false
+      command: gemini
+      contextWindowTokens: 1000000
+      rotationThreshold: 0.8
+      options:
+        defaultModel: gemini-2.5-pro
+
+# ---------------------------------------------------------------------------
+# Background workers — detached provider-backed jobs spawned by the foreground agent
 # ---------------------------------------------------------------------------
 backgroundAgent:
   enabled: true                      # master switch for background workers
-  maxConcurrent: 3                   # max background Claude workers running at once
+  maxConcurrent: 3                   # max background workers running at once
   defaultTimeoutMinutes: 30          # default wall-clock timeout per worker
-  claudePath: claude                 # Claude Code CLI executable to launch
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.4
+    gemini-cli:
+      enabled: false
+      command: gemini
+      contextWindowTokens: 1000000
+      rotationThreshold: 0.8
+      options:
+        defaultModel: gemini-2.5-pro
 
 # ---------------------------------------------------------------------------
 # Scheduler — cron/interval/one-shot task execution engine

@@ -17,6 +17,7 @@ function makeTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   return {
     id: 'task-1',
     personaId: 'persona-1',
+    providerName: 'claude-code',
     threadId: 'thread-1',
     channelId: 'channel-1',
     prompt: 'Refactor the auth module',
@@ -36,6 +37,7 @@ function makeTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
 function makeResult(overrides: Partial<BackgroundTaskResult> = {}): BackgroundTaskResult {
   return {
     taskId: 'task-1',
+    providerName: 'claude-code',
     status: 'completed',
     output: 'Done!',
     error: null,
@@ -211,6 +213,73 @@ describe('BackgroundAgentHandler', () => {
 
     expect(result.status).toBe('success');
     expect(backgroundAgentManager.spawn.mock.calls[0][0].threadContext).toBeUndefined();
+  });
+
+  it('passes an explicit provider override through to the background agent manager', async () => {
+    const { handler, backgroundAgentManager } = createHandler();
+
+    const result = await handler.execute(
+      {
+        action: 'spawn',
+        prompt: 'Refactor the auth module',
+        provider: 'gemini-cli',
+      },
+      {
+        runId: 'run-1',
+        threadId: 'thread-1',
+        personaId: 'persona-1',
+        requestId: 'req-1',
+      },
+    );
+
+    expect(result.status).toBe('success');
+    expect(backgroundAgentManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'gemini-cli',
+      }),
+    );
+  });
+
+  it('falls back to the persona provider when no explicit provider is supplied', async () => {
+    const { backgroundAgentManager, deps } = createHandler({
+      personaLoader: {
+        getByName: vi.fn().mockReturnValue(
+          ok({
+            config: {
+              skills: ['search-skill'],
+              provider: 'gemini-cli',
+            },
+            systemPromptContent: 'Base system prompt.',
+            personalityContent: 'Friendly personality.',
+            resolvedCapabilities: { allow: ['subagent.background'], requireApproval: [] },
+          }),
+        ),
+      } as any,
+    });
+    const handler = new BackgroundAgentHandler({
+      ...deps,
+      backgroundAgentManager: backgroundAgentManager as any,
+    } as any);
+
+    const result = await handler.execute(
+      {
+        action: 'spawn',
+        prompt: 'Refactor the auth module',
+      },
+      {
+        runId: 'run-1',
+        threadId: 'thread-1',
+        personaId: 'persona-1',
+        requestId: 'req-1',
+      },
+    );
+
+    expect(result.status).toBe('success');
+    expect(backgroundAgentManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'gemini-cli',
+      }),
+    );
   });
 
   it('returns current-thread history when status is called without taskId', async () => {

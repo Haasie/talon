@@ -8,6 +8,7 @@ function createTestDb(): Database.Database {
     CREATE TABLE background_tasks (
       id              TEXT PRIMARY KEY,
       persona_id      TEXT NOT NULL,
+      provider_name   TEXT NOT NULL,
       thread_id       TEXT NOT NULL,
       channel_id      TEXT NOT NULL,
       prompt          TEXT NOT NULL,
@@ -41,6 +42,7 @@ describe('BackgroundTaskRepository', () => {
   const baseInput = {
     id: 'task-1',
     personaId: 'persona-1',
+    providerName: 'claude-code',
     threadId: 'thread-1',
     channelId: 'channel-1',
     prompt: 'Refactor the auth module',
@@ -59,6 +61,7 @@ describe('BackgroundTaskRepository', () => {
     const task = result._unsafeUnwrap();
     expect(task.id).toBe('task-1');
     expect(task.status).toBe('running');
+    expect(task.providerName).toBe('claude-code');
     expect(task.createdAt).toBeGreaterThan(0);
     expect(task.startedAt).toBeGreaterThan(0);
     expect(task.completedAt).toBeNull();

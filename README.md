@@ -188,12 +188,14 @@ sequenceDiagram
 
 ---
 
-## Quick Start
+## Quick start
+
+For the full deployment walkthrough, see the [setup guide](docs/setup-guide.md).
 
 ### Prerequisites
 
 - **Node.js 22+**
-- **Claude Max subscription** or **Anthropic API key**
+- **Claude Code** and/or **Gemini CLI** installed and authenticated
 - **SQLite** (ships with better-sqlite3, no separate install)
 
 ### Install

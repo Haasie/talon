@@ -191,6 +191,7 @@ describe('PersonaConfigSchema', () => {
     const result = PersonaConfigSchema.safeParse({
       name: 'researcher',
       model: 'claude-opus-4-6',
+      provider: 'gemini-cli',
       systemPromptFile: '/prompts/researcher.md',
       skills: ['web-search', 'code-runner'],
       capabilities: { allow: ['read_file'], requireApproval: [] },
@@ -200,6 +201,7 @@ describe('PersonaConfigSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.name).toBe('researcher');
+      expect(result.data.provider).toBe('gemini-cli');
       expect(result.data.maxConcurrent).toBe(2);
       expect(result.data.mounts).toHaveLength(1);
     }

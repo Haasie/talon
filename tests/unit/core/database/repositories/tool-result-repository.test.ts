@@ -55,6 +55,7 @@ describe('ToolResultRepository', () => {
       id: runId,
       thread_id: threadId,
       persona_id: personaId,
+      provider_name: 'claude-code',
       sandbox_id: null,
       session_id: null,
       status: 'running',

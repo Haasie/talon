@@ -71,4 +71,23 @@ describe('BackgroundAgentProcess', () => {
     expect(processWrapper.start().isErr()).toBe(true);
     processWrapper.kill();
   });
+
+  it('passes provider-specific env overrides to the spawned process', async () => {
+    const processWrapper = new BackgroundAgentProcess({
+      command: 'bash',
+      args: ['-lc', 'printf "%s" "$TEST_PROVIDER_ENV"'],
+      cwd: '/tmp',
+      stdin: '',
+      timeoutMs: 5_000,
+      env: {
+        TEST_PROVIDER_ENV: 'gemini-env-ok',
+      },
+    });
+
+    const completion = processWrapper.start()._unsafeUnwrap().completion;
+    const result = await completion;
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().stdout).toBe('gemini-env-ok');
+  });
 });

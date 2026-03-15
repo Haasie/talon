@@ -8,6 +8,7 @@ export type BackgroundTaskStatus =
 export interface BackgroundTask {
   id: string;
   personaId: string;
+  providerName: string;
   threadId: string;
   channelId: string;
   prompt: string;
@@ -24,6 +25,7 @@ export interface BackgroundTask {
 
 export interface BackgroundTaskResult {
   taskId: string;
+  providerName: string;
   status: BackgroundTaskStatus;
   output: string | null;
   error: string | null;

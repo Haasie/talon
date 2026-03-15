@@ -81,13 +81,15 @@ export class ContextRoller {
     threadId: string,
     personaId: string,
     contextUsage: ContextUsage,
+    overrideThreshold?: number,
   ): Promise<void> {
-    if (contextUsage.ratio < this.deps.thresholdRatio) {
+    const threshold = overrideThreshold ?? this.deps.thresholdRatio;
+    if (contextUsage.ratio < threshold) {
       return;
     }
 
     this.deps.logger.info(
-      { threadId, contextUsage, thresholdRatio: this.deps.thresholdRatio },
+      { threadId, contextUsage, thresholdRatio: threshold },
       'context-roller: threshold exceeded, rotating session based on provider usage',
     );
 

@@ -51,6 +51,7 @@ import { SubAgentLoader } from '../subagents/subagent-loader.js';
 import { SubAgentRunner } from '../subagents/subagent-runner.js';
 import { ModelResolver } from '../subagents/model-resolver.js';
 import { ClaudeCodeProvider } from '../providers/claude-code-provider.js';
+import { GeminiCliProvider } from '../providers/gemini-cli-provider.js';
 import { ProviderRegistry, type ProviderFactoryMap } from '../providers/provider-registry.js';
 import { recoverFromCrash } from './lifecycle.js';
 import { ContextRoller } from './context-roller.js';
@@ -251,6 +252,7 @@ export async function bootstrap(
 
   const providerFactories: ProviderFactoryMap = {
     'claude-code': (providerConfig) => new ClaudeCodeProvider(providerConfig),
+    'gemini-cli': (providerConfig) => new GeminiCliProvider(providerConfig),
   };
   const providerRegistry = new ProviderRegistry(config.agentRunner.providers, providerFactories);
   const backgroundProviderRegistry = new ProviderRegistry(

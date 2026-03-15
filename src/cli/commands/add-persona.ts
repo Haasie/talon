@@ -110,13 +110,14 @@ export async function addPersona(options: AddPersonaOptions): Promise<AddPersona
       throw new Error(`Error writing system prompt file "${systemPromptFile}": ${String(cause)}`);
     }
 
-    // Scaffold personality folder with example file.
+    // Scaffold personality folder with example file and default task prompts.
     const personalityDir = path.join(personaDir, 'personality');
     const promptsDir = path.join(personaDir, 'prompts');
     try {
       await fs.mkdir(personalityDir, { recursive: true });
       await fs.mkdir(promptsDir, { recursive: true });
       await fs.writeFile(path.join(personalityDir, '01-tone.md'), buildExamplePersonalityFile(), 'utf-8');
+      await fs.writeFile(path.join(promptsDir, 'memory-grooming.md'), buildMemoryGroomingPrompt(), 'utf-8');
     } catch (cause) {
       throw new Error(`Error scaffolding persona folders (personality/prompts): ${String(cause)}`);
     }
@@ -186,6 +187,40 @@ function buildExamplePersonalityFile(): string {
     '- Be concise and direct.',
     '- Use a professional but approachable tone.',
     '- Avoid jargon unless the user uses it first.',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Returns a default memory grooming task prompt.
+ * This prompt should be scheduled every 2-3 days to keep memory healthy.
+ */
+function buildMemoryGroomingPrompt(): string {
+  return [
+    '# Memory grooming',
+    '',
+    'Review and consolidate stored memories. Keep what\'s valuable, prune what\'s stale, merge what\'s scattered.',
+    '',
+    '## Steps',
+    '',
+    '1. **List all memory keys** using `memory_access` with `operation: list`.',
+    '',
+    '2. **Read through entries** and check each namespace for:',
+    '   - Stale entries (completed projects, expired deadlines, outdated preferences)',
+    '   - Duplicates (same fact stored under different keys)',
+    '   - Scattered entries that should be consolidated',
+    '',
+    '3. **Consolidate** related entries into cleaner summaries. Preserve the timeline but reduce noise.',
+    '',
+    '4. **Prune** entries that are no longer relevant. If unsure, keep it.',
+    '',
+    '5. **Report** a brief summary of what was cleaned up.',
+    '',
+    '## Guidelines',
+    '',
+    '- Do not consolidate too aggressively. Keep enough detail to be useful.',
+    '- Do not delete entries you\'re unsure about.',
+    '- Preserve emotional context and open questions. Those are high-value.',
     '',
   ].join('\n');
 }
