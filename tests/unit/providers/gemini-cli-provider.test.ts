@@ -116,12 +116,16 @@ describe('GeminiCliProvider', () => {
       stdout: JSON.stringify({
         response: 'Finished successfully.',
         stats: {
-          inputTokens: 120,
-          outputTokens: 30,
-          perModel: {
+          models: {
             'gemini-2.5-pro': {
-              inputTokens: 120,
-              outputTokens: 30,
+              tokens: {
+                input: 120,
+                candidates: 30,
+                total: 150,
+                cached: 0,
+                thoughts: 0,
+                tool: 0,
+              },
             },
           },
         },

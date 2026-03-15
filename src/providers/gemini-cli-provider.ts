@@ -16,15 +16,22 @@ import type {
   ProviderSpawnInput,
 } from './provider-types.js';
 
-interface GeminiStats {
-  inputTokens?: number;
-  outputTokens?: number;
-  perModel?: Record<string, GeminiUsageShape> | GeminiUsageShape[];
+interface GeminiTokens {
+  input?: number;
+  prompt?: number;
+  candidates?: number;
+  total?: number;
+  cached?: number;
+  thoughts?: number;
+  tool?: number;
 }
 
-interface GeminiUsageShape {
-  inputTokens?: number;
-  outputTokens?: number;
+interface GeminiModelStats {
+  tokens?: GeminiTokens;
+}
+
+interface GeminiStats {
+  models?: Record<string, GeminiModelStats>;
 }
 
 const GEMINI_JSON_UPGRADE_MESSAGE =
@@ -261,54 +268,27 @@ export class GeminiCliProvider implements AgentProvider {
   }
 
   private extractUsage(stats: GeminiStats | undefined): AgentUsage | undefined {
-    if (!stats) {
+    if (!stats?.models) {
       return undefined;
     }
 
-    const directInput = typeof stats.inputTokens === 'number' ? stats.inputTokens : undefined;
-    const directOutput = typeof stats.outputTokens === 'number' ? stats.outputTokens : undefined;
-    const perModel = stats.perModel;
+    // Aggregate tokens across all models in the response.
+    // Gemini shape: stats.models.<modelName>.tokens.{input, candidates, ...}
+    const totals = Object.values(stats.models).reduce(
+      (acc, modelStats) => {
+        const tokens = modelStats?.tokens;
+        if (!tokens) return acc;
+        acc.input += typeof tokens.input === 'number' ? tokens.input : 0;
+        acc.output += typeof tokens.candidates === 'number' ? tokens.candidates : 0;
+        return acc;
+      },
+      { input: 0, output: 0 },
+    );
 
-    if (perModel && !Array.isArray(perModel)) {
-      const totals = Object.values(perModel).reduce(
-        (acc, entry) => {
-          acc.input += typeof entry?.inputTokens === 'number' ? entry.inputTokens : 0;
-          acc.output += typeof entry?.outputTokens === 'number' ? entry.outputTokens : 0;
-          return acc;
-        },
-        { input: 0, output: 0 },
-      );
-
-      if (totals.input > 0 || totals.output > 0) {
-        return {
-          inputTokens: totals.input,
-          outputTokens: totals.output,
-        };
-      }
-    }
-
-    if (Array.isArray(perModel)) {
-      const totals = perModel.reduce(
-        (acc, entry) => {
-          acc.input += typeof entry?.inputTokens === 'number' ? entry.inputTokens : 0;
-          acc.output += typeof entry?.outputTokens === 'number' ? entry.outputTokens : 0;
-          return acc;
-        },
-        { input: 0, output: 0 },
-      );
-
-      if (totals.input > 0 || totals.output > 0) {
-        return {
-          inputTokens: totals.input,
-          outputTokens: totals.output,
-        };
-      }
-    }
-
-    if (directInput !== undefined || directOutput !== undefined) {
+    if (totals.input > 0 || totals.output > 0) {
       return {
-        inputTokens: directInput ?? 0,
-        outputTokens: directOutput ?? 0,
+        inputTokens: totals.input,
+        outputTokens: totals.output,
       };
     }
 
