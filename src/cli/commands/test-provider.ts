@@ -253,8 +253,14 @@ export async function testProvider(options: TestProviderOptions): Promise<TestPr
       result.jsonValid = true;
       result.inputTokens = parsed.inputTokens;
       result.outputTokens = parsed.outputTokens;
+    } else if (isGemini) {
+      // Gemini requires structured JSON output. Plain text means the CLI
+      // version is incompatible or misconfigured.
+      result.response = testOutput.trim().split('\n')[0].trim() || null;
+      result.jsonValid = false;
+      result.error = 'Gemini CLI returned non-JSON output despite --output-format json. Upgrade to a compatible version.';
     } else {
-      // Non-JSON output is still a valid response if we got something back.
+      // Claude plain-text fallback is acceptable for the test.
       result.response = testOutput.trim().split('\n')[0].trim() || null;
       result.jsonValid = false;
     }

@@ -87,16 +87,28 @@ export class BackgroundAgentManager {
     const requestedProvider = typeof input.provider === 'string' && input.provider.trim().length > 0
       ? input.provider.trim()
       : undefined;
-    // Build preferred order: explicit request first, then config default.
-    // If the requested provider is unavailable, fall back to the default
-    // rather than failing hard (e.g. persona specifies a disabled provider).
-    const preferredOrder = [requestedProvider, this.deps.defaultProvider]
-      .filter((name): name is string => typeof name === 'string' && name.length > 0);
-    const providerEntry = this.deps.providerRegistry.getDefault(preferredOrder);
+
+    // Explicit provider requests (from tool args) must be honored strictly.
+    // If the requested provider is unavailable, fail with a clear error rather
+    // than silently running on the wrong backend.
+    let providerEntry;
+    if (requestedProvider) {
+      providerEntry = this.deps.providerRegistry.get(requestedProvider);
+      if (!providerEntry) {
+        const enabled = this.deps.providerRegistry.listEnabled().join(', ') || 'none';
+        return err(
+          new BackgroundAgentError(
+            `Requested provider "${requestedProvider}" is not available. Enabled providers: ${enabled}.`,
+          ),
+        );
+      }
+    } else {
+      providerEntry = this.deps.providerRegistry.getDefault([this.deps.defaultProvider]);
+    }
     if (!providerEntry) {
       return err(
         new BackgroundAgentError(
-          `No enabled background agent provider found (preferred: ${preferredOrder.join(', ')})`,
+          `No enabled background agent provider found (default: ${this.deps.defaultProvider})`,
         ),
       );
     }

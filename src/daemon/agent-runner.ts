@@ -380,6 +380,10 @@ export class AgentRunner {
           outputText = result.output;
           resultSessionId = result.sessionId;
           usage = result.usage;
+
+          if (result.isError) {
+            throw new Error(`CLI provider returned error: ${result.output || 'unknown error'}`);
+          }
         })();
 
         let timeoutId: ReturnType<typeof setTimeout>;
