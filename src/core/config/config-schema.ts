@@ -147,7 +147,7 @@ export const ContextConfigSchema = z.object({
 export const BackgroundAgentConfigSchema = z.object({
   enabled: z.boolean().default(true),
   maxConcurrent: z.number().int().min(1).max(10).default(3),
-  defaultTimeoutMinutes: z.number().int().min(1).max(480).default(30),
+  defaultTimeoutMinutes: z.number().int().min(15).max(480).default(30),
   claudePath: z.string().default('claude'),
 });
 

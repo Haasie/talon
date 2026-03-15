@@ -83,7 +83,15 @@ export class BackgroundAgentManager {
     }
 
     const taskId = randomUUID();
-    const timeoutMinutes = input.timeoutMinutes ?? this.deps.defaultTimeoutMinutes;
+    const MIN_TIMEOUT_MINUTES = 15;
+    const requested = input.timeoutMinutes ?? this.deps.defaultTimeoutMinutes;
+    const timeoutMinutes = Math.max(MIN_TIMEOUT_MINUTES, requested);
+    if (requested < MIN_TIMEOUT_MINUTES) {
+      this.deps.logger.warn(
+        { taskId, requested, clamped: timeoutMinutes },
+        'background-agent: timeout clamped to minimum',
+      );
+    }
     const systemPrompt = this.configBuilder.buildSystemPrompt({
       personaPrompt: input.personaPrompt,
       taskPrompt: input.prompt,
@@ -354,10 +362,30 @@ export class BackgroundAgentManager {
       `Duration: ${durationSeconds}s`,
     ].join('\n');
 
-    this.deps.queueManager.enqueue(task.threadId, 'message', {
+    const notifyResult = this.deps.queueManager.enqueue(task.threadId, 'collaboration', {
+      personaId: task.personaId,
+      kind: 'background_task_notification',
+      taskId: task.id,
+      status: task.status,
+      content,
+    });
+    if (notifyResult.isErr()) {
+      this.deps.logger.error(
+        { taskId: task.id, err: notifyResult.error },
+        'background-agent: failed to enqueue completion notification',
+      );
+    }
+
+    const messageResult = this.deps.queueManager.enqueue(task.threadId, 'message', {
       personaId: task.personaId,
       content,
     });
+    if (messageResult.isErr()) {
+      this.deps.logger.error(
+        { taskId: task.id, err: messageResult.error },
+        'background-agent: failed to enqueue completion message',
+      );
+    }
   }
 
   private cleanupTask(taskId: string): void {
