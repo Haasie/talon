@@ -209,7 +209,7 @@ describe('BackgroundAgentManager', () => {
     expect(cleanup).toHaveBeenCalled();
   });
 
-  it('marks the task completed and enqueues a notification when the process resolves', async () => {
+  it('marks the task completed and enqueues both direct and agent notifications when the process resolves', async () => {
     const manager = createManager();
     const taskId = manager.spawn(spawnInput)._unsafeUnwrap();
 
@@ -227,7 +227,20 @@ describe('BackgroundAgentManager', () => {
     const task = repository.findById(taskId)._unsafeUnwrap();
     expect(task?.status).toBe('completed');
     expect(task?.output).toBe('Done!');
-    expect((queueManager.enqueue as any)).toHaveBeenCalledWith(
+    expect((queueManager.enqueue as any)).toHaveBeenNthCalledWith(
+      1,
+      'thread-1',
+      'collaboration',
+      expect.objectContaining({
+        personaId: 'persona-1',
+        kind: 'background_task_notification',
+        taskId,
+        status: 'completed',
+        content: expect.stringContaining('Background Task Complete'),
+      }),
+    );
+    expect((queueManager.enqueue as any)).toHaveBeenNthCalledWith(
+      2,
       'thread-1',
       'message',
       expect.objectContaining({

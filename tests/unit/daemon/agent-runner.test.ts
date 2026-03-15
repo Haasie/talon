@@ -187,6 +187,7 @@ describe('AgentRunner', () => {
     // Re-apply default mocks cleared by vi.clearAllMocks()
     ctx = makeMockContext();
     runner = new AgentRunner(ctx);
+    mockQuery.mockReset();
     mockQuery.mockReturnValue(makeAgentStream());
   });
 
@@ -319,6 +320,43 @@ describe('AgentRunner', () => {
     });
   });
 
+  describe('background task notifications', () => {
+    it('delivers host-generated background task notifications without invoking Claude', async () => {
+      const item = makeQueueItem({
+        type: 'collaboration',
+        payload: {
+          personaId: 'persona-001',
+          kind: 'background_task_notification',
+          taskId: 'task-123',
+          status: 'completed',
+          content: '[Background Task Complete] Task task-123: "Refactor auth"',
+        },
+      });
+      const connector = ctx.channelRegistry.get('test-channel')!;
+
+      const result = await runner.run(item);
+
+      expect(result.isOk()).toBe(true);
+      expect(mockQuery).not.toHaveBeenCalled();
+      expect(connector.send).toHaveBeenCalledWith('ext-001', {
+        body: '[Background Task Complete] Task task-123: "Refactor auth"',
+      });
+      expect(ctx.repos.message.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          thread_id: 'thread-001',
+          direction: 'outbound',
+          content: JSON.stringify({
+            body: '[Background Task Complete] Task task-123: "Refactor auth"',
+          }),
+          idempotency_key: 'background-task:task-123:completed',
+          run_id: null,
+        }),
+      );
+      expect(ctx.repos.run.insert).not.toHaveBeenCalled();
+      expect(ctx.repos.run.updateStatus).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Session restore from DB (BUG-008)
   // -------------------------------------------------------------------------
@@ -404,6 +442,30 @@ describe('AgentRunner', () => {
   // -------------------------------------------------------------------------
 
   describe('agent error handling', () => {
+    it('retries once without resume when a resumed session fails before any events', async () => {
+      vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue('stale-session');
+      mockQuery
+        .mockImplementationOnce(() => {
+          throw new Error('Session not found');
+        })
+        .mockReturnValueOnce(makeAgentStream());
+      const item = makeQueueItem();
+
+      const result = await runner.run(item);
+
+      expect(result.isOk()).toBe(true);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      const firstCall = mockQuery.mock.calls[0]![0] as { options: { resume?: string } };
+      const secondCall = mockQuery.mock.calls[1]![0] as { options: { resume?: string } };
+      expect(firstCall.options.resume).toBe('stale-session');
+      expect(secondCall.options.resume).toBeUndefined();
+      expect(ctx.sessionTracker.rotateSession).toHaveBeenCalledWith('thread-001');
+      expect(ctx.sessionTracker.setSessionId).toHaveBeenCalledWith(
+        'thread-001',
+        'session-abc-123',
+      );
+    });
+
     it('updates run to failed on agent error and clears typing interval', async () => {
       mockQuery.mockImplementation(() => {
         throw new Error('Agent SDK crash');

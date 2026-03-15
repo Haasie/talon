@@ -354,6 +354,14 @@ export class BackgroundAgentManager {
       `Duration: ${durationSeconds}s`,
     ].join('\n');
 
+    this.deps.queueManager.enqueue(task.threadId, 'collaboration', {
+      personaId: task.personaId,
+      kind: 'background_task_notification',
+      taskId: task.id,
+      status: task.status,
+      content,
+    });
+
     this.deps.queueManager.enqueue(task.threadId, 'message', {
       personaId: task.personaId,
       content,
