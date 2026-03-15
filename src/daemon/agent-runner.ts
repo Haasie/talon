@@ -261,7 +261,7 @@ export class AgentRunner {
         return previousContext;
       };
 
-      if (strategy.type === 'cli' && connector && externalId) {
+      if (strategy.type === 'cli' && connector && externalId && item.payload.type !== 'schedule') {
         const waitingResult = await connector.send(externalId, {
           body: 'Thinking...',
         });
@@ -483,7 +483,12 @@ export class AgentRunner {
       const contextUsage = providerEntry.provider.estimateContextUsage(usage);
       if (this.ctx.contextRoller && contextUsage.rawMetric > 0) {
         try {
-          await this.ctx.contextRoller.checkAndRotate(item.threadId, personaId, contextUsage);
+          await this.ctx.contextRoller.checkAndRotate(
+            item.threadId,
+            personaId,
+            contextUsage,
+            providerEntry.config.rotationThreshold,
+          );
         } catch (e: unknown) {
           this.ctx.logger.error(
             { threadId: item.threadId, err: e },

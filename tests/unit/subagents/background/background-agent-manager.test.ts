@@ -140,8 +140,14 @@ describe('BackgroundAgentManager', () => {
       defaultTimeoutMinutes: 30,
       defaultProvider: 'claude-code',
       providerRegistry: {
-        getDefault: vi.fn().mockReturnValue(providerEntry),
-        listEnabled: vi.fn().mockReturnValue(['claude-code']),
+        getDefault: vi.fn().mockImplementation((preferred: string[]) => {
+          for (const name of preferred) {
+            if (name === 'gemini-cli') return geminiProviderEntry;
+            if (name === 'claude-code') return providerEntry;
+          }
+          return providerEntry;
+        }),
+        listEnabled: vi.fn().mockReturnValue(['claude-code', 'gemini-cli']),
         get: vi.fn((name: string) => (name === 'gemini-cli' ? geminiProviderEntry : providerEntry)),
       } as any,
       logger: makeLogger(),

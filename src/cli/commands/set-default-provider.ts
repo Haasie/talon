@@ -42,6 +42,11 @@ export async function setDefaultProvider(options: SetDefaultProviderOptions): Pr
     throw new Error('Provider name must not be empty.');
   }
 
+  const validContexts: SetDefaultProviderContext[] = ['agent-runner', 'background'];
+  if (!validContexts.includes(options.context)) {
+    throw new Error(`Invalid context "${options.context}". Must be one of: ${validContexts.join(', ')}.`);
+  }
+
   const doc = await readConfig(configPath);
 
   const sectionKey = options.context === 'agent-runner' ? 'agentRunner' : 'backgroundAgent';

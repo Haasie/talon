@@ -373,6 +373,7 @@ describe('AgentRunner', () => {
           rawMetric: 80_000,
           rawMetricName: 'cache_read_input_tokens',
         },
+        0.4,
       );
     });
 
@@ -491,6 +492,7 @@ describe('AgentRunner', () => {
           rawMetric: 500_000,
           rawMetricName: 'input_tokens',
         },
+        0.8,
       );
     });
   });

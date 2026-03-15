@@ -191,7 +191,7 @@ npx talonctl test-provider --name gemini-cli
 If a test fails, troubleshoot:
 - Binary not found → check the command path, `which claude` or `which gemini`
 - Auth failure → Claude: `claude auth login`. Gemini: run `gemini` interactively once for OAuth.
-- JSON parse failure → Gemini CLI version too old, upgrade with `npm update -g @anthropic-ai/gemini-cli`
+- JSON parse failure → Gemini CLI version too old, see https://github.com/google-gemini/gemini-cli for upgrade instructions
 
 ### Step 4: Channel configuration
 

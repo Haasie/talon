@@ -54,6 +54,12 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
   const ctx = options.context ?? 'both';
 
+  // Validate context.
+  const validContexts: ProviderContext[] = ['agent-runner', 'background', 'both'];
+  if (!validContexts.includes(ctx)) {
+    throw new Error(`Invalid context "${ctx}". Must be one of: ${validContexts.join(', ')}.`);
+  }
+
   // Validate name.
   const nameError = validateName(options.name, 'Provider');
   if (nameError) {
@@ -65,11 +71,16 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
     throw new Error('Provider command must not be empty.');
   }
 
-  // Validate rotationThreshold range.
-  if (options.rotationThreshold !== undefined) {
-    if (options.rotationThreshold < 0 || options.rotationThreshold > 1) {
-      throw new Error('rotationThreshold must be between 0 and 1.');
-    }
+  // Validate contextWindowTokens.
+  const contextWindowTokens = options.contextWindowTokens ?? 200000;
+  if (!Number.isFinite(contextWindowTokens) || contextWindowTokens < 1000) {
+    throw new Error('contextWindowTokens must be a finite number >= 1000.');
+  }
+
+  // Validate rotationThreshold.
+  const rotationThreshold = options.rotationThreshold ?? 0.4;
+  if (!Number.isFinite(rotationThreshold) || rotationThreshold < 0 || rotationThreshold > 1) {
+    throw new Error('rotationThreshold must be a finite number between 0 and 1.');
   }
 
   // Read existing config.
@@ -79,8 +90,8 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
   const entry: ProviderEntry = {
     enabled: options.enabled ?? false,
     command: options.command.trim(),
-    contextWindowTokens: options.contextWindowTokens ?? 200000,
-    rotationThreshold: options.rotationThreshold ?? 0.4,
+    contextWindowTokens,
+    rotationThreshold,
   };
 
   if (options.defaultModel) {
