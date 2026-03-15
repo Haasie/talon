@@ -2,11 +2,11 @@ import type { AgentProvider } from './provider.js';
 import type { ProviderConfig } from '../core/config/config-types.js';
 import type { ProviderName } from './provider-types.js';
 
-interface ProviderFactoryMap {
+export interface ProviderFactoryMap {
   [name: string]: (config: ProviderConfig) => AgentProvider;
 }
 
-interface ProviderEntry {
+export interface ProviderEntry {
   provider: AgentProvider;
   config: ProviderConfig;
 }
