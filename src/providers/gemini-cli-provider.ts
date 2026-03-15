@@ -160,7 +160,7 @@ export class GeminiCliProvider implements AgentProvider {
       mkdirSync(tempDir, { recursive: true, mode: 0o700 });
 
       const cliHomeDir = join(tempDir, 'cli-home');
-      mkdirSync(cliHomeDir, { recursive: true, mode: 0o700 });
+      mkdirSync(join(cliHomeDir, '.gemini'), { recursive: true, mode: 0o700 });
 
       const settingsPath = join(tempDir, 'settings.json');
       const systemPromptPath = join(tempDir, 'system.md');
