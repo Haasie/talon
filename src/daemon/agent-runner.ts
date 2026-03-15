@@ -295,6 +295,8 @@ export class AgentRunner {
             : {}),
         };
 
+        let activeIterator: AsyncIterator<unknown> | undefined;
+
         const queryPromise = (async (): Promise<void> => {
           if (strategy.type === 'sdk') {
             let stream: ReturnType<typeof strategy.run>;
@@ -305,7 +307,14 @@ export class AgentRunner {
               throw new AgentQueryAttemptError(message, resumeSessionId, false);
             }
 
-            for await (const event of stream) {
+            const iterator = stream[Symbol.asyncIterator]();
+            activeIterator = iterator;
+
+            // Manually drive the iterator so the catch block can abort this exact instance
+            for (;;) {
+              const { value, done } = await iterator.next();
+              if (done) break;
+              const event = value;
               sawEvents = true;
               if (event.type === 'text') {
                 outputText += event.content;
@@ -359,6 +368,10 @@ export class AgentRunner {
         try {
           await Promise.race([queryPromise, timeoutPromise]);
         } catch (cause) {
+          // Abort the in-flight provider stream to prevent leaked work
+          if (activeIterator?.return) {
+            activeIterator.return(undefined).catch(() => {});
+          }
           const message = cause instanceof Error ? cause.message : String(cause);
           throw new AgentQueryAttemptError(message, resumeSessionId, sawEvents);
         } finally {

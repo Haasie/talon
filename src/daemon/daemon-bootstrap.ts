@@ -296,23 +296,21 @@ export async function bootstrap(
           input,
         );
 
+      const thresholdRatio =
+        providerRegistry.getDefault([config.agentRunner.defaultProvider, 'claude-code'])?.config.rotationThreshold
+        ?? 0.4;
+
       contextRoller = new ContextRoller({
         messageRepo: repos.message,
         memoryRepo: repos.memory,
         sessionTracker,
         summarizerRun: boundSummarizer,
         logger,
-        thresholdRatio:
-          providerRegistry.getDefault([config.agentRunner.defaultProvider, 'claude-code'])?.config.rotationThreshold
-          ?? 0.4,
+        thresholdRatio,
       });
 
       logger.info(
-        {
-          thresholdRatio:
-            providerRegistry.getDefault([config.agentRunner.defaultProvider, 'claude-code'])?.config.rotationThreshold
-            ?? 0.4,
-        },
+        { thresholdRatio },
         'bootstrap: context roller initialized',
       );
     } else {
