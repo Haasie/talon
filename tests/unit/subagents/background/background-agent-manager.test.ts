@@ -13,6 +13,7 @@ function createTestDb(): Database.Database {
     CREATE TABLE background_tasks (
       id              TEXT PRIMARY KEY,
       persona_id      TEXT NOT NULL,
+      provider_name   TEXT NOT NULL,
       thread_id       TEXT NOT NULL,
       channel_id      TEXT NOT NULL,
       prompt          TEXT NOT NULL,
@@ -98,8 +99,15 @@ describe('BackgroundAgentManager', () => {
   });
 
   function createManager() {
-    const provider = {
+    const claudeProvider = {
       name: 'claude-code',
+      createExecutionStrategy: vi.fn(),
+      prepareBackgroundInvocation,
+      parseBackgroundResult,
+      estimateContextUsage: vi.fn(),
+    };
+    const geminiProvider = {
+      name: 'gemini-cli',
       createExecutionStrategy: vi.fn(),
       prepareBackgroundInvocation,
       parseBackgroundResult,
@@ -107,12 +115,21 @@ describe('BackgroundAgentManager', () => {
     };
 
     const providerEntry = {
-      provider,
+      provider: claudeProvider,
       config: {
         enabled: true,
         command: 'claude',
         contextWindowTokens: 200000,
         rotationThreshold: 0.4,
+      },
+    };
+    const geminiProviderEntry = {
+      provider: geminiProvider,
+      config: {
+        enabled: true,
+        command: 'gemini',
+        contextWindowTokens: 1000000,
+        rotationThreshold: 0.8,
       },
     };
 
@@ -125,7 +142,7 @@ describe('BackgroundAgentManager', () => {
       providerRegistry: {
         getDefault: vi.fn().mockReturnValue(providerEntry),
         listEnabled: vi.fn().mockReturnValue(['claude-code']),
-        get: vi.fn().mockReturnValue(providerEntry),
+        get: vi.fn((name: string) => (name === 'gemini-cli' ? geminiProviderEntry : providerEntry)),
       } as any,
       logger: makeLogger(),
       processFactory,
@@ -143,6 +160,7 @@ describe('BackgroundAgentManager', () => {
     threadId: 'thread-1',
     channelId: 'channel-1',
     channelName: 'telegram-main',
+    provider: undefined,
     workingDirectory: '/workspace/repo',
     timeoutMinutes: 30,
   };
@@ -189,6 +207,7 @@ describe('BackgroundAgentManager', () => {
     repository.create({
       id: 'existing-1',
       personaId: 'persona-1',
+      providerName: 'claude-code',
       threadId: 'thread-1',
       channelId: 'channel-1',
       prompt: 'one',
@@ -202,6 +221,7 @@ describe('BackgroundAgentManager', () => {
     repository.create({
       id: 'existing-2',
       personaId: 'persona-1',
+      providerName: 'claude-code',
       threadId: 'thread-1',
       channelId: 'channel-1',
       prompt: 'two',
@@ -305,6 +325,7 @@ describe('BackgroundAgentManager', () => {
     repository.create({
       id: 'orphan-1',
       personaId: 'persona-1',
+      providerName: 'claude-code',
       threadId: 'thread-1',
       channelId: 'channel-1',
       prompt: 'orphan',
@@ -438,6 +459,7 @@ describe('BackgroundAgentManager', () => {
       repository.create({
         id: `slot-${i}`,
         personaId: 'persona-1',
+        providerName: 'claude-code',
         threadId: 'thread-1',
         channelId: 'channel-1',
         prompt: `task ${i}`,
@@ -459,5 +481,37 @@ describe('BackgroundAgentManager', () => {
     expect(result._unsafeUnwrapErr().message).toContain('2');
     // process.start must never have been called
     expect(processStart).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicit provider override, persists provider_name, and forwards env overrides', () => {
+    prepareBackgroundInvocation.mockReturnValueOnce(ok({
+      command: 'gemini',
+      args: ['--approval-mode', 'yolo', '--output-format', 'json', 'Refactor the auth module'],
+      stdin: '',
+      env: {
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/tmp/talon-bg-test/settings.json',
+      },
+      cwd: '/workspace/repo',
+      timeoutMs: 30 * 60 * 1000,
+      cleanupPaths: ['/tmp/talon-bg-test'],
+    }));
+    const manager = createManager();
+
+    const result = manager.spawn({
+      ...spawnInput,
+      provider: 'gemini-cli',
+    });
+
+    expect(result.isOk()).toBe(true);
+    const task = repository.findById(result._unsafeUnwrap())._unsafeUnwrap();
+    expect(task?.providerName).toBe('gemini-cli');
+    expect(processFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'gemini',
+        env: {
+          GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/tmp/talon-bg-test/settings.json',
+        },
+      }),
+    );
   });
 });

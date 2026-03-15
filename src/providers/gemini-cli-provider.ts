@@ -1,0 +1,381 @@
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { err, ok, type Result } from 'neverthrow';
+import { BackgroundAgentError } from '../core/errors/error-types.js';
+import type { ProviderConfig } from '../core/config/config-types.js';
+import type { AgentProvider, AgentRunInput } from './provider.js';
+import type {
+  AgentUsage,
+  CanonicalMcpServer,
+  ContextUsage,
+  PreparedProviderInvocation,
+  ProviderResult,
+  ProviderSpawnInput,
+} from './provider-types.js';
+
+interface GeminiStats {
+  inputTokens?: number;
+  outputTokens?: number;
+  perModel?: Record<string, GeminiUsageShape> | GeminiUsageShape[];
+}
+
+interface GeminiUsageShape {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+const GEMINI_JSON_UPGRADE_MESSAGE =
+  'Gemini CLI returned non-JSON output despite --output-format json. Upgrade gemini-cli to a compatible version.';
+
+export class GeminiCliProvider implements AgentProvider {
+  readonly name = 'gemini-cli';
+
+  constructor(private readonly config: ProviderConfig) {}
+
+  createExecutionStrategy() {
+    return {
+      type: 'cli' as const,
+      supportsSessionResumption: false as const,
+      run: async (input: AgentRunInput) => {
+        const invocationResult = this.prepareInvocation({
+          prompt: input.prompt,
+          systemPrompt: input.systemPrompt,
+          mcpServers: input.mcpServers,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs,
+          model: input.model,
+        });
+        if (invocationResult.isErr()) {
+          throw invocationResult.error;
+        }
+
+        const invocation = invocationResult.value;
+        try {
+          const raw = await this.executeInvocation(invocation);
+          const parsed = this.parseResult(raw, { failOnSuccessfulNonJson: true });
+          return {
+            output: parsed.output,
+            sessionId: undefined,
+            usage: parsed.usage ?? { inputTokens: 0, outputTokens: 0 },
+            isError: parsed.exitCode !== 0 || parsed.timedOut,
+          };
+        } finally {
+          this.cleanupPaths(invocation.cleanupPaths);
+        }
+      },
+    };
+  }
+
+  prepareBackgroundInvocation(
+    input: ProviderSpawnInput,
+  ): Result<PreparedProviderInvocation, BackgroundAgentError> {
+    return this.prepareInvocation(input);
+  }
+
+  parseBackgroundResult(raw: {
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut: boolean;
+  }): ProviderResult {
+    return this.parseResult(raw, { failOnSuccessfulNonJson: false });
+  }
+
+  estimateContextUsage(usage: AgentUsage): ContextUsage {
+    const inputTokens = usage.inputTokens ?? 0;
+    return {
+      ratio: inputTokens / Math.max(1, this.config.contextWindowTokens),
+      inputTokens,
+      rawMetric: inputTokens,
+      rawMetricName: 'input_tokens',
+    };
+  }
+
+  private parseResult(
+    raw: {
+      stdout: string;
+      stderr: string;
+      exitCode: number | null;
+      timedOut: boolean;
+    },
+    options: { failOnSuccessfulNonJson: boolean },
+  ): ProviderResult {
+    let output = raw.stdout;
+    let usage: AgentUsage | undefined;
+
+    try {
+      const parsed = JSON.parse(raw.stdout) as {
+        response?: string;
+        stats?: GeminiStats;
+      };
+
+      if (typeof parsed.response === 'string' && parsed.response.length > 0) {
+        output = parsed.response;
+      }
+
+      const statsUsage = this.extractUsage(parsed.stats);
+      if (statsUsage) {
+        usage = statsUsage;
+      }
+    } catch (cause) {
+      if (raw.exitCode === 0 && !raw.timedOut) {
+        const parseError = cause instanceof Error ? cause : undefined;
+        if (options.failOnSuccessfulNonJson) {
+          throw new BackgroundAgentError(GEMINI_JSON_UPGRADE_MESSAGE, parseError);
+        }
+
+        return {
+          output,
+          stderr: this.appendStderr(raw.stderr, GEMINI_JSON_UPGRADE_MESSAGE),
+          exitCode: 1,
+          timedOut: raw.timedOut,
+        };
+      }
+    }
+
+    return {
+      output,
+      stderr: raw.stderr,
+      exitCode: raw.exitCode,
+      timedOut: raw.timedOut,
+      usage,
+    };
+  }
+
+  private appendStderr(stderr: string, message: string): string {
+    const trimmed = stderr.trim();
+    return trimmed.length > 0 ? `${trimmed}\n${message}` : message;
+  }
+
+  private prepareInvocation(
+    input: ProviderSpawnInput & { model?: string },
+  ): Result<PreparedProviderInvocation, BackgroundAgentError> {
+    let tempDir: string | undefined;
+
+    try {
+      tempDir = join(tmpdir(), `talon-provider-gemini-cli-${randomUUID()}`);
+      mkdirSync(tempDir, { recursive: true, mode: 0o700 });
+
+      const cliHomeDir = join(tempDir, 'cli-home');
+      mkdirSync(cliHomeDir, { recursive: true, mode: 0o700 });
+
+      const settingsPath = join(tempDir, 'settings.json');
+      const systemPromptPath = join(tempDir, 'system.md');
+
+      writeFileSync(
+        settingsPath,
+        JSON.stringify(
+          {
+            security: {
+              folderTrust: {
+                enabled: false,
+              },
+            },
+            mcpServers: this.toGeminiMcpServers(input.mcpServers),
+          },
+          null,
+          2,
+        ),
+        { encoding: 'utf8', mode: 0o600 },
+      );
+      writeFileSync(systemPromptPath, input.systemPrompt, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+
+      const configuredDefaultModel = this.readDefaultModel();
+      const model = input.model || configuredDefaultModel;
+      const args = ['--approval-mode', 'yolo', '--output-format', 'json'];
+
+      if (model) {
+        args.push('--model', model);
+      }
+
+      args.push(input.prompt);
+
+      return ok({
+        command: this.config.command,
+        args,
+        stdin: '',
+        env: {
+          GEMINI_CLI_SYSTEM_SETTINGS_PATH: settingsPath,
+          GEMINI_SYSTEM_MD: systemPromptPath,
+          GEMINI_CLI_HOME: cliHomeDir,
+        },
+        cwd: input.cwd,
+        timeoutMs: input.timeoutMs,
+        cleanupPaths: [tempDir],
+      });
+    } catch (cause) {
+      if (tempDir) {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+
+      return err(
+        new BackgroundAgentError(
+          `Gemini CLI: failed to prepare background invocation: ${String(cause)}`,
+          cause instanceof Error ? cause : undefined,
+        ),
+      );
+    }
+  }
+
+  private toGeminiMcpServers(
+    mcpServers: Record<string, CanonicalMcpServer>,
+  ): Record<string, unknown> {
+    const nativeServers: Record<string, unknown> = {};
+
+    for (const [name, server] of Object.entries(mcpServers)) {
+      if (server.transport === 'stdio') {
+        nativeServers[name] = {
+          command: server.command,
+          args: server.args,
+          ...(server.env ? { env: server.env } : {}),
+        };
+        continue;
+      }
+
+      if (server.transport === 'http') {
+        nativeServers[name] = {
+          httpUrl: server.url,
+          ...(server.headers ? { headers: server.headers } : {}),
+        };
+        continue;
+      }
+
+      nativeServers[name] = {
+        url: server.url,
+        ...(server.headers ? { headers: server.headers } : {}),
+      };
+    }
+
+    return nativeServers;
+  }
+
+  private readDefaultModel(): string | undefined {
+    const defaultModel = this.config.options?.defaultModel;
+    return typeof defaultModel === 'string' && defaultModel.trim().length > 0
+      ? defaultModel
+      : undefined;
+  }
+
+  private extractUsage(stats: GeminiStats | undefined): AgentUsage | undefined {
+    if (!stats) {
+      return undefined;
+    }
+
+    const directInput = typeof stats.inputTokens === 'number' ? stats.inputTokens : undefined;
+    const directOutput = typeof stats.outputTokens === 'number' ? stats.outputTokens : undefined;
+    const perModel = stats.perModel;
+
+    if (perModel && !Array.isArray(perModel)) {
+      const totals = Object.values(perModel).reduce(
+        (acc, entry) => {
+          acc.input += typeof entry?.inputTokens === 'number' ? entry.inputTokens : 0;
+          acc.output += typeof entry?.outputTokens === 'number' ? entry.outputTokens : 0;
+          return acc;
+        },
+        { input: 0, output: 0 },
+      );
+
+      if (totals.input > 0 || totals.output > 0) {
+        return {
+          inputTokens: totals.input,
+          outputTokens: totals.output,
+        };
+      }
+    }
+
+    if (Array.isArray(perModel)) {
+      const totals = perModel.reduce(
+        (acc, entry) => {
+          acc.input += typeof entry?.inputTokens === 'number' ? entry.inputTokens : 0;
+          acc.output += typeof entry?.outputTokens === 'number' ? entry.outputTokens : 0;
+          return acc;
+        },
+        { input: 0, output: 0 },
+      );
+
+      if (totals.input > 0 || totals.output > 0) {
+        return {
+          inputTokens: totals.input,
+          outputTokens: totals.output,
+        };
+      }
+    }
+
+    if (directInput !== undefined || directOutput !== undefined) {
+      return {
+        inputTokens: directInput ?? 0,
+        outputTokens: directOutput ?? 0,
+      };
+    }
+
+    return undefined;
+  }
+
+  private executeInvocation(invocation: PreparedProviderInvocation): Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut: boolean;
+  }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(invocation.command, invocation.args, {
+        cwd: invocation.cwd,
+        env: {
+          ...process.env,
+          ...(invocation.env ?? {}),
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+      }, invocation.timeoutMs);
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdoutChunks.push(chunk);
+      });
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderrChunks.push(chunk);
+      });
+
+      child.on('error', (cause) => {
+        clearTimeout(timeout);
+        reject(
+          new BackgroundAgentError(
+            `Gemini CLI: failed to run provider process: ${cause.message}`,
+            cause,
+          ),
+        );
+      });
+
+      child.on('close', (exitCode) => {
+        clearTimeout(timeout);
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf8'),
+          exitCode,
+          timedOut,
+        });
+      });
+
+      child.stdin.on('error', () => {});
+      child.stdin.end(invocation.stdin);
+    });
+  }
+
+  private cleanupPaths(paths: string[]): void {
+    for (const path of paths) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  }
+}

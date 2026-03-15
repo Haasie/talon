@@ -11,6 +11,7 @@ import type {
 interface BackgroundTaskRow {
   id: string;
   persona_id: string;
+  provider_name: string;
   thread_id: string;
   channel_id: string;
   prompt: string;
@@ -29,6 +30,7 @@ function rowToTask(row: BackgroundTaskRow): BackgroundTask {
   return {
     id: row.id,
     personaId: row.persona_id,
+    providerName: row.provider_name,
     threadId: row.thread_id,
     channelId: row.channel_id,
     prompt: row.prompt,
@@ -59,9 +61,9 @@ export class BackgroundTaskRepository extends BaseRepository {
 
     this.insertStmt = db.prepare(`
       INSERT INTO background_tasks
-        (id, persona_id, thread_id, channel_id, prompt, working_dir, status, output, error, pid, created_at, started_at, completed_at, timeout_minutes)
+        (id, persona_id, provider_name, thread_id, channel_id, prompt, working_dir, status, output, error, pid, created_at, started_at, completed_at, timeout_minutes)
       VALUES
-        (@id, @persona_id, @thread_id, @channel_id, @prompt, @working_dir, @status, @output, @error, @pid, @created_at, @started_at, @completed_at, @timeout_minutes)
+        (@id, @persona_id, @provider_name, @thread_id, @channel_id, @prompt, @working_dir, @status, @output, @error, @pid, @created_at, @started_at, @completed_at, @timeout_minutes)
     `);
 
     this.findByIdStmt = db.prepare(`SELECT * FROM background_tasks WHERE id = ?`);
@@ -105,6 +107,7 @@ export class BackgroundTaskRepository extends BaseRepository {
       const row: BackgroundTaskRow = {
         id: input.id,
         persona_id: input.personaId,
+        provider_name: input.providerName,
         thread_id: input.threadId,
         channel_id: input.channelId,
         prompt: input.prompt,

@@ -434,6 +434,71 @@ describe('bootstrap', () => {
       ).toHaveBeenCalledOnce();
     });
 
+    it('registers gemini-cli when enabled in provider config', async () => {
+      setupSuccessfulMocks();
+      vi.mocked(loadConfig).mockReturnValue(
+        ok(
+          makeConfig({
+            agentRunner: {
+              defaultProvider: 'gemini-cli',
+              providers: {
+                'claude-code': {
+                  enabled: true,
+                  command: 'claude',
+                  contextWindowTokens: 200000,
+                  rotationThreshold: 0.4,
+                },
+                'gemini-cli': {
+                  enabled: true,
+                  command: 'gemini',
+                  contextWindowTokens: 1000000,
+                  rotationThreshold: 0.8,
+                  options: {
+                    defaultModel: 'gemini-2.5-pro',
+                  },
+                },
+              },
+            },
+            backgroundAgent: {
+              enabled: true,
+              maxConcurrent: 3,
+              defaultTimeoutMinutes: 30,
+              defaultProvider: 'gemini-cli',
+              providers: {
+                'claude-code': {
+                  enabled: true,
+                  command: 'claude',
+                  contextWindowTokens: 200000,
+                  rotationThreshold: 0.4,
+                },
+                'gemini-cli': {
+                  enabled: true,
+                  command: 'gemini',
+                  contextWindowTokens: 1000000,
+                  rotationThreshold: 0.8,
+                  options: {
+                    defaultModel: 'gemini-2.5-pro',
+                  },
+                },
+              },
+            },
+          }) as any,
+        ),
+      );
+
+      const result = await bootstrap('/config.yaml', logger);
+
+      expect(result.isOk()).toBe(true);
+      const ctx = result._unsafeUnwrap();
+      expect(ctx.providerRegistry.get('gemini-cli')?.provider.name).toBe('gemini-cli');
+      expect(ctx.providerRegistry.getDefault(['gemini-cli'])?.provider.name).toBe('gemini-cli');
+      expect(BackgroundAgentManager).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: 'gemini-cli',
+        }),
+      );
+    });
+
     it('calls registerChannels during bootstrap', async () => {
       setupSuccessfulMocks();
 

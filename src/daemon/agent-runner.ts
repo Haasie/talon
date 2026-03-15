@@ -65,19 +65,44 @@ export class AgentRunner {
     }
     const loadedPersona = loadedPersonaResult.value;
 
-    // Resolve session ID: check in-memory tracker first, fall back to DB.
-    // We do NOT seed the tracker here — only after a successful run (line ~335)
+    const affinityProviderResult = this.ctx.repos.run.getLatestProviderName(item.threadId);
+    const affinityProviderName =
+      affinityProviderResult.isOk() && affinityProviderResult.value
+        ? affinityProviderResult.value
+        : null;
+    const personaProviderName =
+      typeof loadedPersona.config.provider === 'string' && loadedPersona.config.provider.length > 0
+        ? loadedPersona.config.provider
+        : null;
+    const configuredDefaultProvider = this.ctx.config.agentRunner?.defaultProvider ?? 'claude-code';
+    const preferredProviderOrder = [
+      affinityProviderName,
+      personaProviderName,
+      configuredDefaultProvider,
+    ].filter((name): name is string => typeof name === 'string' && name.length > 0);
+
+    const providerEntry = this.ctx.providerRegistry.getDefault(preferredProviderOrder);
+    if (!providerEntry) {
+      return err(new Error('No enabled agent runner provider is configured'));
+    }
+
+    const strategy = providerEntry.provider.createExecutionStrategy();
+
+    // Resolve session ID only for SDK providers.
+    // We do NOT seed the tracker here — only after a successful run
     // to avoid stranding a thread on a stale/expired session ID.
-    // Skip DB fallback if the session was explicitly rotated by ContextRoller.
-    let resolvedSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
-    if (!resolvedSessionId && !this.ctx.sessionTracker.wasRotated(item.threadId)) {
-      const dbSessionResult = this.ctx.repos.run.getLatestSessionId(item.threadId);
-      if (dbSessionResult.isOk() && dbSessionResult.value) {
-        resolvedSessionId = dbSessionResult.value;
-        this.ctx.logger.info(
-          { threadId: item.threadId, sessionId: resolvedSessionId },
-          'agent-sdk: restored session from DB after restart',
-        );
+    let resolvedSessionId: string | undefined;
+    if (strategy.type === 'sdk') {
+      resolvedSessionId = this.ctx.sessionTracker.getSessionId(item.threadId);
+      if (!resolvedSessionId && !this.ctx.sessionTracker.wasRotated(item.threadId)) {
+        const dbSessionResult = this.ctx.repos.run.getLatestSessionId(item.threadId);
+        if (dbSessionResult.isOk() && dbSessionResult.value) {
+          resolvedSessionId = dbSessionResult.value;
+          this.ctx.logger.info(
+            { threadId: item.threadId, sessionId: resolvedSessionId },
+            'agent-sdk: restored session from DB after restart',
+          );
+        }
       }
     }
 
@@ -87,6 +112,7 @@ export class AgentRunner {
       id: runId,
       thread_id: item.threadId,
       persona_id: personaId,
+      provider_name: providerEntry.provider.name,
       sandbox_id: null,
       session_id: resolvedSessionId ?? null,
       status: 'running',
@@ -167,16 +193,6 @@ export class AgentRunner {
       const tzAbbr = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(now_).find((p) => p.type === 'timeZoneName')?.value ?? 'UTC';
       const dayName = now_.toLocaleDateString('en', { weekday: 'long' });
       const timeContext = `Current time: ${localISO} (${tzAbbr}, ${dayName})`;
-
-      const providerEntry = this.ctx.providerRegistry.getDefault([
-        this.ctx.config.agentRunner?.defaultProvider ?? 'claude-code',
-        'claude-code',
-      ]);
-      if (!providerEntry) {
-        throw new Error('No enabled agent runner provider is configured');
-      }
-
-      const strategy = providerEntry.provider.createExecutionStrategy();
       const existingSessionId = strategy.type === 'sdk' ? resolvedSessionId : undefined;
 
       const mcpServers: Record<string, CanonicalMcpServer> = { ...personaRuntimeContext.mcpServers };
@@ -244,6 +260,15 @@ export class AgentRunner {
         }
         return previousContext;
       };
+
+      if (strategy.type === 'cli' && connector && externalId) {
+        const waitingResult = await connector.send(externalId, {
+          body: 'Waiting for agent...',
+        });
+        if (waitingResult.isErr()) {
+          this.ctx.logger.debug({ err: waitingResult.error }, 'agent-runner: waiting notification failed');
+        }
+      }
 
       const executeAgentQuery = async (resumeSessionId?: string): Promise<{
         outputText: string;

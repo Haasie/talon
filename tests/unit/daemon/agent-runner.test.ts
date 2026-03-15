@@ -105,6 +105,7 @@ function makeMockContext(): DaemonContext {
         updateSessionId: vi.fn().mockReturnValue(ok({})),
         updateTokens: vi.fn().mockReturnValue(ok({})),
         getLatestSessionId: vi.fn().mockReturnValue(ok(null)),
+        getLatestProviderName: vi.fn().mockReturnValue(ok(null)),
       } as any,
       binding: {} as any,
       memory: {} as any,
@@ -374,6 +375,124 @@ describe('AgentRunner', () => {
         },
       );
     });
+
+    it('runs Gemini through the existing CLI branch, persists provider_name, and sends a waiting message', async () => {
+      const cliRun = vi.fn().mockResolvedValue({
+        output: 'Gemini result',
+        sessionId: undefined,
+        usage: {
+          inputTokens: 500_000,
+          outputTokens: 120,
+        },
+        isError: false,
+      });
+      const connector = ctx.channelRegistry.get('test-channel')!;
+      ctx.contextRoller = {
+        checkAndRotate: vi.fn().mockResolvedValue(undefined),
+      } as any;
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok({
+        config: {
+          model: 'gemini-2.5-pro',
+          provider: 'gemini-cli',
+          skills: [],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a Gemini test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*', 'memory.access', 'schedule.manage'],
+          requireApproval: [],
+        },
+      } as any));
+      ctx.config.agentRunner.defaultProvider = 'gemini-cli';
+      ctx.providerRegistry = {
+        get: vi.fn().mockImplementation((name: string) => (
+          name === 'gemini-cli'
+            ? {
+                provider: {
+                  name: 'gemini-cli',
+                  createExecutionStrategy: () => ({
+                    type: 'cli' as const,
+                    supportsSessionResumption: false as const,
+                    run: cliRun,
+                  }),
+                  prepareBackgroundInvocation: vi.fn(),
+                  parseBackgroundResult: vi.fn(),
+                  estimateContextUsage: vi.fn().mockReturnValue({
+                    ratio: 0.5,
+                    inputTokens: 500_000,
+                    rawMetric: 500_000,
+                    rawMetricName: 'input_tokens',
+                  }),
+                },
+                config: {
+                  enabled: true,
+                  command: 'gemini',
+                  contextWindowTokens: 1_000_000,
+                  rotationThreshold: 0.8,
+                },
+              }
+            : undefined
+        )),
+        getDefault: vi.fn().mockImplementation(() => ({
+          provider: {
+            name: 'gemini-cli',
+            createExecutionStrategy: () => ({
+              type: 'cli' as const,
+              supportsSessionResumption: false as const,
+              run: cliRun,
+            }),
+            prepareBackgroundInvocation: vi.fn(),
+            parseBackgroundResult: vi.fn(),
+            estimateContextUsage: vi.fn().mockReturnValue({
+              ratio: 0.5,
+              inputTokens: 500_000,
+              rawMetric: 500_000,
+              rawMetricName: 'input_tokens',
+            }),
+          },
+          config: {
+            enabled: true,
+            command: 'gemini',
+            contextWindowTokens: 1_000_000,
+            rotationThreshold: 0.8,
+          },
+        })),
+      } as any;
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(cliRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gemini-2.5-pro',
+        }),
+      );
+      expect(ctx.repos.run.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider_name: 'gemini-cli',
+          session_id: null,
+        }),
+      );
+      expect(ctx.sessionTracker.setSessionId).not.toHaveBeenCalled();
+      expect(ctx.repos.run.updateSessionId).not.toHaveBeenCalled();
+      expect(connector.send).toHaveBeenNthCalledWith(1, 'ext-001', {
+        body: 'Waiting for agent...',
+      });
+      expect(connector.send).toHaveBeenNthCalledWith(2, 'ext-001', {
+        body: 'Gemini result',
+      });
+      expect(ctx.repos.message.insert).toHaveBeenCalledTimes(1);
+      expect(ctx.contextRoller.checkAndRotate).toHaveBeenCalledWith(
+        'thread-001',
+        'persona-001',
+        {
+          ratio: 0.5,
+          inputTokens: 500_000,
+          rawMetric: 500_000,
+          rawMetricName: 'input_tokens',
+        },
+      );
+    });
   });
 
   describe('background task notifications', () => {
@@ -490,6 +609,165 @@ describe('AgentRunner', () => {
       expect(result.isOk()).toBe(true);
       const queryCall = mockQuery.mock.calls[0]![0] as { options: { resume?: string } };
       expect(queryCall.options.resume).toBeUndefined();
+    });
+
+    it('prefers latest persisted provider affinity and skips SDK session lookup for CLI providers', async () => {
+      const cliRun = vi.fn().mockResolvedValue({
+        output: 'Gemini affinity result',
+        sessionId: undefined,
+        usage: {
+          inputTokens: 250_000,
+          outputTokens: 90,
+        },
+        isError: false,
+      });
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok({
+        config: {
+          model: 'gemini-2.5-pro',
+          provider: 'claude-code',
+          skills: [],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*', 'memory.access', 'schedule.manage'],
+          requireApproval: [],
+        },
+      } as any));
+      vi.mocked(ctx.repos.run.getLatestProviderName).mockReturnValue(ok('gemini-cli'));
+      const getProvider = vi.fn().mockImplementation((name: string) => {
+          if (name === 'gemini-cli') {
+            return {
+              provider: {
+                name: 'gemini-cli',
+                createExecutionStrategy: () => ({
+                  type: 'cli' as const,
+                  supportsSessionResumption: false as const,
+                  run: cliRun,
+                }),
+                prepareBackgroundInvocation: vi.fn(),
+                parseBackgroundResult: vi.fn(),
+                estimateContextUsage: vi.fn().mockReturnValue({
+                  ratio: 0.25,
+                  inputTokens: 250_000,
+                  rawMetric: 250_000,
+                  rawMetricName: 'input_tokens',
+                }),
+              },
+              config: {
+                enabled: true,
+                command: 'gemini',
+                contextWindowTokens: 1_000_000,
+                rotationThreshold: 0.8,
+              },
+            };
+          }
+          return {
+            provider: {
+              name: 'claude-code',
+              createExecutionStrategy: () => ({
+                type: 'sdk' as const,
+                supportsSessionResumption: true as const,
+                run: () => makeAgentStream(),
+              }),
+              prepareBackgroundInvocation: vi.fn(),
+              parseBackgroundResult: vi.fn(),
+              estimateContextUsage: vi.fn().mockReturnValue({
+                ratio: 0,
+                inputTokens: 0,
+                rawMetric: 0,
+                rawMetricName: 'cache_read_input_tokens',
+              }),
+            },
+            config: {
+              enabled: true,
+              command: 'claude',
+              contextWindowTokens: 200_000,
+              rotationThreshold: 0.4,
+            },
+          };
+        });
+      ctx.providerRegistry = {
+        get: getProvider,
+        getDefault: vi.fn().mockImplementation((preferred: string[]) => {
+          for (const name of preferred) {
+            const entry = getProvider(name);
+            if (entry) return entry;
+          }
+          return undefined;
+        }),
+      } as any;
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(cliRun).toHaveBeenCalledTimes(1);
+      expect(mockQuery).not.toHaveBeenCalled();
+      expect(ctx.repos.run.getLatestSessionId).not.toHaveBeenCalled();
+      expect(ctx.repos.run.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider_name: 'gemini-cli',
+        }),
+      );
+    });
+
+    it('passes only configured provider preferences into registry fallback resolution', async () => {
+      const cliRun = vi.fn().mockResolvedValue({
+        output: 'Gemini default result',
+        sessionId: undefined,
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+        },
+        isError: false,
+      });
+      const getDefault = vi.fn().mockReturnValue({
+        provider: {
+          name: 'gemini-cli',
+          createExecutionStrategy: () => ({
+            type: 'cli' as const,
+            supportsSessionResumption: false as const,
+            run: cliRun,
+          }),
+          prepareBackgroundInvocation: vi.fn(),
+          parseBackgroundResult: vi.fn(),
+          estimateContextUsage: vi.fn().mockReturnValue({
+            ratio: 0.00001,
+            inputTokens: 10,
+            rawMetric: 10,
+            rawMetricName: 'input_tokens',
+          }),
+        },
+        config: {
+          enabled: true,
+          command: 'gemini',
+          contextWindowTokens: 1_000_000,
+          rotationThreshold: 0.8,
+        },
+      });
+
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok({
+        config: {
+          model: 'gemini-2.5-pro',
+          skills: [],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a Gemini test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*', 'memory.access', 'schedule.manage'],
+          requireApproval: [],
+        },
+      } as any));
+      ctx.config.agentRunner.defaultProvider = 'gemini-cli';
+      ctx.providerRegistry = {
+        get: vi.fn().mockReturnValue(undefined),
+        getDefault,
+      } as any;
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(getDefault).toHaveBeenCalledWith(['gemini-cli']);
     });
   });
 
@@ -725,6 +1003,7 @@ describe('AgentRunner', () => {
   describe('provider error paths', () => {
     it('returns error gracefully when no default provider is configured', async () => {
       ctx.providerRegistry = {
+        get: vi.fn().mockReturnValue(undefined),
         getDefault: vi.fn().mockReturnValue(undefined),
       } as any;
       const item = makeQueueItem();
@@ -733,11 +1012,8 @@ describe('AgentRunner', () => {
 
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().message).toContain('No enabled agent runner provider is configured');
-      expect(ctx.repos.run.updateStatus).toHaveBeenCalledWith(
-        expect.any(String),
-        'failed',
-        expect.objectContaining({ error: expect.stringContaining('No enabled agent runner provider') }),
-      );
+      expect(ctx.repos.run.insert).not.toHaveBeenCalled();
+      expect(ctx.repos.run.updateStatus).not.toHaveBeenCalled();
     });
 
     it('wraps mid-stream error as AgentQueryAttemptError with sawEvents=true and does not retry', async () => {

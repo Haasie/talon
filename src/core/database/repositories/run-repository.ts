@@ -28,6 +28,7 @@ export interface RunRow {
   id: string;
   thread_id: string;
   persona_id: string;
+  provider_name: string;
   sandbox_id: string | null;
   session_id: string | null;
   status: RunStatus;
@@ -68,12 +69,12 @@ export class RunRepository extends BaseRepository {
 
     this.insertStmt = db.prepare(`
       INSERT INTO runs
-        (id, thread_id, persona_id, sandbox_id, session_id, status,
+        (id, thread_id, persona_id, provider_name, sandbox_id, session_id, status,
          parent_run_id, queue_item_id, input_tokens, output_tokens,
          cache_read_tokens, cache_write_tokens, cost_usd, error,
          started_at, ended_at, created_at)
       VALUES
-        (@id, @thread_id, @persona_id, @sandbox_id, @session_id, @status,
+        (@id, @thread_id, @persona_id, @provider_name, @sandbox_id, @session_id, @status,
          @parent_run_id, @queue_item_id, @input_tokens, @output_tokens,
          @cache_read_tokens, @cache_write_tokens, @cost_usd, @error,
          @started_at, @ended_at, @created_at)
@@ -182,6 +183,21 @@ export class RunRepository extends BaseRepository {
       return ok(row?.session_id ?? null);
     } catch (cause) {
       return err(new DbError(`Failed to get latest session_id: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /** Returns the most recent provider_name for a thread. */
+  getLatestProviderName(threadId: string): Result<string | null, DbError> {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT provider_name FROM runs
+        WHERE thread_id = ? AND provider_name IS NOT NULL
+        ORDER BY created_at DESC LIMIT 1
+      `);
+      const row = stmt.get(threadId) as { provider_name: string } | undefined;
+      return ok(row?.provider_name ?? null);
+    } catch (cause) {
+      return err(new DbError(`Failed to get latest provider_name: ${String(cause)}`, cause instanceof Error ? cause : undefined));
     }
   }
 

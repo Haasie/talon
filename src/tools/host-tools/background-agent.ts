@@ -17,6 +17,7 @@ export interface BackgroundAgentArgs {
   action: 'spawn' | 'status' | 'cancel' | 'result';
   prompt?: string;
   taskId?: string;
+  provider?: string;
   workingDirectory?: string;
   timeoutMinutes?: number;
 }
@@ -42,7 +43,7 @@ type OwnedTaskResult =
 export class BackgroundAgentHandler {
   static readonly manifest: ToolManifest = {
     name: 'subagent.background',
-    description: 'Starts and manages background Claude Code workers for the current thread.',
+    description: 'Starts and manages background agent workers for the current thread.',
     capabilities: ['subagent.background'],
     executionLocation: 'host',
   };
@@ -93,6 +94,13 @@ export class BackgroundAgentHandler {
       (!Number.isInteger(args.timeoutMinutes) || args.timeoutMinutes <= 0)
     ) {
       return this.errorResult(requestId, 'timeoutMinutes must be a positive integer when provided');
+    }
+
+    if (
+      args.provider !== undefined &&
+      (typeof args.provider !== 'string' || args.provider.trim() === '')
+    ) {
+      return this.errorResult(requestId, 'provider must be a non-empty string when provided');
     }
 
     const personaRowResult = this.deps.personaRepository.findById(context.personaId);
@@ -149,6 +157,12 @@ export class BackgroundAgentHandler {
       threadId: context.threadId,
       channelId: threadResult.value.channel_id,
       channelName: channelResult.value.name,
+      provider:
+        typeof args.provider === 'string' && args.provider.trim().length > 0
+          ? args.provider.trim()
+          : typeof loadedPersona.config.provider === 'string' && loadedPersona.config.provider.trim().length > 0
+            ? loadedPersona.config.provider.trim()
+            : undefined,
       ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
       ...(args.timeoutMinutes ? { timeoutMinutes: args.timeoutMinutes } : {}),
     });

@@ -98,12 +98,12 @@ function insertCompletedRun(
   const db = (repo as unknown as { db: Database.Database }).db;
   db.prepare(`
     INSERT INTO runs
-      (id, thread_id, persona_id, sandbox_id, session_id, status,
+      (id, thread_id, persona_id, provider_name, sandbox_id, session_id, status,
        parent_run_id, queue_item_id, input_tokens, output_tokens,
        cache_read_tokens, cache_write_tokens, cost_usd, error,
        started_at, ended_at, created_at)
     VALUES
-      (?, ?, ?, NULL, NULL, 'completed',
+      (?, ?, ?, 'claude-code', NULL, NULL, 'completed',
        NULL, NULL, ?, ?, ?, ?, ?, NULL,
        ?, ?, ?)
   `).run(
@@ -123,6 +123,7 @@ function insertPendingRun(repo: RunRepository, personaId: string, threadId: stri
     id,
     thread_id: threadId,
     persona_id: personaId,
+    provider_name: 'claude-code',
     sandbox_id: null,
     session_id: null,
     status: 'pending',

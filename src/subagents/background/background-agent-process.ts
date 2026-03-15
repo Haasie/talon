@@ -7,6 +7,7 @@ export interface BackgroundAgentProcessOptions {
   args: string[];
   cwd: string;
   stdin: string;
+  env?: Record<string, string>;
   timeoutMs: number;
 }
 
@@ -39,6 +40,10 @@ export class BackgroundAgentProcess {
     try {
       const child = spawn(this.options.command, this.options.args, {
         cwd: this.options.cwd,
+        env: {
+          ...process.env,
+          ...(this.options.env ?? {}),
+        },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       this.child = child;
