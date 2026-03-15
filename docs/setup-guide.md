@@ -40,8 +40,9 @@ Claude uses the Anthropic API. You need a valid API key or a Max subscription wi
 
 Install and authenticate:
 
+See https://github.com/google-gemini/gemini-cli for the latest install instructions. Then authenticate:
+
 ```bash
-npm install -g @anthropic-ai/gemini-cli   # or from Google's npm package
 gemini    # first run triggers OAuth in browser
 ```
 
