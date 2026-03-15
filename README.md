@@ -105,7 +105,7 @@ backgroundAgent:
 
 ## Architecture
 
-The daemon receives messages from channels, routes them through a durable queue, and dispatches them to the Claude Agent SDK. Agents interact with the host via MCP host-tools exposed over a Unix socket.
+Messages arrive from channels, pass through a durable queue, and get dispatched to the agent runner. The runner resolves a provider from the registry and executes via that provider's strategy (SDK streaming or CLI). Agents interact with the host through MCP host-tools on a Unix socket. Background agents run as separate provider-managed processes.
 
 ```mermaid
 graph TB
@@ -125,43 +125,64 @@ graph TB
         Q[Durable Queue]
         SCH[Scheduler]
         HT[Host-Tools MCP Server]
+        AR[Agent Runner]
+        PR[Provider Registry]
+        CXR[Context Roller]
     end
 
-    subgraph "Agent SDK (Host Process)"
-        A1[Agent: Thread A]
-        A2[Agent: Thread B]
+    subgraph "Provider Layer"
+        P1[Claude Code Provider]
+        P2[Future Provider...]
+    end
+
+    subgraph "Execution"
+        SDK[SDK Strategy]
+        BG[Background CLI]
     end
 
     DB[(SQLite)]
 
     TG & SL & DC & WA & EM & TM --> CR
     CR --> NP --> RT --> Q
-    Q --> A1 & A2
-    A1 & A2 -->|"MCP: schedule, channel,<br/>memory, http, db, subagent,<br/>background agent"| HT
+    Q --> AR
+    AR --> PR
+    PR --> P1 & P2
+    P1 --> SDK
+    P1 --> BG
+    SDK & BG -->|"MCP: schedule, channel,<br/>memory, http, db, subagent,<br/>background agent"| HT
     HT --> CR
     HT --> DB
     SCH --> Q
     Q --> DB
+    AR --> CXR
+    CXR --> DB
 ```
 
-### Message Flow
+### Message flow
 
 ```mermaid
 sequenceDiagram
     participant Ch as Channel
     participant D as talond
     participant Q as Queue
-    participant A as Agent SDK
+    participant AR as Agent Runner
+    participant PR as Provider Registry
+    participant P as Provider
 
     Ch->>D: Inbound message
     D->>D: Normalize + dedup
     D->>D: Route via bindings
     D->>Q: Enqueue (FIFO per thread)
-    Q->>A: Dispatch to Agent SDK
-    A->>D: MCP: host-tool call (Unix socket)
+    Q->>AR: Dispatch
+    AR->>PR: Resolve provider
+    PR-->>AR: Provider + strategy
+    AR->>P: Execute (SDK stream or CLI)
+    P->>D: MCP host-tool call (Unix socket)
     D->>D: Execute tool
-    D->>A: Tool result
-    A->>D: MCP: channel.send
+    D->>P: Tool result
+    P-->>AR: Result + usage metrics
+    AR->>AR: Check context rotation
+    AR->>D: MCP: channel.send
     D->>Ch: Outbound reply
 ```
 
