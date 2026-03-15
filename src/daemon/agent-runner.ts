@@ -42,14 +42,14 @@ export class AgentRunner {
    * back through the channel connector.
    */
   async run(item: QueueItem): Promise<Result<void, Error>> {
-    const personaId = typeof item.payload.personaId === 'string' ? item.payload.personaId : null;
-    if (personaId === null) {
-      return err(new Error(`queue item ${item.id} is missing payload.personaId`));
-    }
-
     const backgroundTaskNotification = this.parseBackgroundTaskNotification(item);
     if (backgroundTaskNotification) {
       return this.deliverBackgroundTaskNotification(item.threadId, backgroundTaskNotification);
+    }
+
+    const personaId = typeof item.payload.personaId === 'string' ? item.payload.personaId : null;
+    if (personaId === null) {
+      return err(new Error(`queue item ${item.id} is missing payload.personaId`));
     }
 
     const personaRowResult = this.ctx.repos.persona.findById(personaId);
