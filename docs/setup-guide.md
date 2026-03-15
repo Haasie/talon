@@ -8,7 +8,6 @@ A Linux server with at least 2 cores, 4GB RAM, and a stable internet connection.
 
 Software:
 - Node.js 22+ (Talon uses `process.loadEnvFile`)
-- Docker (for sandboxed tool execution)
 - Git
 - One or both AI providers installed and authenticated:
   - **Claude Code** (`claude` CLI from Anthropic)
@@ -306,7 +305,7 @@ For production, run Talon as a systemd service:
 ```ini
 [Unit]
 Description=Talon Agent Daemon
-After=network.target docker.service
+After=network.target
 
 [Service]
 Type=notify

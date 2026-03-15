@@ -109,10 +109,9 @@ Check each prerequisite. Report status. Fix what can be fixed automatically.
 
 ```
 1. Node.js >= 22          → check `node --version`
-2. Docker available       → check `docker info`
-3. Dependencies installed → check node_modules/, run `npm install` if not
-4. Project built          → check dist/, run `npm run build` if not
-5. AI providers installed → check `claude --version` and/or `gemini --version`
+2. Dependencies installed → check node_modules/, run `npm install` if not
+3. Project built          → check dist/, run `npm run build` if not
+4. AI providers installed → check `claude --version` and/or `gemini --version`
 ```
 
 For provider binaries not on PATH, ask for the full path (e.g. `/home/user/.npm-global/bin/gemini`).
