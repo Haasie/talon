@@ -590,6 +590,63 @@ describe('AgentRunner', () => {
       );
     }, 10_000);
 
+    it('aborts the active iterator instance when an sdk query times out', async () => {
+      const shortRunner = new AgentRunner(ctx, { queryTimeoutMs: 50 });
+      const activeReturn = vi.fn().mockResolvedValue({ done: true, value: undefined });
+      const strayReturn = vi.fn().mockResolvedValue({ done: true, value: undefined });
+      let iteratorCount = 0;
+
+      const hangingIterable: AsyncIterable<{ type: 'text'; content: string }> = {
+        [Symbol.asyncIterator]() {
+          iteratorCount += 1;
+          const returnSpy = iteratorCount === 1 ? activeReturn : strayReturn;
+
+          return {
+            next: () => new Promise<IteratorResult<{ type: 'text'; content: string }>>(() => {}),
+            return: returnSpy,
+            [Symbol.asyncIterator]() {
+              return this;
+            },
+          };
+        },
+      };
+
+      ctx.config.agentRunner.defaultProvider = 'test-sdk';
+      ctx.providerRegistry = {
+        getDefault: vi.fn().mockReturnValue({
+          provider: {
+            name: 'test-sdk',
+            createExecutionStrategy: () => ({
+              type: 'sdk' as const,
+              supportsSessionResumption: true as const,
+              run: () => hangingIterable,
+            }),
+            prepareBackgroundInvocation: vi.fn(),
+            parseBackgroundResult: vi.fn(),
+            estimateContextUsage: vi.fn().mockReturnValue({
+              ratio: 0,
+              inputTokens: 0,
+              rawMetric: 0,
+              rawMetricName: 'test',
+            }),
+          },
+          config: {
+            enabled: true,
+            command: 'test-sdk',
+            contextWindowTokens: 1000,
+            rotationThreshold: 0.4,
+          },
+        }),
+      } as any;
+
+      const result = await shortRunner.run(makeQueueItem());
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().message).toContain('timed out after');
+      expect(activeReturn).toHaveBeenCalledTimes(1);
+      expect(strayReturn).not.toHaveBeenCalled();
+    }, 10_000);
+
     it('does not reject when query completes within the timeout', async () => {
       mockQuery.mockReturnValue(makeAgentStream());
       const item = makeQueueItem();
