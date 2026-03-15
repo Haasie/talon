@@ -75,20 +75,17 @@ describe('GeminiCliProvider', () => {
       expect.objectContaining({
         GEMINI_CLI_SYSTEM_SETTINGS_PATH: expect.any(String),
         GEMINI_SYSTEM_MD: expect.any(String),
-        GEMINI_CLI_HOME: expect.any(String),
       }),
     );
+    expect(invocation.env).not.toHaveProperty('GEMINI_CLI_HOME');
 
     const settingsPath = invocation.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
     const systemPath = invocation.env?.GEMINI_SYSTEM_MD;
-    const cliHome = invocation.env?.GEMINI_CLI_HOME;
 
     expect(settingsPath).toBeDefined();
     expect(systemPath).toBeDefined();
-    expect(cliHome).toBeDefined();
     expect(existsSync(settingsPath!)).toBe(true);
     expect(existsSync(systemPath!)).toBe(true);
-    expect(existsSync(cliHome!)).toBe(true);
     expect(readFileSync(systemPath!, 'utf8')).toBe('You are a helpful assistant.');
     expect(JSON.parse(readFileSync(settingsPath!, 'utf8'))).toEqual({
       security: {

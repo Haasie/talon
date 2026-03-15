@@ -159,9 +159,6 @@ export class GeminiCliProvider implements AgentProvider {
       tempDir = join(tmpdir(), `talon-provider-gemini-cli-${randomUUID()}`);
       mkdirSync(tempDir, { recursive: true, mode: 0o700 });
 
-      const cliHomeDir = join(tempDir, 'cli-home');
-      mkdirSync(join(cliHomeDir, '.gemini'), { recursive: true, mode: 0o700 });
-
       const settingsPath = join(tempDir, 'settings.json');
       const systemPromptPath = join(tempDir, 'system.md');
 
@@ -203,7 +200,6 @@ export class GeminiCliProvider implements AgentProvider {
         env: {
           GEMINI_CLI_SYSTEM_SETTINGS_PATH: settingsPath,
           GEMINI_SYSTEM_MD: systemPromptPath,
-          GEMINI_CLI_HOME: cliHomeDir,
         },
         cwd: input.cwd,
         timeoutMs: input.timeoutMs,
