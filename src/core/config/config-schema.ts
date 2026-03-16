@@ -199,6 +199,44 @@ export const BackgroundAgentConfigSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Langfuse observability
+// ---------------------------------------------------------------------------
+
+export const LangfuseConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    publicKey: z.string().default(''),
+    secretKey: z.string().default(''),
+    baseUrl: z.string().url().default('https://cloud.langfuse.com'),
+    environment: z.string().default('production'),
+    release: z.string().optional(),
+    exportMode: z.enum(['batched', 'immediate']).default('batched'),
+    flushAt: z.number().int().min(1).default(20),
+    flushIntervalSeconds: z.number().int().min(1).default(5),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.enabled) {
+      return;
+    }
+
+    if (value.publicKey.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['publicKey'],
+        message: 'publicKey is required when langfuse.enabled is true',
+      });
+    }
+
+    if (value.secretKey.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['secretKey'],
+        message: 'secretKey is required when langfuse.enabled is true',
+      });
+    }
+  });
+
+// ---------------------------------------------------------------------------
 // Root config
 // ---------------------------------------------------------------------------
 
@@ -214,6 +252,7 @@ export const TalondConfigSchema = z.object({
   agentRunner: AgentRunnerConfigSchema.default(() => AgentRunnerConfigSchema.parse({})),
   context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
   backgroundAgent: BackgroundAgentConfigSchema.default(() => BackgroundAgentConfigSchema.parse({})),
+  langfuse: LangfuseConfigSchema.default(() => LangfuseConfigSchema.parse({})),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   dataDir: z.string().default('data'),
 });

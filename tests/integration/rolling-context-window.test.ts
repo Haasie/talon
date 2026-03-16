@@ -211,15 +211,15 @@ describe('Rolling context window integration', () => {
     const context = assembler.assemble(threadId);
 
     // Should contain the summary
-    expect(context).toContain('Previous Context');
-    expect(context).toContain('read-only summary');
-    expect(context).toContain('production deployment');
-    expect(context).toContain('staging config');
+    expect(context.text).toContain('Previous Context');
+    expect(context.text).toContain('read-only summary');
+    expect(context.text).toContain('production deployment');
+    expect(context.text).toContain('staging config');
 
     // Should contain recent messages
-    expect(context).toContain('Recent Messages');
-    expect(context).toContain('User: Can you help me deploy');
-    expect(context).toContain('Assistant: Production deployment complete');
+    expect(context.text).toContain('Recent Messages');
+    expect(context.text).toContain('User: Can you help me deploy');
+    expect(context.text).toContain('Assistant: Production deployment complete');
   });
 
   it('roller does not trigger below threshold', async () => {
@@ -256,7 +256,12 @@ describe('Rolling context window integration', () => {
     });
 
     const context = assembler.assemble('nonexistent-thread');
-    expect(context).toBe('');
+    expect(context).toEqual({
+      text: '',
+      summaryFound: false,
+      recentMessageCount: 0,
+      charCount: 0,
+    });
   });
 
   it('assembler returns only recent messages when no summary exists', () => {
@@ -287,11 +292,11 @@ describe('Rolling context window integration', () => {
     });
 
     const context = assembler.assemble(threadId);
-    expect(context).toContain('Recent Messages');
-    expect(context).toContain('User: first message');
-    expect(context).toContain('Assistant: first reply');
+    expect(context.text).toContain('Recent Messages');
+    expect(context.text).toContain('User: first message');
+    expect(context.text).toContain('Assistant: first reply');
     // No summary section content beyond the header
-    expect(context).not.toContain('Key facts');
+    expect(context.text).not.toContain('Key facts');
   });
 
   it('roller preserves session when summarizer fails', async () => {

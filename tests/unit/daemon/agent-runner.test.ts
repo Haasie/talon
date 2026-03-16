@@ -27,6 +27,7 @@ import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
 import { type QueueItem, QueueItemStatus } from '../../../src/queue/queue-types.js';
 import { ProviderRegistry } from '../../../src/providers/provider-registry.js';
 import { ClaudeCodeProvider } from '../../../src/providers/claude-code-provider.js';
+import type { ObservationHandle } from '../../../src/observability/langfuse/observability-types.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -45,6 +46,15 @@ function makeQueueItem(overrides: Record<string, unknown> = {}): QueueItem {
     updatedAt: Date.now(),
     ...overrides,
   } as QueueItem;
+}
+
+const GENERATION_TRACEPARENT = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+function makeObservationHandle(traceparent: string | null): ObservationHandle {
+  return {
+    update: vi.fn(),
+    getTraceparent: vi.fn().mockReturnValue(traceparent),
+  };
 }
 
 function makeMockContext(): DaemonContext {
@@ -144,7 +154,12 @@ function makeMockContext(): DaemonContext {
     } as any,
     contextRoller: null,
     contextAssembler: {
-      assemble: vi.fn().mockReturnValue(''),
+      assemble: vi.fn().mockReturnValue({
+        text: '',
+        summaryFound: false,
+        recentMessageCount: 0,
+        charCount: 0,
+      }),
     } as any,
     threadWorkspace: {
       ensureDirectories: vi.fn().mockReturnValue(ok('/tmp/test-data/workspaces/thread-001')),
@@ -155,6 +170,15 @@ function makeMockContext(): DaemonContext {
     } as any,
     loadedSkills: [],
     messagePipeline: {} as any,
+    observability: {
+      observe: vi.fn(async (input, fn) => {
+        const traceparent = input.type === 'generation' ? GENERATION_TRACEPARENT : null;
+        return await fn(makeObservationHandle(traceparent));
+      }),
+      observeWithTraceparent: vi.fn(async (_traceparent, _input, fn) =>
+        await fn(makeObservationHandle(null))),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+    } as any,
     hostToolsBridge: {
       path: '/tmp/test-data/host-tools.sock',
     } as any,
@@ -344,6 +368,40 @@ describe('AgentRunner', () => {
         expect.any(String),
         'completed',
         expect.objectContaining({ ended_at: expect.any(Number) }),
+      );
+    });
+
+    it('creates root, retriever, and generation observations for a fresh session', async () => {
+      await runner.run(makeQueueItem());
+
+      expect(ctx.observability.observe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'agent',
+          name: 'foreground-run',
+          trace: expect.objectContaining({
+            sessionId: 'thread-001',
+            metadata: expect.objectContaining({
+              threadId: 'thread-001',
+              provider: 'claude-code',
+            }),
+          }),
+        }),
+        expect.any(Function),
+      );
+      expect(ctx.observability.observe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'retriever',
+          name: 'previous-context',
+        }),
+        expect.any(Function),
+      );
+      expect(ctx.observability.observe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'generation',
+          name: 'provider-attempt',
+          model: 'claude-sonnet-4-20250514',
+        }),
+        expect.any(Function),
       );
     });
 
@@ -549,6 +607,10 @@ describe('AgentRunner', () => {
       // Should have passed the DB session to the agent SDK
       const queryCall = mockQuery.mock.calls[0]![0] as { options: { resume?: string } };
       expect(queryCall.options.resume).toBe('session-from-db');
+      expect(ctx.observability.observe).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'retriever', name: 'previous-context' }),
+        expect.any(Function),
+      );
     });
 
     it('does not eagerly seed tracker from DB (waits for successful run)', async () => {
@@ -800,6 +862,11 @@ describe('AgentRunner', () => {
         'thread-001',
         'session-abc-123',
       );
+      expect(
+        vi.mocked(ctx.observability.observe).mock.calls.filter(
+          ([input]) => input.type === 'generation',
+        ),
+      ).toHaveLength(2);
     });
 
     it('updates run to failed on agent error and clears typing interval', async () => {
@@ -1195,6 +1262,17 @@ describe('AgentRunner', () => {
 
       expect(allowedTools).toContain('channel_send');
       expect(allowedTools).not.toContain('background_agent');
+    });
+
+    it('injects the active generation traceparent into the host-tools MCP env', async () => {
+      await runner.run(makeQueueItem());
+
+      const queryCall = mockQuery.mock.calls[0]![0] as {
+        options: { mcpServers: Record<string, any> };
+      };
+      expect(queryCall.options.mcpServers['host-tools'].env.TALOND_TRACEPARENT).toBe(
+        GENERATION_TRACEPARENT,
+      );
     });
   });
 

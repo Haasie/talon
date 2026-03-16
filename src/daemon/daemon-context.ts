@@ -41,6 +41,7 @@ import type { BackgroundAgentManager } from '../subagents/background/background-
 import type { ProviderRegistry } from '../providers/provider-registry.js';
 import type { ContextRoller } from './context-roller.js';
 import type { ContextAssembler } from './context-assembler.js';
+import type { ObservabilityService } from '../observability/langfuse/observability-types.js';
 
 // ---------------------------------------------------------------------------
 // Repository bundle
@@ -87,6 +88,7 @@ export interface DaemonContext {
   readonly skillResolver: SkillResolver;
   readonly loadedSkills: LoadedSkill[];
   readonly messagePipeline: MessagePipeline;
+  readonly observability: ObservabilityService;
   readonly hostToolsBridge: HostToolsBridge;
   readonly providerRegistry: ProviderRegistry;
   readonly subAgentRunner: SubAgentRunner | null;

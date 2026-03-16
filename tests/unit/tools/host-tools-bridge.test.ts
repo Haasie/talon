@@ -156,6 +156,17 @@ describe('HostToolsBridge', () => {
       } as any,
       loadedSkills: [],
       messagePipeline: {} as any,
+      observability: {
+        observe: vi.fn(async (_input, fn) => await fn({
+          update: vi.fn(),
+          getTraceparent: vi.fn().mockReturnValue(null),
+        })),
+        observeWithTraceparent: vi.fn(async (_traceparent, _input, fn) => await fn({
+          update: vi.fn(),
+          getTraceparent: vi.fn().mockReturnValue(null),
+        })),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      } as any,
       backgroundAgentManager: {
         spawn: vi.fn().mockReturnValue(ok('bg-task-1')),
         listTasksForThread: vi.fn().mockReturnValue(ok([])),
@@ -164,7 +175,12 @@ describe('HostToolsBridge', () => {
         getResult: vi.fn().mockReturnValue(ok(null)),
       } as any,
       contextAssembler: {
-        assemble: vi.fn().mockReturnValue('Previous thread summary.'),
+        assemble: vi.fn().mockReturnValue({
+          text: 'Previous thread summary.',
+          summaryFound: true,
+          recentMessageCount: 0,
+          charCount: 24,
+        }),
       } as any,
       hostToolsBridge: {} as any,
       logger: mockLogger as any,
@@ -347,6 +363,41 @@ describe('HostToolsBridge', () => {
 
       expect((response.result as any)?.status).toBe('success');
       expect((response.result as any)?.result).toHaveProperty('items');
+    });
+
+    it('wraps tool dispatch in an observation using the incoming traceparent', async () => {
+      bridge = new HostToolsBridge(mockCtx);
+      bridge.start();
+      await waitForSocket(bridge.path);
+
+      await sendRequest(bridge.path, {
+        id: randomUUID(),
+        tool: 'schedule_manage',
+        args: {
+          action: 'list',
+        },
+        context: {
+          runId: 'run-001',
+          threadId: 'thread-001',
+          personaId: 'persona-001',
+          requestId: 'req-001',
+          traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+        },
+      });
+
+      expect(mockCtx.observability.observeWithTraceparent).toHaveBeenCalledWith(
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+        expect.objectContaining({
+          type: 'tool',
+          name: 'schedule.manage',
+          metadata: expect.objectContaining({
+            runId: 'run-001',
+            threadId: 'thread-001',
+            personaId: 'persona-001',
+          }),
+        }),
+        expect.any(Function),
+      );
     });
   });
 });

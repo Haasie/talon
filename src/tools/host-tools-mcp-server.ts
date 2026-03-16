@@ -39,6 +39,7 @@ interface BridgeRequest {
     threadId: string;
     personaId: string;
     requestId: string;
+    traceparent?: string;
   };
 }
 
@@ -135,7 +136,7 @@ class SocketClient {
   async sendRequest(
     tool: string,
     args: Record<string, unknown>,
-    context: { runId: string; threadId: string; personaId: string },
+    context: { runId: string; threadId: string; personaId: string; traceparent?: string },
   ): Promise<BridgeResponse['result']> {
     if (!this.connected) {
       await this.connectedPromise;
@@ -151,6 +152,7 @@ class SocketClient {
         threadId: context.threadId,
         personaId: context.personaId,
         requestId: randomUUID(),
+        ...(context.traceparent ? { traceparent: context.traceparent } : {}),
       },
     };
 
@@ -403,6 +405,7 @@ async function main(): Promise<void> {
   const runId = getEnvRequired('TALOND_RUN_ID');
   const threadId = getEnvRequired('TALOND_THREAD_ID');
   const personaId = getEnvRequired('TALOND_PERSONA_ID');
+  const traceparent = process.env.TALOND_TRACEPARENT;
 
   // Determine which tools this persona may use. Only tools whose MCP names
   // appear in TALOND_ALLOWED_TOOLS are listed and callable.
@@ -479,6 +482,7 @@ async function main(): Promise<void> {
         runId,
         threadId,
         personaId,
+        traceparent,
       });
 
       if (!result) {

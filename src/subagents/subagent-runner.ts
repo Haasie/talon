@@ -21,6 +21,8 @@ import { ToolError } from '../core/errors/index.js';
 import { extractCapabilityPrefix } from '../tools/tool-filter.js';
 import { createChildLogger } from '../core/logging/index.js';
 import type pino from 'pino';
+import type { ObservabilityService } from '../observability/langfuse/observability-types.js';
+import { NoopObservabilityService } from '../observability/langfuse/noop-observability.js';
 
 // ---------------------------------------------------------------------------
 // Invoke context
@@ -46,17 +48,20 @@ export class SubAgentRunner {
   private readonly modelResolver: ModelResolver;
   private readonly services: SubAgentServices;
   private readonly logger: pino.Logger;
+  private readonly observability: ObservabilityService;
 
   constructor(
     agents: Map<string, LoadedSubAgent>,
     modelResolver: ModelResolver,
     services: SubAgentServices,
     logger: pino.Logger,
+    observability: ObservabilityService = new NoopObservabilityService(),
   ) {
     this.agents = agents;
     this.modelResolver = modelResolver;
     this.services = services;
     this.logger = logger;
+    this.observability = observability;
   }
 
   /**
@@ -66,6 +71,41 @@ export class SubAgentRunner {
    * the system prompt, and runs the sub-agent with a timeout.
    */
   async execute(
+    name: string,
+    input: SubAgentInput,
+    ctx: SubAgentInvokeContext,
+  ): Promise<Result<SubAgentResult, ToolError>> {
+    try {
+      const result = await this.observability.observe(
+        {
+          type: 'agent',
+          name: `subagent:${name}`,
+          input,
+          metadata: {
+            threadId: ctx.threadId,
+            personaId: ctx.personaId,
+          },
+        },
+        async (observation) => {
+          const executeResult = await this.executeInternal(name, input, ctx);
+          if (executeResult.isErr()) {
+            throw executeResult.error;
+          }
+          observation.update({
+            output: executeResult.value,
+          });
+          return executeResult.value;
+        },
+      );
+
+      return ok(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return err(new ToolError(message));
+    }
+  }
+
+  private async executeInternal(
     name: string,
     input: SubAgentInput,
     ctx: SubAgentInvokeContext,

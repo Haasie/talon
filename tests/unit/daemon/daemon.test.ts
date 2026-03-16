@@ -142,6 +142,11 @@ function makeMockContext(overrides: Partial<DaemonContext> = {}): DaemonContext 
       shutdown: vi.fn(),
     } as any,
     contextAssembler: {} as any,
+    observability: {
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      observe: vi.fn(),
+      observeWithTraceparent: vi.fn(),
+    } as any,
     hostToolsBridge: { path: '/tmp/host-tools.sock', start: vi.fn(), stop: vi.fn() } as any,
     logger: mockLogger as any,
     ...overrides,
@@ -427,6 +432,20 @@ describe('TalondDaemon', () => {
 
       expect(backgroundAgentManager.shutdown).toHaveBeenCalledOnce();
       expect(backgroundAgentManager.shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+        db.close.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('flushes observability before closing the database', async () => {
+      const observability = { shutdown: vi.fn().mockResolvedValue(undefined) } as any;
+      const db = { close: vi.fn() } as any;
+      setupSuccessfulBootstrap({ observability, db });
+      await daemon.start('/config.yaml');
+
+      await daemon.stop();
+
+      expect(observability.shutdown).toHaveBeenCalledOnce();
+      expect(observability.shutdown.mock.invocationCallOrder[0]).toBeLessThan(
         db.close.mock.invocationCallOrder[0],
       );
     });

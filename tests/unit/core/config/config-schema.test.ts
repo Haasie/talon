@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   TalondConfigSchema,
+  LangfuseConfigSchema,
   StorageConfigSchema,
   SandboxConfigSchema,
   CapabilitiesSchema,
@@ -15,6 +16,65 @@ import {
   BackgroundAgentConfigSchema,
   ProviderConfigSchema,
 } from '../../../../src/core/config/config-schema.js';
+
+// ---------------------------------------------------------------------------
+// LangfuseConfigSchema
+// ---------------------------------------------------------------------------
+
+describe('LangfuseConfigSchema', () => {
+  it('parses an empty object with defaults', () => {
+    const result = LangfuseConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({
+        enabled: false,
+        publicKey: '',
+        secretKey: '',
+        baseUrl: 'https://cloud.langfuse.com',
+        environment: 'production',
+        exportMode: 'batched',
+        flushAt: 20,
+        flushIntervalSeconds: 5,
+      });
+    }
+  });
+
+  it('accepts a valid explicit config', () => {
+    const result = LangfuseConfigSchema.safeParse({
+      enabled: true,
+      publicKey: 'pk-lf-test',
+      secretKey: 'sk-lf-test',
+      baseUrl: 'https://us.cloud.langfuse.com',
+      environment: 'staging',
+      release: 'git-sha-123',
+      exportMode: 'immediate',
+      flushAt: 5,
+      flushIntervalSeconds: 1,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.release).toBe('git-sha-123');
+      expect(result.data.exportMode).toBe('immediate');
+    }
+  });
+
+  it('rejects enabled=true without both API keys', () => {
+    expect(
+      LangfuseConfigSchema.safeParse({
+        enabled: true,
+        publicKey: '',
+        secretKey: 'sk-lf-test',
+      }).success,
+    ).toBe(false);
+    expect(
+      LangfuseConfigSchema.safeParse({
+        enabled: true,
+        publicKey: 'pk-lf-test',
+        secretKey: '',
+      }).success,
+    ).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // StorageConfigSchema
@@ -521,6 +581,16 @@ describe('TalondConfigSchema', () => {
           },
         },
       });
+      expect(result.data.langfuse).toEqual({
+        enabled: false,
+        publicKey: '',
+        secretKey: '',
+        baseUrl: 'https://cloud.langfuse.com',
+        environment: 'production',
+        exportMode: 'batched',
+        flushAt: 20,
+        flushIntervalSeconds: 5,
+      });
     }
   });
 
@@ -561,6 +631,17 @@ describe('TalondConfigSchema', () => {
           },
         },
       },
+      langfuse: {
+        enabled: true,
+        publicKey: 'pk-lf-prod',
+        secretKey: 'sk-lf-prod',
+        baseUrl: 'https://us.cloud.langfuse.com',
+        environment: 'staging',
+        release: 'abcdef1234',
+        exportMode: 'immediate',
+        flushAt: 3,
+        flushIntervalSeconds: 1,
+      },
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -568,6 +649,7 @@ describe('TalondConfigSchema', () => {
       expect(result.data.channels).toHaveLength(1);
       expect(result.data.personas).toHaveLength(1);
       expect(result.data.backgroundAgent.enabled).toBe(false);
+      expect(result.data.langfuse.release).toBe('abcdef1234');
     }
   });
 

@@ -260,7 +260,29 @@ export class HostToolsBridge {
     }, REQUEST_TIMEOUT_MS);
 
     try {
-      const result = await this.dispatch(normalizedTool, args, context);
+      const result = await this.ctx.observability.observeWithTraceparent(
+        context.traceparent,
+        {
+          type: 'tool',
+          name: normalizedTool,
+          input: args,
+          metadata: {
+            runId: context.runId,
+            threadId: context.threadId,
+            personaId: context.personaId,
+            requestId: context.requestId ?? null,
+          },
+        },
+        async (toolObservation) => {
+          const toolResult = await this.dispatch(normalizedTool, args, context);
+          toolObservation.update({
+            output: toolResult,
+            level: toolResult.status === 'error' ? 'ERROR' : undefined,
+            statusMessage: toolResult.status === 'error' ? toolResult.error : undefined,
+          });
+          return toolResult;
+        },
+      );
       clearTimeout(timeoutHandle);
       if (responded) return; // Timeout already fired
       responded = true;

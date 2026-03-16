@@ -137,7 +137,7 @@ export class BackgroundAgentHandler {
 
     let previousContext: string | undefined;
     try {
-      previousContext = this.deps.contextAssembler.assemble(context.threadId) || undefined;
+      previousContext = this.deps.contextAssembler.assemble(context.threadId).text || undefined;
     } catch (cause) {
       this.deps.logger.warn(
         {

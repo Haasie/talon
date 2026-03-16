@@ -57,6 +57,7 @@ import { recoverFromCrash } from './lifecycle.js';
 import { ContextRoller } from './context-roller.js';
 import { ContextAssembler } from './context-assembler.js';
 import type { DaemonContext } from './daemon-context.js';
+import { createObservabilityService } from '../observability/langfuse/index.js';
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -138,6 +139,7 @@ export async function bootstrap(
 
   // 6. Thread workspace
   const threadWorkspace = new ThreadWorkspace(dataDir);
+  const observability = await createObservabilityService(config.langfuse, logger);
 
   // 7. Load personas
   const personaLoader = new PersonaLoader(repos.persona, logger);
@@ -239,6 +241,7 @@ export async function bootstrap(
         logger,
       },
       logger,
+      observability,
     );
     logger.info({ subagents: [...agentMap.keys()] }, 'bootstrap: loaded sub-agents');
   } else {
@@ -397,6 +400,7 @@ export async function bootstrap(
     skillResolver,
     loadedSkills: loadedSkills.value,
     messagePipeline,
+    observability,
     subAgentRunner,
     providerRegistry,
     backgroundAgentManager,

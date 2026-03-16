@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ok, err, type Result } from 'neverthrow';
 
 import type { DaemonContext } from './daemon-context.js';
+import type { AssembledContext } from './context-assembler.js';
 import type { QueueItem } from '../queue/queue-types.js';
 import { filterAllowedMcpTools } from '../tools/tool-filter.js';
 import { buildPersonaRuntimeContext } from '../personas/persona-runtime-context.js';
@@ -132,407 +133,519 @@ export class AgentRunner {
       return err(new Error(`failed to create run record: ${runInsert.error.message}`));
     }
 
-    const workspaceResult = this.ctx.threadWorkspace.ensureDirectories(item.threadId);
-    if (workspaceResult.isErr()) {
-      this.ctx.repos.run.updateStatus(runId, 'failed', {
-        ended_at: Date.now(),
-        error: workspaceResult.error.message,
-      });
-      return err(new Error(workspaceResult.error.message));
-    }
+    const content = typeof item.payload.content === 'string' ? item.payload.content : '';
 
-    let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
-      const content = typeof item.payload.content === 'string' ? item.payload.content : '';
-      const personaSkills = this.ctx.loadedSkills.filter((skill) =>
-        loadedPersona.config.skills.includes(skill.manifest.name),
-      );
-      const personaRuntimeContext = buildPersonaRuntimeContext({
-        loadedPersona,
-        resolvedSkills: personaSkills,
-        skillResolver: this.ctx.skillResolver,
-        logger: this.ctx.logger,
-      });
-
-      const model = loadedPersona.config.model;
-
-      // Build channel context so the agent knows which channels are available.
-      const threadRow = this.ctx.repos.thread.findById(item.threadId);
-      const currentChannelRow =
-        threadRow.isOk() && threadRow.value
-          ? this.ctx.repos.channel.findById(threadRow.value.channel_id)
-          : null;
-      const currentChannelName =
-        currentChannelRow && currentChannelRow.isOk() && currentChannelRow.value
-          ? currentChannelRow.value.name
-          : undefined;
-      const allChannels = this.ctx.channelRegistry
-        .listAll()
-        .map((c) => c.name);
-
-      const channelContext = [
-        'Available channels for channel_send tool:',
-        ...allChannels.map((name) =>
-          name === currentChannelName ? `  - ${name} (current thread)` : `  - ${name}`,
-        ),
-        currentChannelName
-          ? `When sending messages, use channelId: "${currentChannelName}".`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      // Generate fresh timestamp per run so the agent can reason about time.
-      const now_ = new Date();
-      const pad = (n: number): string => String(n).padStart(2, '0');
-      const offsetMin = now_.getTimezoneOffset();
-      const offsetSign = offsetMin <= 0 ? '+' : '-';
-      const absOffset = Math.abs(offsetMin);
-      const offsetStr = `${offsetSign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`;
-      const localISO = `${now_.getFullYear()}-${pad(now_.getMonth() + 1)}-${pad(now_.getDate())}T${pad(now_.getHours())}:${pad(now_.getMinutes())}:${pad(now_.getSeconds())}${offsetStr}`;
-      const tzAbbr = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(now_).find((p) => p.type === 'timeZoneName')?.value ?? 'UTC';
-      const dayName = now_.toLocaleDateString('en', { weekday: 'long' });
-      const timeContext = `Current time: ${localISO} (${tzAbbr}, ${dayName})`;
-      const existingSessionId = strategy.type === 'sdk' ? resolvedSessionId : undefined;
-
-      const mcpServers: Record<string, CanonicalMcpServer> = { ...personaRuntimeContext.mcpServers };
-
-      // Determine which host tools this persona may use based on capabilities.
-      let allowedMcpTools = filterAllowedMcpTools(
-        loadedPersona.resolvedCapabilities ?? { allow: [], requireApproval: [] },
-      );
-      if (!this.ctx.backgroundAgentManager) {
-        allowedMcpTools = allowedMcpTools.filter((toolName) => toolName !== 'background_agent');
-      }
-
-      // Add built-in host-tools MCP server (schedule, channel, memory, http, db).
-      // Only tools allowed by persona capabilities are exposed via TALOND_ALLOWED_TOOLS.
-      mcpServers['host-tools'] = {
-        transport: 'stdio',
-        command: 'node',
-        args: [join(import.meta.dirname, '../../dist/tools/host-tools-mcp-server.js')],
-        env: {
-          ...process.env,
-          TALOND_SOCKET: this.ctx.hostToolsBridge.path,
-          TALOND_RUN_ID: runId,
-          TALOND_THREAD_ID: item.threadId,
-          TALOND_PERSONA_ID: personaId,
-          TALOND_ALLOWED_TOOLS: allowedMcpTools.join(','),
-        },
-      };
-
-      this.ctx.logger.info(
-        { runId, personaId, allowedMcpTools },
-        'agent-sdk: persona tool restrictions applied',
-      );
-
-      // Resolve channel connector early so we can send typing indicators.
-      const threadResult = this.ctx.repos.thread.findById(item.threadId);
-      const channelRow =
-        threadResult.isOk() && threadResult.value
-          ? this.ctx.repos.channel.findById(threadResult.value.channel_id)
-          : null;
-      const connector =
-        channelRow && channelRow.isOk() && channelRow.value
-          ? this.ctx.channelRegistry.get(channelRow.value.name)
-          : undefined;
-      const externalId =
-        threadResult.isOk() && threadResult.value ? threadResult.value.external_id : undefined;
-
-      // Send typing indicator and keep it alive every 4s while the agent works.
-      if (connector?.sendTyping && externalId) {
-        connector.sendTyping(externalId).catch((e: unknown) => {
-          this.ctx.logger.debug({ err: e }, 'sendTyping failed');
-        });
-        typingInterval = setInterval(() => {
-          connector.sendTyping!(externalId).catch((e: unknown) => {
-            this.ctx.logger.debug({ err: e }, 'sendTyping failed');
-          });
-        }, 4000);
-      }
-
-      let previousContextResolved = false;
-      let previousContext: string | undefined;
-      const getPreviousContext = (): string | undefined => {
-        if (!previousContextResolved) {
-          previousContext = this.ctx.contextAssembler.assemble(item.threadId) || undefined;
-          previousContextResolved = true;
-        }
-        return previousContext;
-      };
-
-      if (strategy.type === 'cli' && connector && externalId && item.payload.type !== 'schedule') {
-        const waitingResult = await connector.send(externalId, {
-          body: 'Thinking...',
-        });
-        if (waitingResult.isErr()) {
-          this.ctx.logger.debug({ err: waitingResult.error }, 'agent-runner: waiting notification failed');
-        }
-      }
-
-      const executeAgentQuery = async (resumeSessionId?: string): Promise<{
-        outputText: string;
-        resultSessionId: string | undefined;
-        usage: AgentUsage;
-      }> => {
-        const systemPromptParts = [
-          personaRuntimeContext.personaPrompt,
-          channelContext,
-          timeContext,
-        ];
-        if (!(strategy.type === 'sdk' && resumeSessionId)) {
-          const previous = getPreviousContext();
-          if (previous) {
-            systemPromptParts.push(previous);
-          }
-        }
-
-        this.ctx.logger.info(
-          {
-            runId,
-            personaId,
-            model,
-            threadId: item.threadId,
+      await this.ctx.observability.observe(
+        {
+          type: 'agent',
+          name: 'foreground-run',
+          input: {
+            content,
+            itemType: item.type,
+            persona: personaName,
             provider: providerEntry.provider.name,
-            resumeSession: resumeSessionId ?? null,
           },
-          'agent-runner: starting query',
-        );
-
-        let outputText = '';
-        let resultSessionId: string | undefined;
-        let usage: AgentUsage = {
-          inputTokens: 0,
-          outputTokens: 0,
-        };
-        let sawEvents = false;
-
-        const queryInput = {
-          prompt: content,
-          systemPrompt: systemPromptParts.filter(Boolean).join('\n\n'),
-          mcpServers,
-          cwd: workspaceResult.value,
-          model,
-          maxTurns: 25,
-          timeoutMs: this.queryTimeoutMs,
-          ...(strategy.type === 'sdk' && resumeSessionId
-            ? { sessionId: resumeSessionId }
-            : {}),
-        };
-
-        let activeIterator: AsyncIterator<unknown> | undefined;
-
-        const queryPromise = (async (): Promise<void> => {
-          if (strategy.type === 'sdk') {
-            let stream: ReturnType<typeof strategy.run>;
-            try {
-              stream = strategy.run(queryInput);
-            } catch (cause) {
-              const message = cause instanceof Error ? cause.message : String(cause);
-              throw new AgentQueryAttemptError(message, resumeSessionId, false);
+          metadata: {
+            runId,
+            threadId: item.threadId,
+            personaId,
+            personaName,
+            provider: providerEntry.provider.name,
+          },
+          trace: {
+            sessionId: item.threadId,
+            metadata: {
+              runId,
+              threadId: item.threadId,
+              personaId,
+              personaName,
+              provider: providerEntry.provider.name,
+            },
+          },
+        },
+        async (runObservation) => {
+          let typingInterval: ReturnType<typeof setInterval> | undefined;
+          try {
+            const workspaceResult = this.ctx.threadWorkspace.ensureDirectories(item.threadId);
+            if (workspaceResult.isErr()) {
+              throw new Error(workspaceResult.error.message);
             }
 
-            const iterator = stream[Symbol.asyncIterator]();
-            activeIterator = iterator;
+            const personaSkills = this.ctx.loadedSkills.filter((skill) =>
+              loadedPersona.config.skills.includes(skill.manifest.name),
+            );
+            const personaRuntimeContext = buildPersonaRuntimeContext({
+              loadedPersona,
+              resolvedSkills: personaSkills,
+              skillResolver: this.ctx.skillResolver,
+              logger: this.ctx.logger,
+            });
 
-            // Manually drive the iterator so the catch block can abort this exact instance
-            for (;;) {
-              const { value, done } = await iterator.next();
-              if (done) break;
-              const event = value;
-              sawEvents = true;
-              if (event.type === 'text') {
-                outputText += event.content;
-              } else if (event.type === 'result') {
-                resultSessionId = event.result.sessionId;
-                usage = event.result.usage;
+            const model = loadedPersona.config.model;
 
-                if (!outputText && event.result.output) {
-                  outputText = event.result.output;
-                }
+            // Build channel context so the agent knows which channels are available.
+            const threadRow = this.ctx.repos.thread.findById(item.threadId);
+            const currentChannelRow =
+              threadRow.isOk() && threadRow.value
+                ? this.ctx.repos.channel.findById(threadRow.value.channel_id)
+                : null;
+            const currentChannelName =
+              currentChannelRow && currentChannelRow.isOk() && currentChannelRow.value
+                ? currentChannelRow.value.name
+                : undefined;
+            const allChannels = this.ctx.channelRegistry
+              .listAll()
+              .map((c) => c.name);
 
-                if (event.result.isError) {
-                  this.ctx.logger.warn(
-                    { runId, result: event.result.output },
-                    'agent-runner: run ended with provider error',
-                  );
-                }
-              } else if (event.type === 'tool_event') {
-                this.ctx.logger.debug(
+            const channelContext = [
+              'Available channels for channel_send tool:',
+              ...allChannels.map((name) =>
+                name === currentChannelName ? `  - ${name} (current thread)` : `  - ${name}`,
+              ),
+              currentChannelName
+                ? `When sending messages, use channelId: "${currentChannelName}".`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n');
+
+            // Generate fresh timestamp per run so the agent can reason about time.
+            const now_ = new Date();
+            const pad = (n: number): string => String(n).padStart(2, '0');
+            const offsetMin = now_.getTimezoneOffset();
+            const offsetSign = offsetMin <= 0 ? '+' : '-';
+            const absOffset = Math.abs(offsetMin);
+            const offsetStr = `${offsetSign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`;
+            const localISO = `${now_.getFullYear()}-${pad(now_.getMonth() + 1)}-${pad(now_.getDate())}T${pad(now_.getHours())}:${pad(now_.getMinutes())}:${pad(now_.getSeconds())}${offsetStr}`;
+            const tzAbbr = Intl.DateTimeFormat('en', { timeZoneName: 'short' }).formatToParts(now_).find((p) => p.type === 'timeZoneName')?.value ?? 'UTC';
+            const dayName = now_.toLocaleDateString('en', { weekday: 'long' });
+            const timeContext = `Current time: ${localISO} (${tzAbbr}, ${dayName})`;
+            const existingSessionId = strategy.type === 'sdk' ? resolvedSessionId : undefined;
+
+            const baseMcpServers: Record<string, CanonicalMcpServer> = {
+              ...personaRuntimeContext.mcpServers,
+            };
+
+            // Determine which host tools this persona may use based on capabilities.
+            let allowedMcpTools = filterAllowedMcpTools(
+              loadedPersona.resolvedCapabilities ?? { allow: [], requireApproval: [] },
+            );
+            if (!this.ctx.backgroundAgentManager) {
+              allowedMcpTools = allowedMcpTools.filter((toolName) => toolName !== 'background_agent');
+            }
+
+            this.ctx.logger.info(
+              { runId, personaId, allowedMcpTools },
+              'agent-sdk: persona tool restrictions applied',
+            );
+
+            // Resolve channel connector early so we can send typing indicators.
+            const threadResult = this.ctx.repos.thread.findById(item.threadId);
+            const channelRow =
+              threadResult.isOk() && threadResult.value
+                ? this.ctx.repos.channel.findById(threadResult.value.channel_id)
+                : null;
+            const connector =
+              channelRow && channelRow.isOk() && channelRow.value
+                ? this.ctx.channelRegistry.get(channelRow.value.name)
+                : undefined;
+            const externalId =
+              threadResult.isOk() && threadResult.value ? threadResult.value.external_id : undefined;
+
+            // Send typing indicator and keep it alive every 4s while the agent works.
+            if (connector?.sendTyping && externalId) {
+              connector.sendTyping(externalId).catch((e: unknown) => {
+                this.ctx.logger.debug({ err: e }, 'sendTyping failed');
+              });
+              typingInterval = setInterval(() => {
+                connector.sendTyping!(externalId).catch((e: unknown) => {
+                  this.ctx.logger.debug({ err: e }, 'sendTyping failed');
+                });
+              }, 4000);
+            }
+
+            let previousContextResolved = false;
+            let previousContext: AssembledContext | undefined;
+            const getPreviousContext = async (): Promise<AssembledContext> => {
+              if (!previousContextResolved) {
+                previousContext = await this.ctx.observability.observe(
                   {
-                    runId,
-                    messageType: event.messageType,
-                    tool: event.tool,
-                    subtype: event.subtype,
+                    type: 'retriever',
+                    name: 'previous-context',
+                    metadata: {
+                      threadId: item.threadId,
+                    },
                   },
-                  'agent-sdk: streaming event',
+                  async (retrieverObservation) => {
+                    const assembled = this.ctx.contextAssembler.assemble(item.threadId);
+                    retrieverObservation.update({
+                      output: assembled.text,
+                      metadata: {
+                        threadId: item.threadId,
+                        summaryFound: assembled.summaryFound,
+                        recentMessageCount: assembled.recentMessageCount,
+                        charCount: assembled.charCount,
+                      },
+                    });
+                    return assembled;
+                  },
                 );
-              } else {
-                throw new Error(event.message);
+                previousContextResolved = true;
+              }
+
+              return previousContext!;
+            };
+
+            if (strategy.type === 'cli' && connector && externalId && item.payload.type !== 'schedule') {
+              const waitingResult = await connector.send(externalId, {
+                body: 'Thinking...',
+              });
+              if (waitingResult.isErr()) {
+                this.ctx.logger.debug({ err: waitingResult.error }, 'agent-runner: waiting notification failed');
               }
             }
 
-            return;
+            const executeAgentQuery = async (resumeSessionId?: string): Promise<{
+              outputText: string;
+              resultSessionId: string | undefined;
+              usage: AgentUsage;
+            }> => {
+              const systemPromptParts = [
+                personaRuntimeContext.personaPrompt,
+                channelContext,
+                timeContext,
+              ];
+              if (!(strategy.type === 'sdk' && resumeSessionId)) {
+                const previous = await getPreviousContext();
+                if (previous.text) {
+                  systemPromptParts.push(previous.text);
+                }
+              }
+
+              const systemPrompt = systemPromptParts.filter(Boolean).join('\n\n');
+
+              return await this.ctx.observability.observe(
+                {
+                  type: 'generation',
+                  name: 'provider-attempt',
+                  input: {
+                    prompt: content,
+                    systemPrompt,
+                    resumeSessionId: resumeSessionId ?? null,
+                  },
+                  metadata: {
+                    runId,
+                    threadId: item.threadId,
+                    provider: providerEntry.provider.name,
+                    resumeSessionId: resumeSessionId ?? null,
+                  },
+                  model,
+                },
+                async (generationObservation) => {
+                  const mcpServers: Record<string, CanonicalMcpServer> = {
+                    ...baseMcpServers,
+                    'host-tools': {
+                      transport: 'stdio',
+                      command: 'node',
+                      args: [join(import.meta.dirname, '../../dist/tools/host-tools-mcp-server.js')],
+                      env: {
+                        ...process.env,
+                        TALOND_SOCKET: this.ctx.hostToolsBridge.path,
+                        TALOND_RUN_ID: runId,
+                        TALOND_THREAD_ID: item.threadId,
+                        TALOND_PERSONA_ID: personaId,
+                        TALOND_ALLOWED_TOOLS: allowedMcpTools.join(','),
+                        TALOND_TRACEPARENT: generationObservation.getTraceparent() ?? '',
+                      },
+                    },
+                  };
+
+                  this.ctx.logger.info(
+                    {
+                      runId,
+                      personaId,
+                      model,
+                      threadId: item.threadId,
+                      provider: providerEntry.provider.name,
+                      resumeSession: resumeSessionId ?? null,
+                    },
+                    'agent-runner: starting query',
+                  );
+
+                  let outputText = '';
+                  let resultSessionId: string | undefined;
+                  let usage: AgentUsage = {
+                    inputTokens: 0,
+                    outputTokens: 0,
+                  };
+                  let sawEvents = false;
+
+                  const queryInput = {
+                    prompt: content,
+                    systemPrompt,
+                    mcpServers,
+                    cwd: workspaceResult.value,
+                    model,
+                    maxTurns: 25,
+                    timeoutMs: this.queryTimeoutMs,
+                    ...(strategy.type === 'sdk' && resumeSessionId
+                      ? { sessionId: resumeSessionId }
+                      : {}),
+                  };
+
+                  let activeIterator: AsyncIterator<unknown> | undefined;
+
+                  const queryPromise = (async (): Promise<void> => {
+                    if (strategy.type === 'sdk') {
+                      let stream: ReturnType<typeof strategy.run>;
+                      try {
+                        stream = strategy.run(queryInput);
+                      } catch (cause) {
+                        const message = cause instanceof Error ? cause.message : String(cause);
+                        throw new AgentQueryAttemptError(message, resumeSessionId, false);
+                      }
+
+                      const iterator = stream[Symbol.asyncIterator]();
+                      activeIterator = iterator;
+
+                      // Manually drive the iterator so the catch block can abort this exact instance
+                      for (;;) {
+                        const { value, done } = await iterator.next();
+                        if (done) break;
+                        const event = value;
+                        sawEvents = true;
+                        if (event.type === 'text') {
+                          outputText += event.content;
+                        } else if (event.type === 'result') {
+                          resultSessionId = event.result.sessionId;
+                          usage = event.result.usage;
+
+                          if (!outputText && event.result.output) {
+                            outputText = event.result.output;
+                          }
+
+                          if (event.result.isError) {
+                            this.ctx.logger.warn(
+                              { runId, result: event.result.output },
+                              'agent-runner: run ended with provider error',
+                            );
+                          }
+                        } else if (event.type === 'tool_event') {
+                          this.ctx.logger.debug(
+                            {
+                              runId,
+                              messageType: event.messageType,
+                              tool: event.tool,
+                              subtype: event.subtype,
+                            },
+                            'agent-sdk: streaming event',
+                          );
+                        } else {
+                          throw new Error(event.message);
+                        }
+                      }
+
+                      return;
+                    }
+
+                    const result = await strategy.run(queryInput);
+                    sawEvents = true;
+                    outputText = result.output;
+                    resultSessionId = result.sessionId;
+                    usage = result.usage;
+
+                    if (result.isError) {
+                      throw new Error(`CLI provider returned error: ${result.output || 'unknown error'}`);
+                    }
+                  })();
+
+                  let timeoutId: ReturnType<typeof setTimeout>;
+                  const timeoutPromise = new Promise<never>((_, reject) => {
+                    timeoutId = setTimeout(
+                      () => reject(new Error(`agent-sdk query timed out after ${this.queryTimeoutMs / 1000}s`)),
+                      this.queryTimeoutMs,
+                    );
+                  });
+
+                  try {
+                    await Promise.race([queryPromise, timeoutPromise]);
+                  } catch (cause) {
+                    // Abort the in-flight provider stream to prevent leaked work
+                    if (activeIterator?.return) {
+                      activeIterator.return(undefined).catch(() => {});
+                    }
+                    const message = cause instanceof Error ? cause.message : String(cause);
+                    throw new AgentQueryAttemptError(message, resumeSessionId, sawEvents);
+                  } finally {
+                    clearTimeout(timeoutId!);
+                  }
+
+                  generationObservation.update({
+                    output: outputText,
+                    metadata: {
+                      resultSessionId: resultSessionId ?? null,
+                      resumeSessionId: resumeSessionId ?? null,
+                    },
+                    usageDetails: {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens,
+                      cacheReadTokens: usage.cacheReadTokens ?? 0,
+                      cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+                    },
+                    costDetails:
+                      usage.totalCostUsd !== undefined
+                        ? { totalCostUsd: usage.totalCostUsd }
+                        : undefined,
+                  });
+
+                  return {
+                    outputText,
+                    resultSessionId,
+                    usage,
+                  };
+                },
+              );
+            };
+
+            let outputText = '';
+            let resultSessionId: string | undefined;
+            let usage: AgentUsage = {
+              inputTokens: 0,
+              outputTokens: 0,
+            };
+
+            try {
+              ({
+                outputText,
+                resultSessionId,
+                usage,
+              } = await executeAgentQuery(existingSessionId));
+            } catch (cause) {
+              if (strategy.type === 'sdk' && this.shouldRetryFreshSession(cause)) {
+                this.ctx.sessionTracker.rotateSession(item.threadId);
+                this.ctx.logger.warn(
+                  {
+                    threadId: item.threadId,
+                    sessionId: cause.resumeSessionId,
+                    error: cause.message,
+                  },
+                  'agent-sdk: resumed session failed before any events, retrying fresh session',
+                );
+                ({
+                  outputText,
+                  resultSessionId,
+                  usage,
+                } = await executeAgentQuery(undefined));
+              } else {
+                throw cause;
+              }
+            }
+
+            // Store session ID for future conversation resumption (memory + DB).
+            if (resultSessionId) {
+              this.ctx.sessionTracker.setSessionId(item.threadId, resultSessionId);
+              this.ctx.repos.run.updateSessionId(runId, resultSessionId);
+            }
+
+            // Stop typing indicator.
+            if (typingInterval) clearInterval(typingInterval);
+
+            this.ctx.logger.info(
+              {
+                runId,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cacheReadTokens: usage.cacheReadTokens ?? 0,
+                cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+                totalCostUsd: usage.totalCostUsd ?? 0,
+                sessionId: resultSessionId,
+              },
+              'agent-runner: query completed',
+            );
+
+            // Persist token usage to the run record.
+            const tokenResult = this.ctx.repos.run.updateTokens(runId, {
+              input_tokens: usage.inputTokens,
+              output_tokens: usage.outputTokens,
+              cache_read_tokens: usage.cacheReadTokens ?? 0,
+              cache_write_tokens: usage.cacheWriteTokens ?? 0,
+              cost_usd: usage.totalCostUsd ?? 0,
+            });
+            if (tokenResult.isErr()) {
+              this.ctx.logger.error({ runId, err: tokenResult.error }, 'agent-runner: failed to persist token usage');
+            }
+
+            // Check if context needs rotation (rolling window).
+            // Awaited to prevent race with next queue item for the same thread.
+            const contextUsage = providerEntry.provider.estimateContextUsage(usage);
+            if (this.ctx.contextRoller && contextUsage.rawMetric > 0) {
+              try {
+                await this.ctx.contextRoller.checkAndRotate(
+                  item.threadId,
+                  personaId,
+                  contextUsage,
+                  providerEntry.config.rotationThreshold,
+                );
+              } catch (e: unknown) {
+                this.ctx.logger.error(
+                  { threadId: item.threadId, err: e },
+                  'agent-runner: context rotation failed',
+                );
+              }
+            }
+
+            if (item.type === 'schedule') {
+              this.ctx.logger.info(
+                { runId, outputLength: outputText.length },
+                'agent-sdk: skipping outbound reply for schedule item (agent already sent via channel_send)',
+              );
+            } else if (connector !== undefined && externalId) {
+              const sendResult = await connector.send(externalId, {
+                body: outputText,
+              });
+              if (sendResult.isErr()) {
+                throw new Error(`channel send failed: ${sendResult.error.message}`);
+              }
+            }
+
+            this.ctx.repos.message.insert({
+              id: uuidv4(),
+              thread_id: item.threadId,
+              direction: 'outbound',
+              content: JSON.stringify({ body: outputText }),
+              idempotency_key: `outbound:${runId}`,
+              provider_id: null,
+              run_id: runId,
+            });
+
+            runObservation.update({
+              output: {
+                text: outputText,
+              },
+              metadata: {
+                resultSessionId: resultSessionId ?? null,
+              },
+              trace: {
+                output: outputText,
+              },
+            });
+
+            this.ctx.repos.run.updateStatus(runId, 'completed', {
+              ended_at: Date.now(),
+            });
+          } catch (cause) {
+            if (typingInterval) clearInterval(typingInterval);
+            const message = cause instanceof Error ? cause.message : String(cause);
+            this.ctx.repos.run.updateStatus(runId, 'failed', { ended_at: Date.now(), error: message });
+            throw new Error(message);
           }
-
-          const result = await strategy.run(queryInput);
-          sawEvents = true;
-          outputText = result.output;
-          resultSessionId = result.sessionId;
-          usage = result.usage;
-
-          if (result.isError) {
-            throw new Error(`CLI provider returned error: ${result.output || 'unknown error'}`);
-          }
-        })();
-
-        let timeoutId: ReturnType<typeof setTimeout>;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(
-            () => reject(new Error(`agent-sdk query timed out after ${this.queryTimeoutMs / 1000}s`)),
-            this.queryTimeoutMs,
-          );
-        });
-
-        try {
-          await Promise.race([queryPromise, timeoutPromise]);
-        } catch (cause) {
-          // Abort the in-flight provider stream to prevent leaked work
-          if (activeIterator?.return) {
-            activeIterator.return(undefined).catch(() => {});
-          }
-          const message = cause instanceof Error ? cause.message : String(cause);
-          throw new AgentQueryAttemptError(message, resumeSessionId, sawEvents);
-        } finally {
-          clearTimeout(timeoutId!);
-        }
-
-        return {
-          outputText,
-          resultSessionId,
-          usage,
-        };
-      };
-
-      let outputText = '';
-      let resultSessionId: string | undefined;
-      let usage: AgentUsage = {
-        inputTokens: 0,
-        outputTokens: 0,
-      };
-
-      try {
-        ({
-          outputText,
-          resultSessionId,
-          usage,
-        } = await executeAgentQuery(existingSessionId));
-      } catch (cause) {
-        if (strategy.type === 'sdk' && this.shouldRetryFreshSession(cause)) {
-          this.ctx.sessionTracker.rotateSession(item.threadId);
-          this.ctx.logger.warn(
-            {
-              threadId: item.threadId,
-              sessionId: cause.resumeSessionId,
-              error: cause.message,
-            },
-            'agent-sdk: resumed session failed before any events, retrying fresh session',
-          );
-          ({
-            outputText,
-            resultSessionId,
-            usage,
-          } = await executeAgentQuery(undefined));
-        } else {
-          throw cause;
-        }
-      }
-
-      // Store session ID for future conversation resumption (memory + DB).
-      if (resultSessionId) {
-        this.ctx.sessionTracker.setSessionId(item.threadId, resultSessionId);
-        this.ctx.repos.run.updateSessionId(runId, resultSessionId);
-      }
-
-      // Stop typing indicator.
-      if (typingInterval) clearInterval(typingInterval);
-
-      this.ctx.logger.info(
-        {
-          runId,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          cacheReadTokens: usage.cacheReadTokens ?? 0,
-          cacheWriteTokens: usage.cacheWriteTokens ?? 0,
-          totalCostUsd: usage.totalCostUsd ?? 0,
-          sessionId: resultSessionId,
         },
-        'agent-runner: query completed',
       );
 
-      // Persist token usage to the run record.
-      const tokenResult = this.ctx.repos.run.updateTokens(runId, {
-        input_tokens: usage.inputTokens,
-        output_tokens: usage.outputTokens,
-        cache_read_tokens: usage.cacheReadTokens ?? 0,
-        cache_write_tokens: usage.cacheWriteTokens ?? 0,
-        cost_usd: usage.totalCostUsd ?? 0,
-      });
-      if (tokenResult.isErr()) {
-        this.ctx.logger.error({ runId, err: tokenResult.error }, 'agent-runner: failed to persist token usage');
-      }
-
-      // Check if context needs rotation (rolling window).
-      // Awaited to prevent race with next queue item for the same thread.
-      const contextUsage = providerEntry.provider.estimateContextUsage(usage);
-      if (this.ctx.contextRoller && contextUsage.rawMetric > 0) {
-        try {
-          await this.ctx.contextRoller.checkAndRotate(
-            item.threadId,
-            personaId,
-            contextUsage,
-            providerEntry.config.rotationThreshold,
-          );
-        } catch (e: unknown) {
-          this.ctx.logger.error(
-            { threadId: item.threadId, err: e },
-            'agent-runner: context rotation failed',
-          );
-        }
-      }
-
-      if (item.type === 'schedule') {
-        this.ctx.logger.info(
-          { runId, outputLength: outputText.length },
-          'agent-sdk: skipping outbound reply for schedule item (agent already sent via channel_send)',
-        );
-      } else if (connector !== undefined && externalId) {
-        const sendResult = await connector.send(externalId, {
-          body: outputText,
-        });
-        if (sendResult.isErr()) {
-          throw new Error(`channel send failed: ${sendResult.error.message}`);
-        }
-      }
-
-      this.ctx.repos.message.insert({
-        id: uuidv4(),
-        thread_id: item.threadId,
-        direction: 'outbound',
-        content: JSON.stringify({ body: outputText }),
-        idempotency_key: `outbound:${runId}`,
-        provider_id: null,
-        run_id: runId,
-      });
-
-      this.ctx.repos.run.updateStatus(runId, 'completed', {
-        ended_at: Date.now(),
-      });
       return ok(undefined);
     } catch (cause) {
-      if (typingInterval) clearInterval(typingInterval);
       const message = cause instanceof Error ? cause.message : String(cause);
-      this.ctx.repos.run.updateStatus(runId, 'failed', { ended_at: Date.now(), error: message });
       return err(new Error(message));
     }
   }

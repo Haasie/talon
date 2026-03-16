@@ -112,7 +112,12 @@ function createHandler(overrides: Record<string, unknown> = {}) {
       ]),
     } as any,
     contextAssembler: {
-      assemble: vi.fn().mockReturnValue('Previous thread summary.'),
+      assemble: vi.fn().mockReturnValue({
+        text: 'Previous thread summary.',
+        summaryFound: true,
+        recentMessageCount: 0,
+        charCount: 24,
+      }),
     } as any,
     loadedSkills: [
       {

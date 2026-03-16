@@ -5,6 +5,7 @@ import type { LoadedSubAgent, SubAgentServices } from '../../../src/subagents/su
 import type { ModelResolver } from '../../../src/subagents/model-resolver.js';
 import { SubAgentError } from '../../../src/core/errors/index.js';
 import type pino from 'pino';
+import type { ObservabilityService } from '../../../src/observability/langfuse/observability-types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -70,8 +71,9 @@ const mockServices = {
 function makeRunner(
   agents: Map<string, LoadedSubAgent> = new Map(),
   resolver: ModelResolver = mockResolver,
+  observability: ObservabilityService | undefined = undefined,
 ): SubAgentRunner {
-  return new SubAgentRunner(agents, resolver, mockServices, mockLogger);
+  return new SubAgentRunner(agents, resolver, mockServices, mockLogger, observability);
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +81,36 @@ function makeRunner(
 // ---------------------------------------------------------------------------
 
 describe('SubAgentRunner', () => {
+  it('wraps sub-agent execution in an agent observation', async () => {
+    const agent = makeAgent();
+    const observe = vi.fn(async (_input, fn) => await fn({
+      update: vi.fn(),
+      getTraceparent: vi.fn().mockReturnValue(null),
+    }));
+    const observability = {
+      observe,
+      observeWithTraceparent: vi.fn(),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ObservabilityService;
+    const agents = new Map([['test-agent', agent]]);
+    const runner = makeRunner(agents, mockResolver, observability);
+
+    const result = await runner.execute('test-agent', { key: 'value' }, makeContext());
+
+    expect(result.isOk()).toBe(true);
+    expect(observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'agent',
+        name: 'subagent:test-agent',
+        metadata: expect.objectContaining({
+          threadId: 'thread-1',
+          personaId: 'assistant',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
   it('executes a sub-agent and returns its result (happy path)', async () => {
     const agent = makeAgent();
     const agents = new Map([['test-agent', agent]]);
