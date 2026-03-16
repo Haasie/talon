@@ -155,7 +155,20 @@ export class SlackConnector implements ChannelConnector {
     const text = this.format(output.body);
 
     // Decode the compound thread ID.
-    const { channelId, threadTs } = decodeThreadId(externalThreadId);
+    let { channelId, threadTs } = decodeThreadId(externalThreadId);
+
+    // Fall back to defaultChannel when the resolved ID doesn't look like a
+    // Slack channel ID (e.g. when sending cross-channel from a non-Slack thread).
+    if (!channelId.startsWith('C') && !channelId.startsWith('G') && !channelId.startsWith('D')) {
+      if (this.config.defaultChannel) {
+        this.logger.debug(
+          { channelName: this.name, original: channelId, fallback: this.config.defaultChannel },
+          'externalThreadId is not a Slack channel ID, falling back to defaultChannel',
+        );
+        channelId = this.config.defaultChannel;
+        threadTs = undefined;
+      }
+    }
 
     const payload: Record<string, unknown> = {
       channel: channelId,

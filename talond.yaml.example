@@ -53,6 +53,7 @@ channels:
       botToken: ${SLACK_BOT_TOKEN}   # Bot User OAuth Token (xoxb-...)
       appToken: ${SLACK_APP_TOKEN}   # App-Level Token for Socket Mode (xapp-...)
       signingSecret: ${SLACK_SIGNING_SECRET}  # signing secret from Slack app settings
+      defaultChannel: ${SLACK_DEFAULT_CHANNEL} # channel ID id for messages initiated by talon
 
 # ---------------------------------------------------------------------------
 # Personas — AI agent definitions, each with its own model + capabilities
