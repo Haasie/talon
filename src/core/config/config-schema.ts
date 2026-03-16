@@ -163,6 +163,20 @@ export const AgentRunnerConfigSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const ContextConfigSchema = z.object({
+  /**
+   * Enable automatic context rotation. Default: true.
+   *
+   * When enabled, sessions are rotated when cache_read_input_tokens approaches
+   * the context window limit (controlled by the provider's rotationThreshold).
+   * This reduces per-turn token costs for API-billed users by keeping context
+   * size in check.
+   *
+   * Claude Max subscribers may want to disable this — cached tokens are free
+   * under Max plans, so long sessions with high cache hit ratios are the
+   * cheapest possible state. Rotation actually increases cost by forcing
+   * expensive cache creation (1.25×) on fresh sessions.
+   */
+  enabled: z.boolean().default(true),
   /** Legacy token threshold fallback converted to provider rotation ratios. Default: 80 000. */
   thresholdTokens: z.number().int().min(10_000).default(80_000),
   /** Number of recent messages to include verbatim in fresh sessions. Default: 10. */

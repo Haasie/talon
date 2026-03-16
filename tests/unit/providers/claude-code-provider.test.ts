@@ -142,15 +142,16 @@ describe('ClaudeCodeProvider', () => {
     expect(result.usage).toBeUndefined();
   });
 
-  it('estimates context usage from cache-read tokens', () => {
+  it('estimates context usage from cache-read tokens for context window fullness', () => {
     expect(
       provider.estimateContextUsage({
         inputTokens: 1000,
         outputTokens: 200,
         cacheReadTokens: 50000,
+        cacheWriteTokens: 500,
       }),
     ).toEqual({
-      ratio: 0.25,
+      ratio: 0.25, // cacheReadTokens / contextWindowTokens
       inputTokens: 1000,
       rawMetric: 50000,
       rawMetricName: 'cache_read_input_tokens',
@@ -286,6 +287,7 @@ describe('ClaudeCodeProvider', () => {
       inputTokens: 0,
       outputTokens: 0,
       cacheReadTokens: 0,
+      cacheWriteTokens: 0,
     });
 
     expect(result).toEqual({
