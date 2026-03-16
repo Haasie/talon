@@ -192,12 +192,12 @@ const TOOLS = [
       properties: {
         action: {
           type: 'string' as const,
-          enum: ['create', 'update', 'cancel', 'list'],
-          description: 'Action to perform. Use "list" to see all schedules for this persona.',
+          enum: ['create', 'update', 'cancel', 'delete', 'list'],
+          description: 'Action to perform. "cancel" disables a schedule, "delete" removes it permanently. Use "list" to see all schedules.',
         },
         scheduleId: {
           type: 'string' as const,
-          description: 'Unique schedule identifier (required for update/cancel)',
+          description: 'Unique schedule identifier (required for update/cancel/delete)',
         },
         cronExpr: {
           type: 'string' as const,

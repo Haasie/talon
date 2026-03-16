@@ -118,6 +118,37 @@ describe('ScheduleRepository', () => {
     });
   });
 
+  describe('delete', () => {
+    it('permanently removes a schedule row', () => {
+      const input = makeSched();
+      repo.insert(input);
+      const result = repo.delete(input.id, personaId);
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()?.id).toBe(input.id);
+
+      const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(input.id);
+      expect(row).toBeUndefined();
+    });
+
+    it('returns null when schedule does not exist', () => {
+      const result = repo.delete(uuid(), personaId);
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBeNull();
+    });
+
+    it('returns null when persona does not own the schedule', () => {
+      const input = makeSched();
+      repo.insert(input);
+      const result = repo.delete(input.id, 'other-persona');
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBeNull();
+
+      // Row should still exist
+      const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(input.id);
+      expect(row).toBeDefined();
+    });
+  });
+
   describe('enable / disable', () => {
     it('disables an enabled schedule', () => {
       const input = makeSched({ enabled: 1 });

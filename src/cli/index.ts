@@ -355,7 +355,7 @@ program
 
 program
   .command('remove-schedule')
-  .description('Disable a scheduled task')
+  .description('Permanently delete a scheduled task')
   .argument('<schedule-id>', 'Schedule ID to remove')
   .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
   .action(async (scheduleId: string, opts: { config: string }) => {

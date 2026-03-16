@@ -23,7 +23,7 @@ export interface ScheduleManageTool {
 /** Arguments accepted by the schedule.manage tool. */
 export interface ScheduleManageArgs {
   /** Action to perform on the schedule entry. */
-  action: 'create' | 'update' | 'cancel' | 'list';
+  action: 'create' | 'update' | 'cancel' | 'delete' | 'list';
   /** Unique schedule identifier (required for update/cancel). */
   scheduleId?: string;
   /** Cron expression defining when the task fires (required for create/update). */
@@ -37,7 +37,7 @@ export interface ScheduleManageArgs {
 }
 
 /** Valid actions for the schedule.manage tool. */
-const VALID_ACTIONS = new Set(['create', 'update', 'cancel', 'list']);
+const VALID_ACTIONS = new Set(['create', 'update', 'cancel', 'delete', 'list']);
 
 /**
  * Basic validation for cron expressions.
@@ -59,7 +59,7 @@ export class ScheduleManageHandler {
   static readonly manifest: ToolManifest = {
     name: 'schedule.manage',
     description:
-      'Creates, updates, or cancels scheduled tasks on behalf of a persona. Gated by schedule.write:own.',
+      'Creates, updates, cancels, deletes, or lists scheduled tasks on behalf of a persona. Gated by schedule.write:own.',
     capabilities: ['schedule.write:own'],
     executionLocation: 'host',
   };
@@ -95,7 +95,7 @@ export class ScheduleManageHandler {
     // Validate action
     if (!action || !VALID_ACTIONS.has(action)) {
       const error = new ToolError(
-        `schedule.manage: invalid action "${action}". Must be one of: create, update, cancel`,
+        `schedule.manage: invalid action "${action}". Must be one of: create, update, cancel, delete, list`,
       );
       this.deps.logger.warn({ requestId, action }, error.message);
       return { requestId, tool: 'schedule.manage', status: 'error', error: error.message };
@@ -108,6 +108,8 @@ export class ScheduleManageHandler {
         return this.handleUpdate(args, context, requestId);
       case 'cancel':
         return this.handleCancel(args, context, requestId);
+      case 'delete':
+        return this.handleDelete(args, context, requestId);
       case 'list':
         return this.handleList(context, requestId);
       default: {
@@ -334,6 +336,46 @@ export class ScheduleManageHandler {
       tool: 'schedule.manage',
       status: 'success',
       result: { scheduleId, action: 'cancel', cancelled: true },
+    };
+  }
+
+  /** Handle the 'delete' action — permanently remove the schedule row. */
+  private handleDelete(
+    args: ScheduleManageArgs,
+    context: ToolExecutionContext,
+    requestId: string,
+  ): ToolCallResult {
+    const { scheduleId } = args;
+
+    if (!scheduleId || typeof scheduleId !== 'string' || scheduleId.trim() === '') {
+      const error = new ToolError('schedule.manage: scheduleId is required for delete action');
+      this.deps.logger.warn({ requestId }, error.message);
+      return { requestId, tool: 'schedule.manage', status: 'error', error: error.message };
+    }
+
+    const deleteResult = this.deps.scheduleRepository.delete(scheduleId, context.personaId);
+    if (deleteResult.isErr()) {
+      const msg = `schedule.manage: delete failed — ${deleteResult.error.message}`;
+      this.deps.logger.error({ requestId, scheduleId, err: deleteResult.error }, msg);
+      return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+    }
+
+    if (deleteResult.value === null) {
+      const msg = `schedule.manage: schedule "${scheduleId}" not found or not owned by this persona`;
+      this.deps.logger.warn({ requestId, scheduleId, personaId: context.personaId }, msg);
+      return { requestId, tool: 'schedule.manage', status: 'error', error: msg };
+    }
+
+    this.deps.logger.info(
+      { requestId, scheduleId, personaId: context.personaId },
+      'schedule.manage: schedule deleted',
+    );
+
+    return {
+      requestId,
+      tool: 'schedule.manage',
+      status: 'success',
+      result: { scheduleId, action: 'delete', deleted: true },
     };
   }
 

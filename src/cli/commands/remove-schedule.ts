@@ -1,8 +1,7 @@
 /**
  * `talonctl remove-schedule` command.
  *
- * Disables a schedule by its ID. The schedule row is not deleted; it is
- * marked as disabled so it will no longer fire.
+ * Permanently deletes a schedule row by its ID.
  *
  * The pure `removeSchedule()` function can be called programmatically.
  * The `removeScheduleCommand()` wrapper handles config loading, DB lifecycle,
@@ -18,7 +17,10 @@ import { ScheduleRepository } from '../../core/database/repositories/schedule-re
 // ---------------------------------------------------------------------------
 
 /**
- * Disables an existing schedule by ID.
+ * Permanently deletes a schedule by ID.
+ *
+ * Unlike the schedule.manage tool (which enforces persona ownership), the CLI
+ * is an operator-level command that can delete any schedule regardless of owner.
  *
  * @throws Error if the schedule ID is not found or a DB error occurs.
  */
@@ -36,10 +38,7 @@ export function removeSchedule(options: { scheduleId: string; db: Database.Datab
     throw new Error(`Schedule not found: "${scheduleId}"`);
   }
 
-  const disableResult = scheduleRepo.disable(scheduleId);
-  if (disableResult.isErr()) {
-    throw new Error(`Failed to disable schedule: ${disableResult.error.message}`);
-  }
+  db.prepare(`DELETE FROM schedules WHERE id = ?`).run(scheduleId);
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +77,7 @@ export async function removeScheduleCommand(options: {
 
   try {
     removeSchedule({ scheduleId: options.scheduleId, db });
-    console.log(`Schedule ${options.scheduleId.slice(0, 8)}… disabled.`);
+    console.log(`Schedule ${options.scheduleId.slice(0, 8)}… deleted.`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exit(1);

@@ -437,12 +437,12 @@ describe('removeSchedule()', () => {
     const before = schedRepo.findById(created.id)._unsafeUnwrap();
     expect(before!.enabled).toBe(1);
 
-    // Remove (disable) it
+    // Remove (delete) it
     removeSchedule({ scheduleId: created.id, db });
 
-    // Verify it is now disabled
+    // Verify it is now deleted
     const after = schedRepo.findById(created.id)._unsafeUnwrap();
-    expect(after!.enabled).toBe(0);
+    expect(after).toBeNull();
   });
 
   it('throws for unknown schedule ID', () => {
