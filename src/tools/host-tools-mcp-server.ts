@@ -193,7 +193,7 @@ const TOOLS = [
         action: {
           type: 'string' as const,
           enum: ['create', 'update', 'cancel', 'delete', 'list'],
-          description: 'Action to perform. "cancel" disables a schedule, "delete" removes it permanently. Use "list" to see all schedules.',
+          description: 'Action to perform. "cancel" disables a schedule, "delete" removes it permanently. Use "list" to see your schedules.',
         },
         scheduleId: {
           type: 'string' as const,

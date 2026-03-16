@@ -38,7 +38,10 @@ export function removeSchedule(options: { scheduleId: string; db: Database.Datab
     throw new Error(`Schedule not found: "${scheduleId}"`);
   }
 
-  db.prepare(`DELETE FROM schedules WHERE id = ?`).run(scheduleId);
+  const result = db.prepare(`DELETE FROM schedules WHERE id = ?`).run(scheduleId);
+  if (result.changes === 0) {
+    throw new Error(`Failed to delete schedule: "${scheduleId}"`);
+  }
 }
 
 // ---------------------------------------------------------------------------

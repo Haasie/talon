@@ -191,7 +191,8 @@ export class ScheduleRepository extends BaseRepository {
       if (row.persona_id !== personaId) return ok(null);
 
       const stmt = this.db.prepare(`DELETE FROM schedules WHERE id = ? AND persona_id = ?`);
-      stmt.run(id, personaId);
+      const result = stmt.run(id, personaId);
+      if (result.changes === 0) return ok(null);
       return ok(row);
     } catch (cause) {
       return err(new DbError(`Failed to delete schedule: ${String(cause)}`, cause instanceof Error ? cause : undefined));

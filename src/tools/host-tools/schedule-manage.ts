@@ -24,7 +24,7 @@ export interface ScheduleManageTool {
 export interface ScheduleManageArgs {
   /** Action to perform on the schedule entry. */
   action: 'create' | 'update' | 'cancel' | 'delete' | 'list';
-  /** Unique schedule identifier (required for update/cancel). */
+  /** Unique schedule identifier (required for update/cancel/delete). */
   scheduleId?: string;
   /** Cron expression defining when the task fires (required for create/update). */
   cronExpr?: string;
