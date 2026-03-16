@@ -177,6 +177,28 @@ export class ScheduleRepository extends BaseRepository {
     }
   }
 
+  /**
+   * Permanently deletes a schedule row.
+   *
+   * @param id        - Schedule primary key.
+   * @param personaId - Persona that owns the schedule (ownership check).
+   * @returns The deleted row, or null if no matching row was found.
+   */
+  delete(id: string, personaId: string): Result<ScheduleRow | null, DbError> {
+    try {
+      const row = this.findByIdStmt.get(id) as ScheduleRow | undefined;
+      if (!row) return ok(null);
+      if (row.persona_id !== personaId) return ok(null);
+
+      const stmt = this.db.prepare(`DELETE FROM schedules WHERE id = ? AND persona_id = ?`);
+      const result = stmt.run(id, personaId);
+      if (result.changes === 0) return ok(null);
+      return ok(row);
+    } catch (cause) {
+      return err(new DbError(`Failed to delete schedule: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
   /** Enables a schedule. */
   enable(id: string): Result<void, DbError> {
     return this._setEnabled(id, 1);

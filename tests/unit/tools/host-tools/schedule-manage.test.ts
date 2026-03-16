@@ -64,6 +64,7 @@ function makeRepo(overrides: Partial<ScheduleRepository> = {}): ScheduleReposito
   return {
     insert: vi.fn().mockReturnValue(ok(makeScheduleRow())),
     update: vi.fn().mockReturnValue(ok(makeScheduleRow())),
+    delete: vi.fn().mockReturnValue(ok(makeScheduleRow())),
     disable: vi.fn().mockReturnValue(ok(undefined)),
     enable: vi.fn().mockReturnValue(ok(undefined)),
     findByPersona: vi.fn().mockReturnValue(ok([])),
@@ -517,6 +518,83 @@ describe('ScheduleManageHandler — cancel', () => {
 
     expect(result.status).toBe('error');
     expect(result.error).toMatch(/cancel failed/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Action: delete
+// ---------------------------------------------------------------------------
+
+describe('ScheduleManageHandler — delete', () => {
+  it('permanently deletes a schedule', async () => {
+    const deleteFn = vi.fn().mockReturnValue(ok(makeScheduleRow()));
+    const repo = makeRepo({ delete: deleteFn });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'delete', scheduleId: 'sched-001' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('success');
+    expect((result.result as { deleted: boolean }).deleted).toBe(true);
+    expect(deleteFn).toHaveBeenCalledWith('sched-001', 'persona-001');
+  });
+
+  it('returns error when scheduleId is missing', async () => {
+    const repo = makeRepo();
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'delete' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/scheduleId is required/);
+  });
+
+  it('returns error when scheduleId is empty string', async () => {
+    const repo = makeRepo();
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'delete', scheduleId: '' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/scheduleId is required/);
+  });
+
+  it('returns error when schedule not found or not owned', async () => {
+    const repo = makeRepo({
+      delete: vi.fn().mockReturnValue(ok(null)),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'delete', scheduleId: 'nonexistent' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/not found or not owned/);
+  });
+
+  it('propagates delete repository errors', async () => {
+    const repo = makeRepo({
+      delete: vi.fn().mockReturnValue(err(new DbError('db locked'))),
+    });
+    const handler = new ScheduleManageHandler({ scheduleRepository: repo, logger: makeLogger() });
+
+    const result = await handler.execute(
+      { action: 'delete', scheduleId: 'sched-001' },
+      makeContext(),
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/delete failed/);
   });
 });
 
