@@ -264,7 +264,7 @@ export async function bootstrap(
   //     Disabled when context.enabled is false (e.g. Claude Max subscribers).
   let contextRoller: ContextRoller | null = null;
   const summarizerAgent = mergedAgentMap.get('session-summarizer');
-  if (!config.context.enabled) {
+  if (config.context.enabled === false) {
     logger.info('bootstrap: context rotation disabled via config');
   } else if (summarizerAgent && modelResolver) {
     const summarizerModelResult = await modelResolver.resolve(summarizerAgent.manifest.model);
