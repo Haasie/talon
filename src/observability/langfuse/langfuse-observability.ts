@@ -2,11 +2,18 @@ import type pino from 'pino';
 import { context as otelContext, propagation as otelPropagation, trace as otelTrace } from '@opentelemetry/api';
 import { LangfuseSpanProcessor } from '@langfuse/otel';
 import {
+  type LangfuseAgent,
+  type LangfuseChain,
+  type LangfuseEvaluator,
+  type LangfuseGeneration,
+  type LangfuseGuardrail,
   propagateAttributes,
+  type LangfuseRetriever,
   setLangfuseTracerProvider,
   startActiveObservation,
-  type LangfuseObservation,
   type LangfuseObservationAttributes,
+  type LangfuseSpan,
+  type LangfuseTool,
 } from '@langfuse/tracing';
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -24,6 +31,16 @@ interface LangfuseObservabilityOptions {
   exporter?: SpanExporter;
   shouldExportSpan?: (params: { otelSpan: ReadableSpan }) => boolean;
 }
+
+type TalonLangfuseObservation =
+  | LangfuseAgent
+  | LangfuseChain
+  | LangfuseEvaluator
+  | LangfuseGeneration
+  | LangfuseGuardrail
+  | LangfuseRetriever
+  | LangfuseSpan
+  | LangfuseTool;
 
 export class LangfuseObservabilityService implements ObservabilityService {
   private readonly provider: NodeTracerProvider;
@@ -87,20 +104,7 @@ export class LangfuseObservabilityService implements ObservabilityService {
   ): Promise<T> {
     const parentSpanContext = parseTraceparent(traceparent);
     const runObservation = async (): Promise<T> =>
-      await startActiveObservation(
-        input.name,
-        async (observation) => {
-          this.applyUpdate(observation, input);
-          return await fn({
-            update: (update) => this.applyUpdate(observation, update),
-            getTraceparent: () => serializeTraceparent(observation.otelSpan.spanContext()),
-          });
-        },
-        {
-          asType: input.type,
-          parentSpanContext: parentSpanContext ?? undefined,
-        },
-      );
+      await this.startTypedObservation(input, parentSpanContext, fn);
 
     if (!input.trace) {
       return await runObservation();
@@ -119,7 +123,66 @@ export class LangfuseObservabilityService implements ObservabilityService {
     );
   }
 
-  private applyUpdate(observation: LangfuseObservation, update: ObservationInput | ObservationUpdate): void {
+  private async startTypedObservation<T>(
+    input: ObservationInput,
+    parentSpanContext: import('@opentelemetry/api').SpanContext | null,
+    fn: (observation: ObservationHandle) => Promise<T> | T,
+  ): Promise<T> {
+    const options = {
+      parentSpanContext: parentSpanContext ?? undefined,
+    };
+
+    switch (input.type) {
+      case 'agent':
+        return await startActiveObservation(
+          input.name,
+          async (observation) => await this.runObservedCallback(observation, input, fn),
+          { ...options, asType: 'agent' },
+        );
+      case 'generation':
+        return await startActiveObservation(
+          input.name,
+          async (observation) => await this.runObservedCallback(observation, input, fn),
+          { ...options, asType: 'generation' },
+        );
+      case 'tool':
+        return await startActiveObservation(
+          input.name,
+          async (observation) => await this.runObservedCallback(observation, input, fn),
+          { ...options, asType: 'tool' },
+        );
+      case 'retriever':
+        return await startActiveObservation(
+          input.name,
+          async (observation) => await this.runObservedCallback(observation, input, fn),
+          { ...options, asType: 'retriever' },
+        );
+      default:
+        return await startActiveObservation(
+          input.name,
+          async (observation) => await this.runObservedCallback(observation, input, fn),
+          options,
+        );
+    }
+  }
+
+  private async runObservedCallback<T>(
+    observation: TalonLangfuseObservation,
+    input: ObservationInput,
+    fn: (observation: ObservationHandle) => Promise<T> | T,
+  ): Promise<T> {
+    this.applyUpdate(observation, input);
+
+    return await fn({
+      update: (update) => this.applyUpdate(observation, update),
+      getTraceparent: () => serializeTraceparent(observation.otelSpan.spanContext()),
+    });
+  }
+
+  private applyUpdate(
+    observation: TalonLangfuseObservation,
+    update: ObservationInput | ObservationUpdate,
+  ): void {
     const attributes: LangfuseObservationAttributes = {
       environment: this.config.environment,
     };
