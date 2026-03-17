@@ -221,6 +221,21 @@ describe('SubAgentRunner', () => {
     expect(toolErr.message).toContain('Something went wrong');
   });
 
+  it('preserves the original sub-agent error as the ToolError cause', async () => {
+    const subAgentError = new SubAgentError('Something went wrong');
+    const failingRun = vi.fn().mockResolvedValue(err(subAgentError));
+    const agent = makeAgent({ run: failingRun });
+    const agents = new Map([['test-agent', agent]]);
+    const runner = makeRunner(agents);
+
+    const result = await runner.execute('test-agent', {}, makeContext());
+
+    expect(result.isErr()).toBe(true);
+    const toolErr = result._unsafeUnwrapErr();
+    expect(toolErr.code).toBe('TOOL_ERROR');
+    expect(toolErr.cause).toBe(subAgentError);
+  });
+
   it('returns error when model resolution fails', async () => {
     const { ConfigError } = await import('../../../src/core/errors/index.js');
     const failingResolver = {

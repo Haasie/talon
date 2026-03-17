@@ -1,7 +1,7 @@
 import type { SpanContext } from '@opentelemetry/api';
 import { TraceFlags } from '@opentelemetry/api';
 
-const TRACEPARENT_PATTERN = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
+const TRACEPARENT_PATTERN = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
 
 function isAllZero(value: string): boolean {
   return /^0+$/.test(value);
@@ -17,7 +17,7 @@ export function parseTraceparent(value: string | null | undefined): SpanContext 
     return null;
   }
 
-  const [, traceId, spanId, flags] = match;
+  const [, _version, traceId, spanId, flags] = match;
   if (isAllZero(traceId) || isAllZero(spanId)) {
     return null;
   }

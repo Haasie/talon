@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import pino from 'pino';
+import { context, propagation, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
 import { LangfuseOtelSpanAttributes } from '@langfuse/tracing';
 
@@ -114,5 +115,35 @@ describe('LangfuseObservabilityService', () => {
     expect(spans[1].parentSpanContext?.spanId).toBe(spans[0].spanContext().spanId);
 
     await service.shutdown();
+  });
+
+  it('tears down global OpenTelemetry state on shutdown', async () => {
+    const traceDisable = vi.spyOn(trace, 'disable');
+    const contextDisable = vi.spyOn(context, 'disable');
+    const propagationDisable = vi.spyOn(propagation, 'disable');
+
+    const service = new LangfuseObservabilityService(
+      {
+        enabled: true,
+        publicKey: 'pk-lf-test',
+        secretKey: 'sk-lf-test',
+        baseUrl: 'https://cloud.langfuse.com',
+        environment: 'test',
+        exportMode: 'immediate',
+        flushAt: 1,
+        flushIntervalSeconds: 1,
+      },
+      createSilentLogger(),
+      {
+        exporter,
+        shouldExportSpan: () => true,
+      },
+    );
+
+    await service.shutdown();
+
+    expect(traceDisable).toHaveBeenCalledOnce();
+    expect(contextDisable).toHaveBeenCalledOnce();
+    expect(propagationDisable).toHaveBeenCalledOnce();
   });
 });

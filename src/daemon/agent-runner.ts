@@ -134,6 +134,7 @@ export class AgentRunner {
     }
 
     const content = typeof item.payload.content === 'string' ? item.payload.content : '';
+    let runFinalized = false;
 
     try {
       await this.ctx.observability.observe(
@@ -634,20 +635,35 @@ export class AgentRunner {
             this.ctx.repos.run.updateStatus(runId, 'completed', {
               ended_at: Date.now(),
             });
+            runFinalized = true;
           } catch (cause) {
             if (typingInterval) clearInterval(typingInterval);
-            const message = cause instanceof Error ? cause.message : String(cause);
-            this.ctx.repos.run.updateStatus(runId, 'failed', { ended_at: Date.now(), error: message });
-            throw new Error(message);
+            const error = this.toError(cause);
+            this.ctx.repos.run.updateStatus(runId, 'failed', {
+              ended_at: Date.now(),
+              error: error.message,
+            });
+            runFinalized = true;
+            throw error;
           }
         },
       );
 
       return ok(undefined);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      return err(new Error(message));
+      const error = this.toError(cause);
+      if (!runFinalized) {
+        this.ctx.repos.run.updateStatus(runId, 'failed', {
+          ended_at: Date.now(),
+          error: error.message,
+        });
+      }
+      return err(error);
     }
+  }
+
+  private toError(cause: unknown): Error {
+    return cause instanceof Error ? cause : new Error(String(cause));
   }
 
   private shouldRetryFreshSession(cause: unknown): cause is AgentQueryAttemptError {

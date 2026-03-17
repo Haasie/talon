@@ -324,9 +324,15 @@ describe('bootstrap', () => {
     it('returns error when persona loading fails and closes db', async () => {
       const config = makeConfig();
       const db = makeMockDb();
+      const observability = {
+        observe: vi.fn(),
+        observeWithTraceparent: vi.fn(),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      };
       vi.mocked(loadConfig).mockReturnValue(ok(config as any));
       vi.mocked(createDatabase).mockReturnValue(ok(db as any));
       vi.mocked(runMigrations).mockReturnValue(ok(0));
+      vi.mocked(createObservabilityService).mockResolvedValue(observability as any);
 
       // Override the PersonaLoader mock to make loadFromConfig fail.
       vi.mocked(PersonaLoader).mockImplementation(() => ({
@@ -339,14 +345,21 @@ describe('bootstrap', () => {
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().message).toContain('Failed to load personas');
       expect(db.close).toHaveBeenCalledOnce();
+      expect(observability.shutdown).toHaveBeenCalledOnce();
     });
 
     it('returns error when skill loading fails and closes db', async () => {
       const config = makeConfig();
       const db = makeMockDb();
+      const observability = {
+        observe: vi.fn(),
+        observeWithTraceparent: vi.fn(),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      };
       vi.mocked(loadConfig).mockReturnValue(ok(config as any));
       vi.mocked(createDatabase).mockReturnValue(ok(db as any));
       vi.mocked(runMigrations).mockReturnValue(ok(0));
+      vi.mocked(createObservabilityService).mockResolvedValue(observability as any);
 
       // Restore PersonaLoader to success (may have been overridden by previous test).
       vi.mocked(PersonaLoader).mockImplementation(() => ({
@@ -364,6 +377,7 @@ describe('bootstrap', () => {
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().message).toContain('Failed to load skills');
       expect(db.close).toHaveBeenCalledOnce();
+      expect(observability.shutdown).toHaveBeenCalledOnce();
     });
   });
 

@@ -1,10 +1,12 @@
 import type pino from 'pino';
+import { context as otelContext, propagation as otelPropagation, trace as otelTrace } from '@opentelemetry/api';
 import { LangfuseSpanProcessor } from '@langfuse/otel';
 import {
   propagateAttributes,
   setLangfuseTracerProvider,
   startActiveObservation,
   type LangfuseObservation,
+  type LangfuseObservationAttributes,
 } from '@langfuse/tracing';
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -72,6 +74,9 @@ export class LangfuseObservabilityService implements ObservabilityService {
       await this.provider.shutdown();
     } finally {
       setLangfuseTracerProvider(null);
+      otelTrace.disable();
+      otelContext.disable();
+      otelPropagation.disable();
     }
   }
 
@@ -115,7 +120,7 @@ export class LangfuseObservabilityService implements ObservabilityService {
   }
 
   private applyUpdate(observation: LangfuseObservation, update: ObservationInput | ObservationUpdate): void {
-    const attributes: Record<string, unknown> = {
+    const attributes: LangfuseObservationAttributes = {
       environment: this.config.environment,
     };
 
@@ -147,7 +152,7 @@ export class LangfuseObservabilityService implements ObservabilityService {
       attributes.costDetails = update.costDetails;
     }
 
-    observation.update(attributes as never);
+    observation.update(attributes);
 
     if (update.trace && (update.trace.input !== undefined || update.trace.output !== undefined)) {
       observation.setTraceIO({

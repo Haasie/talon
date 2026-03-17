@@ -101,7 +101,11 @@ export class SubAgentRunner {
       return ok(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return err(new ToolError(message));
+      return err(
+        error instanceof ToolError
+          ? error
+          : new ToolError(message, error instanceof Error ? error : undefined),
+      );
     }
   }
 
@@ -182,6 +186,7 @@ export class SubAgentRunner {
         return err(
           new ToolError(
             `Sub-agent "${name}" failed: ${runResult.error.message}`,
+            runResult.error,
           ),
         );
       }
@@ -189,7 +194,11 @@ export class SubAgentRunner {
       return ok(runResult.value);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return err(new ToolError(message));
+      return err(
+        error instanceof ToolError
+          ? error
+          : new ToolError(message, error instanceof Error ? error : undefined),
+      );
     }
   }
 

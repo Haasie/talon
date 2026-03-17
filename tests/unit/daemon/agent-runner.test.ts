@@ -840,6 +840,23 @@ describe('AgentRunner', () => {
   // -------------------------------------------------------------------------
 
   describe('agent error handling', () => {
+    it('marks the run failed when root observation setup throws before invoking the callback', async () => {
+      const observabilityError = new Error('observability failed before callback');
+      vi.mocked(ctx.observability.observe).mockImplementationOnce(async () => {
+        throw observabilityError;
+      });
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toBe(observabilityError);
+      expect(ctx.repos.run.updateStatus).toHaveBeenCalledWith(
+        expect.any(String),
+        'failed',
+        expect.objectContaining({ error: 'observability failed before callback' }),
+      );
+    });
+
     it('retries once without resume when a resumed session fails before any events', async () => {
       vi.mocked(ctx.sessionTracker.getSessionId).mockReturnValue('stale-session');
       mockQuery
@@ -878,6 +895,7 @@ describe('AgentRunner', () => {
       const result = await runner.run(item);
 
       expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().name).toBe('AgentQueryAttemptError');
       expect(result._unsafeUnwrapErr().message).toContain('Agent SDK crash');
       expect(ctx.repos.run.updateStatus).toHaveBeenCalledWith(
         expect.any(String),
