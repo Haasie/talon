@@ -39,6 +39,26 @@ describe('NoopObservabilityService', () => {
     expect(result).toBeNull();
   });
 
+  it('returns inert handles for manually started observations', () => {
+    const service = new NoopObservabilityService();
+
+    const observation = service.startWithTraceparent(
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      {
+        type: 'tool',
+        name: 'channel.send',
+        input: { body: 'hello' },
+      },
+    );
+
+    observation.update({
+      output: { ok: true },
+    });
+    observation.end();
+
+    expect(observation.getTraceparent()).toBeNull();
+  });
+
   it('shuts down cleanly', async () => {
     const service = new NoopObservabilityService();
 

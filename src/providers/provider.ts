@@ -34,6 +34,10 @@ export type AgentStreamEvent =
       type: 'tool_event';
       messageType: string;
       tool?: string;
+      toolUseId?: string;
+      input?: unknown;
+      output?: unknown;
+      isError?: boolean;
       subtype?: string;
       serverName?: string;
     }

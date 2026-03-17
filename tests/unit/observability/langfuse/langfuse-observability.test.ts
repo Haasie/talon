@@ -117,6 +117,56 @@ describe('LangfuseObservabilityService', () => {
     await service.shutdown();
   });
 
+  it('supports manually started child observations under an explicit traceparent', async () => {
+    const service = new LangfuseObservabilityService(
+      {
+        enabled: true,
+        publicKey: 'pk-lf-test',
+        secretKey: 'sk-lf-test',
+        baseUrl: 'https://cloud.langfuse.com',
+        environment: 'test',
+        exportMode: 'immediate',
+        flushAt: 1,
+        flushIntervalSeconds: 1,
+      },
+      createSilentLogger(),
+      {
+        exporter,
+        shouldExportSpan: () => true,
+      },
+    );
+
+    let traceparent: string | null = null;
+    await service.observe(
+      {
+        type: 'generation',
+        name: 'provider-attempt',
+      },
+      async (observation) => {
+        traceparent = observation.getTraceparent();
+      },
+    );
+
+    const toolObservation = service.startWithTraceparent(traceparent, {
+      type: 'tool',
+      name: 'channel.send',
+      input: { body: 'hello' },
+    });
+    toolObservation.update({
+      output: { ok: true },
+    });
+    toolObservation.end();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans).toHaveLength(2);
+    expect(spans[1].spanContext().traceId).toBe(spans[0].spanContext().traceId);
+    expect(spans[1].parentSpanContext?.spanId).toBe(spans[0].spanContext().spanId);
+
+    await service.shutdown();
+  });
+
   it('tears down global OpenTelemetry state on shutdown', async () => {
     const traceDisable = vi.spyOn(trace, 'disable');
     const contextDisable = vi.spyOn(context, 'disable');

@@ -8,6 +8,7 @@ import type { QueueItem } from '../queue/queue-types.js';
 import { filterAllowedMcpTools } from '../tools/tool-filter.js';
 import { buildPersonaRuntimeContext } from '../personas/persona-runtime-context.js';
 import type { AgentUsage, CanonicalMcpServer } from '../providers/provider-types.js';
+import type { StartedObservationHandle } from '../observability/langfuse/observability-types.js';
 
 /** Default maximum time (ms) an Agent SDK query may run before being aborted. */
 const DEFAULT_QUERY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
@@ -381,6 +382,9 @@ export class AgentRunner {
                     outputTokens: 0,
                   };
                   let sawEvents = false;
+                  const activeProviderToolObservations = new Map<string, StartedObservationHandle>();
+                  const ignoredProviderToolUseIds = new Set<string>();
+                  const pendingProviderToolTasks: Array<Promise<void>> = [];
 
                   const queryInput = {
                     prompt: content,
@@ -433,13 +437,16 @@ export class AgentRunner {
                             );
                           }
                         } else if (event.type === 'tool_event') {
-                          await this.recordProviderToolEvent(
+                          this.handleProviderToolEvent(
                             generationObservation.getTraceparent(),
                             {
                               runId,
                               threadId: item.threadId,
                               provider: providerEntry.provider.name,
                             },
+                            activeProviderToolObservations,
+                            ignoredProviderToolUseIds,
+                            pendingProviderToolTasks,
                             event,
                           );
                           this.ctx.logger.debug(
@@ -485,11 +492,21 @@ export class AgentRunner {
                     if (activeIterator?.return) {
                       activeIterator.return(undefined).catch(() => {});
                     }
+                    this.finishProviderToolObservations(activeProviderToolObservations, {
+                      level: 'ERROR',
+                      statusMessage: cause instanceof Error ? cause.message : String(cause),
+                    });
+                    ignoredProviderToolUseIds.clear();
+                    await Promise.allSettled(pendingProviderToolTasks);
                     const message = cause instanceof Error ? cause.message : String(cause);
                     throw new AgentQueryAttemptError(message, resumeSessionId, sawEvents);
                   } finally {
                     clearTimeout(timeoutId!);
                   }
+
+                  this.finishProviderToolObservations(activeProviderToolObservations);
+                  ignoredProviderToolUseIds.clear();
+                  await Promise.allSettled(pendingProviderToolTasks);
 
                   generationObservation.update({
                     output: outputText,
@@ -675,44 +692,151 @@ export class AgentRunner {
     return cause instanceof Error ? cause : new Error(String(cause));
   }
 
-  private async recordProviderToolEvent(
+  private handleProviderToolEvent(
     traceparent: string | null,
     metadata: {
       runId: string;
       threadId: string;
       provider: string;
     },
+    activeProviderToolObservations: Map<string, StartedObservationHandle>,
+    ignoredProviderToolUseIds: Set<string>,
+    pendingProviderToolTasks: Array<Promise<void>>,
     event: {
       messageType: string;
       tool?: string;
+      toolUseId?: string;
+      input?: unknown;
+      output?: unknown;
+      isError?: boolean;
       subtype?: string;
       serverName?: string;
     },
-  ): Promise<void> {
-    if (
-      event.messageType !== 'tool_use' &&
-      event.messageType !== 'mcp_tool_use' &&
-      event.messageType !== 'server_tool_use'
-    ) {
+  ): void {
+    if (this.shouldSkipProviderToolObservation(event)) {
+      if (event.toolUseId) {
+        ignoredProviderToolUseIds.add(event.toolUseId);
+      }
       return;
     }
 
-    await this.ctx.observability.observeWithTraceparent(
-      traceparent,
-      {
+    if (event.toolUseId && ignoredProviderToolUseIds.has(event.toolUseId)) {
+      if (this.isProviderToolResultEvent(event.messageType)) {
+        ignoredProviderToolUseIds.delete(event.toolUseId);
+      }
+      return;
+    }
+
+    if (this.isProviderToolStartEvent(event.messageType) && event.toolUseId) {
+      const observation = this.ctx.observability.startWithTraceparent(traceparent, {
         type: 'tool',
-        name: event.serverName
-          ? `${event.serverName}.${event.tool ?? event.messageType}`
-          : (event.tool ?? event.messageType),
+        name: this.getProviderToolObservationName(event),
+        input: event.input,
         metadata: {
           ...metadata,
           messageType: event.messageType,
+          toolUseId: event.toolUseId,
           subtype: event.subtype ?? null,
           serverName: event.serverName ?? null,
         },
-      },
-      async () => undefined,
+      });
+      activeProviderToolObservations.set(event.toolUseId, observation);
+      return;
+    }
+
+    if (this.isProviderToolResultEvent(event.messageType) && event.toolUseId) {
+      const observation = activeProviderToolObservations.get(event.toolUseId);
+      if (!observation) {
+        return;
+      }
+
+      observation.update({
+        output: event.output,
+        level: event.isError ? 'ERROR' : undefined,
+        statusMessage: event.isError ? `Tool call ${event.toolUseId} returned an error` : undefined,
+      });
+      observation.end();
+      activeProviderToolObservations.delete(event.toolUseId);
+      return;
+    }
+
+    if (!this.isProviderToolStartEvent(event.messageType)) {
+      return;
+    }
+
+    pendingProviderToolTasks.push(
+      this.ctx.observability
+        .observeWithTraceparent(
+          traceparent,
+          {
+            type: 'tool',
+            name: this.getProviderToolObservationName(event),
+            input: event.input,
+            metadata: {
+              ...metadata,
+              messageType: event.messageType,
+              subtype: event.subtype ?? null,
+              serverName: event.serverName ?? null,
+            },
+          },
+          async () => undefined,
+        )
+        .catch((error) => {
+          this.ctx.logger.debug({ err: error }, 'agent-runner: provider tool observation failed');
+        }),
     );
+  }
+
+  private finishProviderToolObservations(
+    activeProviderToolObservations: Map<string, StartedObservationHandle>,
+    update?: {
+      level?: 'ERROR';
+      statusMessage?: string;
+    },
+  ): void {
+    for (const observation of activeProviderToolObservations.values()) {
+      if (update) {
+        observation.update(update);
+      }
+      observation.end();
+    }
+
+    activeProviderToolObservations.clear();
+  }
+
+  private shouldSkipProviderToolObservation(event: {
+    messageType: string;
+    serverName?: string;
+  }): boolean {
+    return event.messageType === 'mcp_tool_use' && event.serverName === 'host-tools';
+  }
+
+  private isProviderToolStartEvent(messageType: string): boolean {
+    return (
+      messageType === 'tool_use' ||
+      messageType === 'mcp_tool_use' ||
+      messageType === 'server_tool_use'
+    );
+  }
+
+  private isProviderToolResultEvent(messageType: string): boolean {
+    return (
+      messageType === 'tool_result' ||
+      messageType === 'mcp_tool_result' ||
+      messageType.endsWith('_tool_result')
+    );
+  }
+
+  private getProviderToolObservationName(event: {
+    messageType: string;
+    tool?: string;
+    serverName?: string;
+  }): string {
+    if (event.serverName) {
+      return `${event.serverName}.${event.tool ?? event.messageType}`;
+    }
+
+    return event.tool ?? event.messageType;
   }
 
   private shouldRetryFreshSession(cause: unknown): cause is AgentQueryAttemptError {

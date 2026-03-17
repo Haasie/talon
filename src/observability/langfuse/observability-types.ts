@@ -49,7 +49,16 @@ export interface ObservationHandle {
   getTraceparent(): string | null;
 }
 
+export interface StartedObservationHandle extends ObservationHandle {
+  end(): void;
+}
+
 export interface ObservabilityService {
+  start(input: ObservationInput): StartedObservationHandle;
+  startWithTraceparent(
+    traceparent: string | null | undefined,
+    input: ObservationInput,
+  ): StartedObservationHandle;
   observe<T>(
     input: ObservationInput,
     fn: (observation: ObservationHandle) => Promise<T> | T,

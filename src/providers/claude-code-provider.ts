@@ -168,12 +168,22 @@ export class ClaudeCodeProvider implements AgentProvider {
     try {
       for await (const message of agentQuery) {
         if (message.type === 'assistant' && message.message?.content) {
-          for (const block of message.message.content) {
+          for (const block of this.getContentBlocks(message.message.content)) {
             const textEvent = this.toTextEvent(block);
             if (textEvent) {
               yield textEvent;
             }
 
+            const toolEvent = this.toToolEvent(block);
+            if (toolEvent) {
+              yield toolEvent;
+            }
+          }
+          continue;
+        }
+
+        if (message.type === 'user' && message.message?.content) {
+          for (const block of this.getContentBlocks(message.message.content)) {
             const toolEvent = this.toToolEvent(block);
             if (toolEvent) {
               yield toolEvent;
@@ -219,14 +229,29 @@ export class ClaudeCodeProvider implements AgentProvider {
           tool?: string;
           name?: string;
           tool_name?: string;
+          tool_use_id?: string;
+          input?: unknown;
+          content?: unknown;
+          is_error?: boolean;
           subtype?: string;
           server_name?: string;
         };
-        if (toolMessage.type && toolMessage.type !== 'assistant' && toolMessage.type !== 'result') {
+        if (
+          toolMessage.type &&
+          toolMessage.type !== 'assistant' &&
+          toolMessage.type !== 'result' &&
+          toolMessage.type !== 'user'
+        ) {
           yield {
             type: 'tool_event',
             messageType: toolMessage.type,
             tool: toolMessage.tool ?? toolMessage.name ?? toolMessage.tool_name,
+            toolUseId: toolMessage.tool_use_id,
+            input: toolMessage.input,
+            output: this.isToolResultMessageType(toolMessage.type) ? toolMessage.content : undefined,
+            isError: this.isToolResultMessageType(toolMessage.type)
+              ? (toolMessage.is_error ?? false)
+              : undefined,
             subtype: toolMessage.subtype,
             serverName: toolMessage.server_name,
           };
@@ -265,6 +290,10 @@ export class ClaudeCodeProvider implements AgentProvider {
     return nativeServers;
   }
 
+  private getContentBlocks(content: unknown): unknown[] {
+    return Array.isArray(content) ? content : [];
+  }
+
   private toTextEvent(block: unknown): Extract<AgentStreamEvent, { type: 'text' }> | null {
     if (
       typeof block === 'object' &&
@@ -284,29 +313,85 @@ export class ClaudeCodeProvider implements AgentProvider {
     }
 
     const messageType = block.type;
-    if (
-      messageType !== 'tool_use' &&
-      messageType !== 'server_tool_use' &&
-      messageType !== 'mcp_tool_use'
-    ) {
+    if (typeof messageType !== 'string') {
       return null;
     }
 
-    const tool =
-      'name' in block && typeof block.name === 'string'
-        ? block.name
-        : undefined;
-    const serverName =
-      'server_name' in block && typeof block.server_name === 'string'
-        ? block.server_name
-        : undefined;
+    if (
+      this.isToolUseMessageType(messageType)
+    ) {
+      const tool =
+        'name' in block && typeof block.name === 'string'
+          ? block.name
+          : undefined;
+      const toolUseId =
+        'id' in block && typeof block.id === 'string'
+          ? block.id
+          : undefined;
+      const serverName =
+        'server_name' in block && typeof block.server_name === 'string'
+          ? block.server_name
+          : undefined;
+
+      return {
+        type: 'tool_event',
+        messageType,
+        tool,
+        toolUseId,
+        input: 'input' in block ? block.input : undefined,
+        serverName,
+        subtype: undefined,
+      };
+    }
+
+    if (!this.isToolResultMessageType(messageType)) {
+      return null;
+    }
 
     return {
       type: 'tool_event',
       messageType,
-      tool,
-      serverName,
+      toolUseId:
+        'tool_use_id' in block && typeof block.tool_use_id === 'string'
+          ? block.tool_use_id
+          : undefined,
+      output: 'content' in block ? block.content : undefined,
+      isError: this.readToolResultError(block),
       subtype: undefined,
     };
+  }
+
+  private isToolUseMessageType(messageType: string): boolean {
+    return (
+      messageType === 'tool_use' ||
+      messageType === 'server_tool_use' ||
+      messageType === 'mcp_tool_use'
+    );
+  }
+
+  private isToolResultMessageType(messageType: string): boolean {
+    return (
+      messageType === 'tool_result' ||
+      messageType === 'mcp_tool_result' ||
+      messageType.endsWith('_tool_result')
+    );
+  }
+
+  private readToolResultError(block: Record<string, unknown>): boolean {
+    if ('is_error' in block && typeof block.is_error === 'boolean') {
+      return block.is_error;
+    }
+
+    const content = 'content' in block ? block.content : undefined;
+    if (
+      typeof content === 'object' &&
+      content !== null &&
+      'type' in content &&
+      typeof content.type === 'string'
+    ) {
+      return content.type.endsWith('_error');
+    }
+
+    return false;
   }
 }

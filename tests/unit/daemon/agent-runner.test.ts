@@ -27,7 +27,10 @@ import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
 import { type QueueItem, QueueItemStatus } from '../../../src/queue/queue-types.js';
 import { ProviderRegistry } from '../../../src/providers/provider-registry.js';
 import { ClaudeCodeProvider } from '../../../src/providers/claude-code-provider.js';
-import type { ObservationHandle } from '../../../src/observability/langfuse/observability-types.js';
+import type {
+  ObservationHandle,
+  StartedObservationHandle,
+} from '../../../src/observability/langfuse/observability-types.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -54,6 +57,14 @@ function makeObservationHandle(traceparent: string | null): ObservationHandle {
   return {
     update: vi.fn(),
     getTraceparent: vi.fn().mockReturnValue(traceparent),
+  };
+}
+
+function makeStartedObservationHandle(traceparent: string | null): StartedObservationHandle {
+  return {
+    update: vi.fn(),
+    getTraceparent: vi.fn().mockReturnValue(traceparent),
+    end: vi.fn(),
   };
 }
 
@@ -175,6 +186,8 @@ function makeMockContext(): DaemonContext {
         const traceparent = input.type === 'generation' ? GENERATION_TRACEPARENT : null;
         return await fn(makeObservationHandle(traceparent));
       }),
+      start: vi.fn(() => makeStartedObservationHandle(null)),
+      startWithTraceparent: vi.fn(() => makeStartedObservationHandle(null)),
       observeWithTraceparent: vi.fn(async (_traceparent, _input, fn) =>
         await fn(makeObservationHandle(null))),
       shutdown: vi.fn().mockResolvedValue(undefined),
@@ -1500,6 +1513,128 @@ describe('AgentRunner', () => {
   // -------------------------------------------------------------------------
 
   describe('debug logging for streaming events', () => {
+    it('pairs provider tool_use and tool_result blocks into a single observation with input and output', async () => {
+      const toolObservation = makeStartedObservationHandle(null);
+      ctx.observability.startWithTraceparent = vi.fn(() => toolObservation);
+
+      async function* streamWithPairedToolResult() {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_001',
+                name: 'Read',
+                input: { file_path: 'README.md' },
+              },
+            ],
+          },
+        };
+        yield {
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_001',
+                content: 'README contents',
+                is_error: false,
+              },
+            ],
+          },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: 'Done reading.',
+          session_id: 'session-xyz',
+          total_cost_usd: 0.01,
+          usage: { input_tokens: 200, output_tokens: 100 },
+          is_error: false,
+        };
+      }
+
+      mockQuery.mockReturnValue(streamWithPairedToolResult());
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(ctx.observability.startWithTraceparent).toHaveBeenCalledWith(
+        GENERATION_TRACEPARENT,
+        expect.objectContaining({
+          type: 'tool',
+          name: 'Read',
+          input: { file_path: 'README.md' },
+          metadata: expect.objectContaining({
+            runId: expect.any(String),
+            threadId: 'thread-001',
+            provider: 'claude-code',
+            messageType: 'tool_use',
+            toolUseId: 'toolu_001',
+          }),
+        }),
+      );
+      expect(toolObservation.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          output: 'README contents',
+        }),
+      );
+      expect(toolObservation.end).toHaveBeenCalledOnce();
+      expect(ctx.observability.observeWithTraceparent).not.toHaveBeenCalled();
+    });
+
+    it('skips duplicate provider tool observations for host-tools MCP calls', async () => {
+      ctx.observability.startWithTraceparent = vi.fn(() => makeStartedObservationHandle(null));
+
+      async function* streamWithHostToolsMcpCall() {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              {
+                type: 'mcp_tool_use',
+                id: 'mcpu_001',
+                name: 'memory_access',
+                server_name: 'host-tools',
+                input: { operation: 'read', key: 'profile' },
+              },
+            ],
+          },
+        };
+        yield {
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'mcp_tool_result',
+                tool_use_id: 'mcpu_001',
+                content: 'profile data',
+                is_error: false,
+              },
+            ],
+          },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: 'Done reading memory.',
+          session_id: 'session-xyz',
+          total_cost_usd: 0.01,
+          usage: { input_tokens: 200, output_tokens: 100 },
+          is_error: false,
+        };
+      }
+
+      mockQuery.mockReturnValue(streamWithHostToolsMcpCall());
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(ctx.observability.startWithTraceparent).not.toHaveBeenCalled();
+      expect(ctx.observability.observeWithTraceparent).not.toHaveBeenCalled();
+    });
+
     it('records tool_use streaming events as tool observations', async () => {
       async function* streamWithToolUse() {
         yield { type: 'tool_use', tool: 'Read', subtype: undefined };
@@ -1540,7 +1675,7 @@ describe('AgentRunner', () => {
       );
     });
 
-    it('records mcp_tool_use assistant blocks as tool observations', async () => {
+    it('does not create duplicate provider observations for host-tools mcp_tool_use assistant blocks', async () => {
       async function* streamWithMcpToolUse() {
         yield {
           type: 'assistant',
@@ -1572,21 +1707,8 @@ describe('AgentRunner', () => {
       const result = await runner.run(makeQueueItem());
 
       expect(result.isOk()).toBe(true);
-      expect(ctx.observability.observeWithTraceparent).toHaveBeenCalledWith(
-        GENERATION_TRACEPARENT,
-        expect.objectContaining({
-          type: 'tool',
-          name: 'host-tools.memory_access',
-          metadata: expect.objectContaining({
-            runId: expect.any(String),
-            threadId: 'thread-001',
-            provider: 'claude-code',
-            messageType: 'mcp_tool_use',
-            serverName: 'host-tools',
-          }),
-        }),
-        expect.any(Function),
-      );
+      expect(ctx.observability.observeWithTraceparent).not.toHaveBeenCalled();
+      expect(ctx.observability.startWithTraceparent).not.toHaveBeenCalled();
     });
 
     it('logs tool_use events with type, tool name, and subtype', async () => {

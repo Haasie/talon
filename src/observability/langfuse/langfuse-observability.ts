@@ -11,6 +11,7 @@ import {
   type LangfuseRetriever,
   setLangfuseTracerProvider,
   startActiveObservation,
+  startObservation,
   type LangfuseObservationAttributes,
   type LangfuseSpan,
   type LangfuseTool,
@@ -24,6 +25,7 @@ import {
   type ObservationInput,
   type ObservationUpdate,
   type ObservabilityService,
+  type StartedObservationHandle,
 } from './observability-types.js';
 import { parseTraceparent, serializeTraceparent } from './traceparent.js';
 
@@ -76,6 +78,17 @@ export class LangfuseObservabilityService implements ObservabilityService {
     fn: (observation: ObservationHandle) => Promise<T> | T,
   ): Promise<T> {
     return await this.observeInternal(undefined, input, fn);
+  }
+
+  start(input: ObservationInput): StartedObservationHandle {
+    return this.startInternal(undefined, input);
+  }
+
+  startWithTraceparent(
+    traceparent: string | null | undefined,
+    input: ObservationInput,
+  ): StartedObservationHandle {
+    return this.startInternal(traceparent, input);
   }
 
   async observeWithTraceparent<T>(
@@ -163,6 +176,63 @@ export class LangfuseObservabilityService implements ObservabilityService {
           async (observation) => await this.runObservedCallback(observation, input, fn),
           options,
         );
+    }
+  }
+
+  private startInternal(
+    traceparent: string | null | undefined,
+    input: ObservationInput,
+  ): StartedObservationHandle {
+    const parentSpanContext = parseTraceparent(traceparent);
+    const observation = this.startTypedObservationSync(input, parentSpanContext);
+
+    return {
+      update: (update) => this.applyUpdate(observation, update),
+      getTraceparent: () => serializeTraceparent(observation.otelSpan.spanContext()),
+      end: () => observation.end(),
+    };
+  }
+
+  private startTypedObservationSync(
+    input: ObservationInput,
+    parentSpanContext: import('@opentelemetry/api').SpanContext | null,
+  ): TalonLangfuseObservation {
+    const options = {
+      parentSpanContext: parentSpanContext ?? undefined,
+    };
+
+    switch (input.type) {
+      case 'agent': {
+        const observation = startObservation(input.name, {}, { ...options, asType: 'agent' });
+        this.applyUpdate(observation, input);
+        return observation;
+      }
+      case 'generation': {
+        const observation = startObservation(input.name, {}, {
+          ...options,
+          asType: 'generation',
+        });
+        this.applyUpdate(observation, input);
+        return observation;
+      }
+      case 'tool': {
+        const observation = startObservation(input.name, {}, { ...options, asType: 'tool' });
+        this.applyUpdate(observation, input);
+        return observation;
+      }
+      case 'retriever': {
+        const observation = startObservation(input.name, {}, {
+          ...options,
+          asType: 'retriever',
+        });
+        this.applyUpdate(observation, input);
+        return observation;
+      }
+      default: {
+        const observation = startObservation(input.name, undefined, options);
+        this.applyUpdate(observation, input);
+        return observation;
+      }
     }
   }
 
