@@ -433,6 +433,15 @@ export class AgentRunner {
                             );
                           }
                         } else if (event.type === 'tool_event') {
+                          await this.recordProviderToolEvent(
+                            generationObservation.getTraceparent(),
+                            {
+                              runId,
+                              threadId: item.threadId,
+                              provider: providerEntry.provider.name,
+                            },
+                            event,
+                          );
                           this.ctx.logger.debug(
                             {
                               runId,
@@ -664,6 +673,38 @@ export class AgentRunner {
 
   private toError(cause: unknown): Error {
     return cause instanceof Error ? cause : new Error(String(cause));
+  }
+
+  private async recordProviderToolEvent(
+    traceparent: string | null,
+    metadata: {
+      runId: string;
+      threadId: string;
+      provider: string;
+    },
+    event: {
+      messageType: string;
+      tool?: string;
+      subtype?: string;
+    },
+  ): Promise<void> {
+    if (event.messageType !== 'tool_use') {
+      return;
+    }
+
+    await this.ctx.observability.observeWithTraceparent(
+      traceparent,
+      {
+        type: 'tool',
+        name: event.tool ?? event.messageType,
+        metadata: {
+          ...metadata,
+          messageType: event.messageType,
+          subtype: event.subtype ?? null,
+        },
+      },
+      async () => undefined,
+    );
   }
 
   private shouldRetryFreshSession(cause: unknown): cause is AgentQueryAttemptError {

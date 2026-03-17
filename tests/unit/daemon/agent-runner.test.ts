@@ -1500,6 +1500,46 @@ describe('AgentRunner', () => {
   // -------------------------------------------------------------------------
 
   describe('debug logging for streaming events', () => {
+    it('records tool_use streaming events as tool observations', async () => {
+      async function* streamWithToolUse() {
+        yield { type: 'tool_use', tool: 'Read', subtype: undefined };
+        yield { type: 'tool_result', tool: 'Read', subtype: 'success' };
+        yield {
+          type: 'assistant',
+          message: { content: [{ text: 'Done reading.' }] },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: 'Done reading.',
+          session_id: 'session-xyz',
+          total_cost_usd: 0.01,
+          usage: { input_tokens: 200, output_tokens: 100 },
+          is_error: false,
+        };
+      }
+
+      mockQuery.mockReturnValue(streamWithToolUse());
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(ctx.observability.observeWithTraceparent).toHaveBeenCalledWith(
+        GENERATION_TRACEPARENT,
+        expect.objectContaining({
+          type: 'tool',
+          name: 'Read',
+          metadata: expect.objectContaining({
+            runId: expect.any(String),
+            threadId: 'thread-001',
+            provider: 'claude-code',
+            messageType: 'tool_use',
+          }),
+        }),
+        expect.any(Function),
+      );
+    });
+
     it('logs tool_use events with type, tool name, and subtype', async () => {
       async function* streamWithToolUse() {
         yield { type: 'tool_use', tool: 'Read', subtype: undefined };
