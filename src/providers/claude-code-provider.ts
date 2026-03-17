@@ -169,8 +169,14 @@ export class ClaudeCodeProvider implements AgentProvider {
       for await (const message of agentQuery) {
         if (message.type === 'assistant' && message.message?.content) {
           for (const block of message.message.content) {
-            if ('text' in block && typeof block.text === 'string') {
-              yield { type: 'text', content: block.text };
+            const textEvent = this.toTextEvent(block);
+            if (textEvent) {
+              yield textEvent;
+            }
+
+            const toolEvent = this.toToolEvent(block);
+            if (toolEvent) {
+              yield toolEvent;
             }
           }
           continue;
@@ -208,13 +214,21 @@ export class ClaudeCodeProvider implements AgentProvider {
           continue;
         }
 
-        const toolMessage = message as { type?: string; tool?: string; subtype?: string };
+        const toolMessage = message as {
+          type?: string;
+          tool?: string;
+          name?: string;
+          tool_name?: string;
+          subtype?: string;
+          server_name?: string;
+        };
         if (toolMessage.type && toolMessage.type !== 'assistant' && toolMessage.type !== 'result') {
           yield {
             type: 'tool_event',
             messageType: toolMessage.type,
-            tool: toolMessage.tool,
+            tool: toolMessage.tool ?? toolMessage.name ?? toolMessage.tool_name,
             subtype: toolMessage.subtype,
+            serverName: toolMessage.server_name,
           };
         }
       }
@@ -249,5 +263,50 @@ export class ClaudeCodeProvider implements AgentProvider {
     }
 
     return nativeServers;
+  }
+
+  private toTextEvent(block: unknown): Extract<AgentStreamEvent, { type: 'text' }> | null {
+    if (
+      typeof block === 'object' &&
+      block !== null &&
+      'text' in block &&
+      typeof block.text === 'string'
+    ) {
+      return { type: 'text', content: block.text };
+    }
+
+    return null;
+  }
+
+  private toToolEvent(block: unknown): Extract<AgentStreamEvent, { type: 'tool_event' }> | null {
+    if (typeof block !== 'object' || block === null || !('type' in block)) {
+      return null;
+    }
+
+    const messageType = block.type;
+    if (
+      messageType !== 'tool_use' &&
+      messageType !== 'server_tool_use' &&
+      messageType !== 'mcp_tool_use'
+    ) {
+      return null;
+    }
+
+    const tool =
+      'name' in block && typeof block.name === 'string'
+        ? block.name
+        : undefined;
+    const serverName =
+      'server_name' in block && typeof block.server_name === 'string'
+        ? block.server_name
+        : undefined;
+
+    return {
+      type: 'tool_event',
+      messageType,
+      tool,
+      serverName,
+      subtype: undefined,
+    };
   }
 }

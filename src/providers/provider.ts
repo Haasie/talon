@@ -30,7 +30,13 @@ export interface AgentRunResult {
 
 export type AgentStreamEvent =
   | { type: 'text'; content: string }
-  | { type: 'tool_event'; messageType: string; tool?: string; subtype?: string }
+  | {
+      type: 'tool_event';
+      messageType: string;
+      tool?: string;
+      subtype?: string;
+      serverName?: string;
+    }
   | { type: 'result'; result: AgentRunResult }
   | { type: 'error'; message: string };
 

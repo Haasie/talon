@@ -1540,6 +1540,55 @@ describe('AgentRunner', () => {
       );
     });
 
+    it('records mcp_tool_use assistant blocks as tool observations', async () => {
+      async function* streamWithMcpToolUse() {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              {
+                type: 'mcp_tool_use',
+                id: 'mcpu_001',
+                name: 'memory_access',
+                server_name: 'host-tools',
+                input: { operation: 'read', key: 'profile' },
+              },
+            ],
+          },
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: 'Done reading memory.',
+          session_id: 'session-xyz',
+          total_cost_usd: 0.01,
+          usage: { input_tokens: 200, output_tokens: 100 },
+          is_error: false,
+        };
+      }
+
+      mockQuery.mockReturnValue(streamWithMcpToolUse());
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(ctx.observability.observeWithTraceparent).toHaveBeenCalledWith(
+        GENERATION_TRACEPARENT,
+        expect.objectContaining({
+          type: 'tool',
+          name: 'host-tools.memory_access',
+          metadata: expect.objectContaining({
+            runId: expect.any(String),
+            threadId: 'thread-001',
+            provider: 'claude-code',
+            messageType: 'mcp_tool_use',
+            serverName: 'host-tools',
+          }),
+        }),
+        expect.any(Function),
+      );
+    });
+
     it('logs tool_use events with type, tool name, and subtype', async () => {
       async function* streamWithToolUse() {
         yield { type: 'tool_use', tool: 'Read', subtype: undefined };

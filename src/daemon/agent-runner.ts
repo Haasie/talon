@@ -686,9 +686,14 @@ export class AgentRunner {
       messageType: string;
       tool?: string;
       subtype?: string;
+      serverName?: string;
     },
   ): Promise<void> {
-    if (event.messageType !== 'tool_use') {
+    if (
+      event.messageType !== 'tool_use' &&
+      event.messageType !== 'mcp_tool_use' &&
+      event.messageType !== 'server_tool_use'
+    ) {
       return;
     }
 
@@ -696,11 +701,14 @@ export class AgentRunner {
       traceparent,
       {
         type: 'tool',
-        name: event.tool ?? event.messageType,
+        name: event.serverName
+          ? `${event.serverName}.${event.tool ?? event.messageType}`
+          : (event.tool ?? event.messageType),
         metadata: {
           ...metadata,
           messageType: event.messageType,
           subtype: event.subtype ?? null,
+          serverName: event.serverName ?? null,
         },
       },
       async () => undefined,
