@@ -15,10 +15,15 @@ const makeDeps = (overrides: Partial<ContextAssemblerDeps> = {}): ContextAssembl
 });
 
 describe('ContextAssembler', () => {
-  it('returns empty string when no summary and no recent messages', () => {
+  it('returns empty metadata when no summary and no recent messages', () => {
     const assembler = new ContextAssembler(makeDeps());
     const result = assembler.assemble('thread-1');
-    expect(result).toBe('');
+    expect(result).toEqual({
+      text: '',
+      summaryFound: false,
+      recentMessageCount: 0,
+      charCount: 0,
+    });
   });
 
   it('includes session summary when available', () => {
@@ -38,10 +43,13 @@ describe('ContextAssembler', () => {
 
     const assembler = new ContextAssembler(deps);
     const result = assembler.assemble('thread-1');
-    expect(result).toContain('Previous Context');
-    expect(result).toContain('read-only summary');
-    expect(result).toContain('Discussed deployment plans');
-    expect(result).toContain('Using Docker');
+    expect(result.summaryFound).toBe(true);
+    expect(result.recentMessageCount).toBe(0);
+    expect(result.text).toContain('Previous Context');
+    expect(result.text).toContain('read-only summary');
+    expect(result.text).toContain('Discussed deployment plans');
+    expect(result.text).toContain('Using Docker');
+    expect(result.charCount).toBe(result.text.length);
   });
 
   it('includes recent messages when available', () => {
@@ -56,9 +64,12 @@ describe('ContextAssembler', () => {
 
     const assembler = new ContextAssembler(deps);
     const result = assembler.assemble('thread-1');
-    expect(result).toContain('Recent Messages');
-    expect(result).toContain('User: how is the deploy going?');
-    expect(result).toContain('Assistant: All green, deployed 5 minutes ago.');
+    expect(result.summaryFound).toBe(false);
+    expect(result.recentMessageCount).toBe(2);
+    expect(result.text).toContain('Recent Messages');
+    expect(result.text).toContain('User: how is the deploy going?');
+    expect(result.text).toContain('Assistant: All green, deployed 5 minutes ago.');
+    expect(result.charCount).toBe(result.text.length);
   });
 
   it('includes both summary and recent messages', () => {
@@ -77,10 +88,12 @@ describe('ContextAssembler', () => {
 
     const assembler = new ContextAssembler(deps);
     const result = assembler.assemble('thread-1');
-    expect(result).toContain('Previous Context');
-    expect(result).toContain('Previous session summary.');
-    expect(result).toContain('Recent Messages');
-    expect(result).toContain('User: latest question');
+    expect(result.summaryFound).toBe(true);
+    expect(result.recentMessageCount).toBe(1);
+    expect(result.text).toContain('Previous Context');
+    expect(result.text).toContain('Previous session summary.');
+    expect(result.text).toContain('Recent Messages');
+    expect(result.text).toContain('User: latest question');
   });
 
   it('uses only the most recent summary', () => {
@@ -95,9 +108,9 @@ describe('ContextAssembler', () => {
 
     const assembler = new ContextAssembler(deps);
     const result = assembler.assemble('thread-1');
-    expect(result).toContain('New summary.');
+    expect(result.text).toContain('New summary.');
     // Should only include one Previous Context section
-    expect(result.match(/## Previous Context/g)?.length).toBe(1);
+    expect(result.text.match(/## Previous Context/g)?.length).toBe(1);
   });
 
   it('handles non-JSON message content', () => {
@@ -111,6 +124,7 @@ describe('ContextAssembler', () => {
 
     const assembler = new ContextAssembler(deps);
     const result = assembler.assemble('thread-1');
-    expect(result).toContain('User: plain text');
+    expect(result.recentMessageCount).toBe(1);
+    expect(result.text).toContain('User: plain text');
   });
 });

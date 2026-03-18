@@ -318,4 +318,188 @@ describe('ClaudeCodeProvider', () => {
     expect(typeof configPath).toBe('string');
     expect(existsSync(configPath)).toBe(true);
   });
+
+  it('emits tool events for tool_use blocks inside assistant content', async () => {
+    vi.doMock('@anthropic-ai/claude-agent-sdk', () => ({
+      query: () =>
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                { type: 'text', text: 'Let me inspect that file.' },
+                {
+                  type: 'tool_use',
+                  id: 'toolu_001',
+                  name: 'Read',
+                  input: { file_path: 'README.md' },
+                  caller: 'direct',
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            result: 'Finished.',
+            session_id: 'session-001',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+            },
+            is_error: false,
+          };
+        })(),
+    }));
+
+    try {
+      const events: Array<Record<string, unknown>> = [];
+      const strategy = provider.createExecutionStrategy();
+
+      for await (const event of strategy.run({
+        prompt: 'Inspect README',
+        systemPrompt: 'You are helpful.',
+        model: 'claude-3-5-sonnet-20241022',
+        mcpServers: {},
+        cwd: '/tmp',
+        maxTurns: 4,
+        timeoutMs: 30_000,
+      })) {
+        events.push(event as Record<string, unknown>);
+      }
+
+      expect(events).toContainEqual({
+        type: 'tool_event',
+        messageType: 'tool_use',
+        tool: 'Read',
+        toolUseId: 'toolu_001',
+        input: { file_path: 'README.md' },
+        subtype: undefined,
+      });
+      expect(events).toContainEqual({
+        type: 'text',
+        content: 'Let me inspect that file.',
+      });
+    } finally {
+      vi.doUnmock('@anthropic-ai/claude-agent-sdk');
+    }
+  });
+
+  it('emits tool events for mcp_tool_use blocks inside assistant content', async () => {
+    vi.doMock('@anthropic-ai/claude-agent-sdk', () => ({
+      query: () =>
+        (async function* () {
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'mcp_tool_use',
+                  id: 'mcpu_001',
+                  name: 'memory_access',
+                  server_name: 'host-tools',
+                  input: { operation: 'read', key: 'profile' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            result: 'Finished.',
+            session_id: 'session-001',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+            },
+            is_error: false,
+          };
+        })(),
+    }));
+
+    try {
+      const events: Array<Record<string, unknown>> = [];
+      const strategy = provider.createExecutionStrategy();
+
+      for await (const event of strategy.run({
+        prompt: 'Inspect memory',
+        systemPrompt: 'You are helpful.',
+        model: 'claude-3-5-sonnet-20241022',
+        mcpServers: {},
+        cwd: '/tmp',
+        maxTurns: 4,
+        timeoutMs: 30_000,
+      })) {
+        events.push(event as Record<string, unknown>);
+      }
+
+      expect(events).toContainEqual({
+        type: 'tool_event',
+        messageType: 'mcp_tool_use',
+        tool: 'memory_access',
+        toolUseId: 'mcpu_001',
+        input: { operation: 'read', key: 'profile' },
+        serverName: 'host-tools',
+        subtype: undefined,
+      });
+    } finally {
+      vi.doUnmock('@anthropic-ai/claude-agent-sdk');
+    }
+  });
+
+  it('emits tool result events from user tool_result blocks', async () => {
+    vi.doMock('@anthropic-ai/claude-agent-sdk', () => ({
+      query: () =>
+        (async function* () {
+          yield {
+            type: 'user',
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'toolu_001',
+                  content: 'README contents',
+                  is_error: false,
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'result',
+            result: 'Finished.',
+            session_id: 'session-001',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+            },
+            is_error: false,
+          };
+        })(),
+    }));
+
+    try {
+      const events: Array<Record<string, unknown>> = [];
+      const strategy = provider.createExecutionStrategy();
+
+      for await (const event of strategy.run({
+        prompt: 'Inspect README',
+        systemPrompt: 'You are helpful.',
+        model: 'claude-3-5-sonnet-20241022',
+        mcpServers: {},
+        cwd: '/tmp',
+        maxTurns: 4,
+        timeoutMs: 30_000,
+      })) {
+        events.push(event as Record<string, unknown>);
+      }
+
+      expect(events).toContainEqual({
+        type: 'tool_event',
+        messageType: 'tool_result',
+        toolUseId: 'toolu_001',
+        output: 'README contents',
+        isError: false,
+      });
+    } finally {
+      vi.doUnmock('@anthropic-ai/claude-agent-sdk');
+    }
+  });
 });

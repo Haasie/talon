@@ -33,6 +33,7 @@ export interface ToolExecutionContext {
   threadId: string;
   personaId: string;
   requestId?: string;
+  traceparent?: string;
 }
 
 /**

@@ -227,48 +227,84 @@ export class HostToolsBridge {
 
     const normalizedTool = TOOL_NAME_MAP[tool] || tool;
 
-    // Defense-in-depth: enforce persona capabilities at the bridge level.
-    // Even if the MCP server somehow exposes a disallowed tool, the bridge
-    // will reject it here. Uses fail-closed semantics — if the persona
-    // cannot be resolved, no tools are allowed.
-    const resolvedCaps = this.resolvePersonaCapabilities(context.personaId);
-    if (!isToolAllowed(normalizedTool, resolvedCaps)) {
-      const errorResponse: BridgeResponse = {
-        id,
-        result: {
-          requestId: context.requestId ?? 'unknown',
-          tool: normalizedTool,
-          status: 'error',
-          error: `Tool "${normalizedTool}" is not allowed for persona "${context.personaId}"`,
-        },
-      };
-      this.sendResponse(socket, errorResponse);
-      this.ctx.logger.warn(
-        { personaId: context.personaId, tool: normalizedTool },
-        'host-tools-bridge: rejected disallowed tool call',
-      );
-      return;
-    }
-
-    let responded = false;
-
-    const timeoutHandle = setTimeout(() => {
-      if (responded) return;
-      responded = true;
-      this.ctx.logger.warn({ id, tool: normalizedTool }, 'host-tools-bridge: request timed out');
-      this.sendResponse(socket, { id, error: 'Request timeout' });
-    }, REQUEST_TIMEOUT_MS);
-
     try {
-      const result = await this.dispatch(normalizedTool, args, context);
-      clearTimeout(timeoutHandle);
-      if (responded) return; // Timeout already fired
-      responded = true;
+      const result = await this.ctx.observability.observeWithTraceparent(
+        context.traceparent,
+        {
+          type: 'tool',
+          name: normalizedTool,
+          input: args,
+          metadata: {
+            runId: context.runId,
+            threadId: context.threadId,
+            personaId: context.personaId,
+            requestId: context.requestId ?? null,
+          },
+        },
+        async (toolObservation) => {
+          // Defense-in-depth: enforce persona capabilities at the bridge level.
+          // Even if the MCP server somehow exposes a disallowed tool, the bridge
+          // will reject it here. Uses fail-closed semantics — if the persona
+          // cannot be resolved, no tools are allowed.
+          const resolvedCaps = this.resolvePersonaCapabilities(context.personaId);
+          if (!isToolAllowed(normalizedTool, resolvedCaps)) {
+            const toolResult: ToolCallResult = {
+              requestId: context.requestId ?? 'unknown',
+              tool: normalizedTool,
+              status: 'error',
+              error: `Tool "${normalizedTool}" is not allowed for persona "${context.personaId}"`,
+            };
+            toolObservation.update({
+              output: toolResult,
+              level: 'ERROR',
+              statusMessage: toolResult.error,
+            });
+            this.ctx.logger.warn(
+              { personaId: context.personaId, tool: normalizedTool },
+              'host-tools-bridge: rejected disallowed tool call',
+            );
+            return toolResult;
+          }
+
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+          try {
+            const toolResult = await Promise.race([
+              this.dispatch(normalizedTool, args, context),
+              new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                  this.ctx.logger.warn(
+                    { id, tool: normalizedTool },
+                    'host-tools-bridge: request timed out',
+                  );
+                  reject(new Error('Request timeout'));
+                }, REQUEST_TIMEOUT_MS);
+              }),
+            ]);
+
+            toolObservation.update({
+              output: toolResult,
+              level: toolResult.status === 'error' ? 'ERROR' : undefined,
+              statusMessage: toolResult.status === 'error' ? toolResult.error : undefined,
+            });
+
+            return toolResult;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toolObservation.update({
+              level: 'ERROR',
+              statusMessage: message,
+            });
+            throw error;
+          } finally {
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+            }
+          }
+        },
+      );
       this.sendResponse(socket, { id, result });
     } catch (err) {
-      clearTimeout(timeoutHandle);
-      if (responded) return; // Timeout already fired
-      responded = true;
       this.sendResponse(socket, {
         id,
         error: err instanceof Error ? err.message : String(err),

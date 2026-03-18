@@ -185,6 +185,11 @@ export class TalondDaemon {
       this.ctx.queueManager.stopProcessing();
       this.ctx.hostToolsBridge.stop();
       this.ctx.backgroundAgentManager?.shutdown();
+      try {
+        await this.ctx.observability.shutdown();
+      } catch (cause) {
+        this.logger.warn({ cause }, 'daemon: failed to shut down observability');
+      }
     }
 
     if (this.ipcServer !== null) {

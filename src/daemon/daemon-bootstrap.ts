@@ -57,6 +57,8 @@ import { recoverFromCrash } from './lifecycle.js';
 import { ContextRoller } from './context-roller.js';
 import { ContextAssembler } from './context-assembler.js';
 import type { DaemonContext } from './daemon-context.js';
+import { createObservabilityService } from '../observability/langfuse/index.js';
+import type { ObservabilityService } from '../observability/langfuse/observability-types.js';
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -138,12 +140,13 @@ export async function bootstrap(
 
   // 6. Thread workspace
   const threadWorkspace = new ThreadWorkspace(dataDir);
+  const observability = await createObservabilityService(config.langfuse, logger);
 
   // 7. Load personas
   const personaLoader = new PersonaLoader(repos.persona, logger);
   const personaLoadResult = await personaLoader.loadFromConfig(config.personas);
   if (personaLoadResult.isErr()) {
-    db.close();
+    await cleanupBootstrapFailure(db, observability, logger);
     return err(
       new DaemonError(
         `Failed to load personas: ${personaLoadResult.error.message}`,
@@ -157,7 +160,7 @@ export async function bootstrap(
   const skillResolver = new SkillResolver(logger);
   const loadedSkills = await skillLoader.loadFromPersonaConfig(config.personas, dataDir);
   if (loadedSkills.isErr()) {
-    db.close();
+    await cleanupBootstrapFailure(db, observability, logger);
     return err(
       new DaemonError(
         `Failed to load skills: ${loadedSkills.error.message}`,
@@ -239,6 +242,7 @@ export async function bootstrap(
         logger,
       },
       logger,
+      observability,
     );
     logger.info({ subagents: [...agentMap.keys()] }, 'bootstrap: loaded sub-agents');
   } else {
@@ -397,6 +401,7 @@ export async function bootstrap(
     skillResolver,
     loadedSkills: loadedSkills.value,
     messagePipeline,
+    observability,
     subAgentRunner,
     providerRegistry,
     backgroundAgentManager,
@@ -412,4 +417,18 @@ export async function bootstrap(
   logger.info('bootstrap: context ready');
 
   return ok(ctx);
+}
+
+async function cleanupBootstrapFailure(
+  db: import('better-sqlite3').Database,
+  observability: ObservabilityService,
+  logger: pino.Logger,
+): Promise<void> {
+  try {
+    await observability.shutdown();
+  } catch (error) {
+    logger.warn({ err: error }, 'bootstrap: failed to shut down observability after bootstrap error');
+  }
+
+  db.close();
 }

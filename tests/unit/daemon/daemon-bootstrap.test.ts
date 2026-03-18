@@ -49,6 +49,10 @@ vi.mock('../../../src/core/logging/audit-logger.js', () => ({
   AuditLogger: vi.fn().mockImplementation(() => ({})),
 }));
 
+vi.mock('../../../src/observability/langfuse/index.js', () => ({
+  createObservabilityService: vi.fn(),
+}));
+
 vi.mock('../../../src/personas/persona-loader.js', () => ({
   PersonaLoader: vi.fn().mockImplementation(() => ({
     loadFromConfig: vi.fn().mockResolvedValue(ok(undefined)),
@@ -143,6 +147,7 @@ import { registerChannels } from '../../../src/channels/channel-setup.js';
 import { BackgroundTaskRepository } from '../../../src/core/database/repositories/index.js';
 import { BackgroundAgentManager } from '../../../src/subagents/background/background-agent-manager.js';
 import { createDiscardLogger } from './helpers.js';
+import { createObservabilityService } from '../../../src/observability/langfuse/index.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -200,6 +205,16 @@ function makeConfig(overrides: Record<string, unknown> = {}): unknown {
         },
       },
     },
+    langfuse: {
+      enabled: false,
+      publicKey: '',
+      secretKey: '',
+      baseUrl: 'https://cloud.langfuse.com',
+      environment: 'production',
+      exportMode: 'batched',
+      flushAt: 20,
+      flushIntervalSeconds: 5,
+    },
     ...overrides,
   };
 }
@@ -226,10 +241,16 @@ function makeMockDb() {
 function setupSuccessfulMocks() {
   const config = makeConfig();
   const db = makeMockDb();
+  const observability = {
+    observe: vi.fn(),
+    observeWithTraceparent: vi.fn(),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+  };
 
   vi.mocked(loadConfig).mockReturnValue(ok(config as any));
   vi.mocked(createDatabase).mockReturnValue(ok(db as any));
   vi.mocked(runMigrations).mockReturnValue(ok(1));
+  vi.mocked(createObservabilityService).mockResolvedValue(observability as any);
 
   // Restore constructor mocks in case previous tests overrode them.
   vi.mocked(PersonaLoader).mockImplementation(() => ({
@@ -240,7 +261,7 @@ function setupSuccessfulMocks() {
     loadFromPersonaConfig: vi.fn().mockResolvedValue(ok([])),
   }) as any);
 
-  return { config, db };
+  return { config, db, observability };
 }
 
 // ---------------------------------------------------------------------------
@@ -303,9 +324,15 @@ describe('bootstrap', () => {
     it('returns error when persona loading fails and closes db', async () => {
       const config = makeConfig();
       const db = makeMockDb();
+      const observability = {
+        observe: vi.fn(),
+        observeWithTraceparent: vi.fn(),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      };
       vi.mocked(loadConfig).mockReturnValue(ok(config as any));
       vi.mocked(createDatabase).mockReturnValue(ok(db as any));
       vi.mocked(runMigrations).mockReturnValue(ok(0));
+      vi.mocked(createObservabilityService).mockResolvedValue(observability as any);
 
       // Override the PersonaLoader mock to make loadFromConfig fail.
       vi.mocked(PersonaLoader).mockImplementation(() => ({
@@ -318,14 +345,21 @@ describe('bootstrap', () => {
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().message).toContain('Failed to load personas');
       expect(db.close).toHaveBeenCalledOnce();
+      expect(observability.shutdown).toHaveBeenCalledOnce();
     });
 
     it('returns error when skill loading fails and closes db', async () => {
       const config = makeConfig();
       const db = makeMockDb();
+      const observability = {
+        observe: vi.fn(),
+        observeWithTraceparent: vi.fn(),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      };
       vi.mocked(loadConfig).mockReturnValue(ok(config as any));
       vi.mocked(createDatabase).mockReturnValue(ok(db as any));
       vi.mocked(runMigrations).mockReturnValue(ok(0));
+      vi.mocked(createObservabilityService).mockResolvedValue(observability as any);
 
       // Restore PersonaLoader to success (may have been overridden by previous test).
       vi.mocked(PersonaLoader).mockImplementation(() => ({
@@ -343,6 +377,7 @@ describe('bootstrap', () => {
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().message).toContain('Failed to load skills');
       expect(db.close).toHaveBeenCalledOnce();
+      expect(observability.shutdown).toHaveBeenCalledOnce();
     });
   });
 
@@ -387,9 +422,11 @@ describe('bootstrap', () => {
       expect(ctx.hostToolsBridge).toBeDefined();
       expect(ctx.backgroundAgentManager).toBeDefined();
       expect(ctx.providerRegistry).toBeDefined();
+      expect(ctx.observability).toBeDefined();
       expect(ctx.logger).toBeDefined();
     });
 
+<<<<<<< HEAD
     it('applies the configured log level during bootstrap', async () => {
       setupSuccessfulMocks();
       const configuredLogger = createDiscardLogger('info');
@@ -399,6 +436,16 @@ describe('bootstrap', () => {
 
       expect(result.isOk()).toBe(true);
       expect(configuredLogger.level).toBe('debug');
+    });
+
+    it('creates the observability service from config and attaches it to the context', async () => {
+      const { config, observability } = setupSuccessfulMocks();
+
+      const result = await bootstrap('/config.yaml', logger);
+
+      expect(result.isOk()).toBe(true);
+      expect(createObservabilityService).toHaveBeenCalledWith(config.langfuse, logger);
+      expect(result._unsafeUnwrap().observability).toBe(observability);
     });
     it('calls recoverFromCrash during bootstrap', async () => {
       setupSuccessfulMocks();

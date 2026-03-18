@@ -176,6 +176,20 @@ context:
   recentMessageCount: 10             # recent messages included verbatim in new session
 
 # ---------------------------------------------------------------------------
+# Langfuse — cloud observability for foreground runs, tools, and sub-agents
+# ---------------------------------------------------------------------------
+langfuse:
+  enabled: false                     # set true to export traces to Langfuse Cloud
+  publicKey: ${LANGFUSE_PUBLIC_KEY}  # Langfuse public API key
+  secretKey: ${LANGFUSE_SECRET_KEY}  # Langfuse secret API key
+  baseUrl: https://cloud.langfuse.com # EU cloud; use https://us.cloud.langfuse.com for US cloud
+  environment: production            # filterable environment label in Langfuse
+  # release: ${GIT_SHA}              # optional deploy/build identifier
+  exportMode: batched                # batched for daemon, immediate for debugging
+  flushAt: 20                        # export batch size
+  flushIntervalSeconds: 5            # export flush interval
+
+# ---------------------------------------------------------------------------
 # Global settings
 # ---------------------------------------------------------------------------
 logLevel: info                       # trace | debug | info | warn | error | fatal

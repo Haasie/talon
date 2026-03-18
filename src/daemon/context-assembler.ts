@@ -22,6 +22,13 @@ export interface ContextAssemblerDeps {
   recentMessageCount: number;
 }
 
+export interface AssembledContext {
+  text: string;
+  summaryFound: boolean;
+  recentMessageCount: number;
+  charCount: number;
+}
+
 export class ContextAssembler {
   private readonly deps: ContextAssemblerDeps;
 
@@ -32,11 +39,12 @@ export class ContextAssembler {
   /**
    * Assemble previous context for a fresh session.
    *
-   * Returns a markdown string to append to the system prompt, or an
-   * empty string if there's no prior context.
+   * Returns a markdown string and metadata for observability.
    */
-  assemble(threadId: string): string {
+  assemble(threadId: string): AssembledContext {
     const sections: string[] = [];
+    let summaryFound = false;
+    let recentMessageCount = 0;
 
     // 1. Get latest session summary from memory.
     const summaryResult = this.deps.memoryRepo.findByThread(threadId, 'summary');
@@ -44,6 +52,7 @@ export class ContextAssembler {
       // findByThread with type filter returns DESC by created_at, first is newest.
       const latest = summaryResult.value[0];
       sections.push(latest.content);
+      summaryFound = true;
     }
 
     // 2. Get recent messages for immediate conversational context.
@@ -54,11 +63,19 @@ export class ContextAssembler {
     if (messagesResult.isOk() && messagesResult.value.length > 0) {
       const formatted = this.formatMessages(messagesResult.value);
       sections.push(`### Recent Messages\n\n${formatted}`);
+      recentMessageCount = messagesResult.value.length;
     }
 
-    if (sections.length === 0) return '';
+    if (sections.length === 0) {
+      return {
+        text: '',
+        summaryFound,
+        recentMessageCount,
+        charCount: 0,
+      };
+    }
 
-    return [
+    const text = [
       '## Previous Context',
       '',
       'The following is a read-only summary of prior conversation history.',
@@ -66,6 +83,13 @@ export class ContextAssembler {
       '',
       ...sections,
     ].join('\n');
+
+    return {
+      text,
+      summaryFound,
+      recentMessageCount,
+      charCount: text.length,
+    };
   }
 
   private formatMessages(messages: MessageRow[]): string {

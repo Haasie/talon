@@ -22,6 +22,7 @@ import type {
   AgentRunnerConfigSchema,
   ContextConfigSchema,
   BackgroundAgentConfigSchema,
+  LangfuseConfigSchema,
   ProviderConfigSchema,
 } from './config-schema.js';
 
@@ -72,3 +73,6 @@ export type ContextConfig = z.infer<typeof ContextConfigSchema>;
 
 /** Background Claude Code worker settings. */
 export type BackgroundAgentConfig = z.infer<typeof BackgroundAgentConfigSchema>;
+
+/** Langfuse Cloud observability settings. */
+export type LangfuseConfig = z.infer<typeof LangfuseConfigSchema>;

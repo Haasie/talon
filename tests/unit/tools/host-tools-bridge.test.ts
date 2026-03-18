@@ -156,6 +156,17 @@ describe('HostToolsBridge', () => {
       } as any,
       loadedSkills: [],
       messagePipeline: {} as any,
+      observability: {
+        observe: vi.fn(async (_input, fn) => await fn({
+          update: vi.fn(),
+          getTraceparent: vi.fn().mockReturnValue(null),
+        })),
+        observeWithTraceparent: vi.fn(async (_traceparent, _input, fn) => await fn({
+          update: vi.fn(),
+          getTraceparent: vi.fn().mockReturnValue(null),
+        })),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      } as any,
       backgroundAgentManager: {
         spawn: vi.fn().mockReturnValue(ok('bg-task-1')),
         listTasksForThread: vi.fn().mockReturnValue(ok([])),
@@ -164,7 +175,12 @@ describe('HostToolsBridge', () => {
         getResult: vi.fn().mockReturnValue(ok(null)),
       } as any,
       contextAssembler: {
-        assemble: vi.fn().mockReturnValue('Previous thread summary.'),
+        assemble: vi.fn().mockReturnValue({
+          text: 'Previous thread summary.',
+          summaryFound: true,
+          recentMessageCount: 0,
+          charCount: 24,
+        }),
       } as any,
       hostToolsBridge: {} as any,
       logger: mockLogger as any,
@@ -347,6 +363,147 @@ describe('HostToolsBridge', () => {
 
       expect((response.result as any)?.status).toBe('success');
       expect((response.result as any)?.result).toHaveProperty('items');
+    });
+
+    it('wraps tool dispatch in an observation using the incoming traceparent', async () => {
+      bridge = new HostToolsBridge(mockCtx);
+      bridge.start();
+      await waitForSocket(bridge.path);
+
+      await sendRequest(bridge.path, {
+        id: randomUUID(),
+        tool: 'schedule_manage',
+        args: {
+          action: 'list',
+        },
+        context: {
+          runId: 'run-001',
+          threadId: 'thread-001',
+          personaId: 'persona-001',
+          requestId: 'req-001',
+          traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+        },
+      });
+
+      expect(mockCtx.observability.observeWithTraceparent).toHaveBeenCalledWith(
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+        expect.objectContaining({
+          type: 'tool',
+          name: 'schedule.manage',
+          metadata: expect.objectContaining({
+            runId: 'run-001',
+            threadId: 'thread-001',
+            personaId: 'persona-001',
+          }),
+        }),
+        expect.any(Function),
+      );
+    });
+
+    it('traces rejected tool calls as failed tool observations', async () => {
+      const update = vi.fn();
+      mockCtx.observability.observeWithTraceparent = vi.fn(async (_traceparent, _input, fn) =>
+        await fn({
+          update,
+          getTraceparent: vi.fn().mockReturnValue(null),
+        }));
+
+      bridge = new HostToolsBridge(mockCtx);
+
+      const socket = { write: vi.fn() } as unknown as ReturnType<typeof createConnection>;
+
+      await (bridge as any).handleRequest(
+        JSON.stringify({
+          id: 'req-001',
+          tool: 'unknown_tool',
+          args: {},
+          context: {
+            runId: 'run-001',
+            threadId: 'thread-001',
+            personaId: 'persona-001',
+            requestId: 'req-001',
+            traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+          },
+        }),
+        socket,
+      );
+
+      expect(mockCtx.observability.observeWithTraceparent).toHaveBeenCalledWith(
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+        expect.objectContaining({
+          type: 'tool',
+          name: 'unknown_tool',
+        }),
+        expect.any(Function),
+      );
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          level: 'ERROR',
+          statusMessage: expect.stringContaining('not allowed'),
+        }),
+      );
+      expect((socket.write as any).mock.calls[0]?.[0]).toContain('"status":"error"');
+    });
+
+    it('records a timeout as the final tool observation outcome', async () => {
+      vi.useFakeTimers();
+      try {
+        const update = vi.fn();
+        mockCtx.observability.observeWithTraceparent = vi.fn(async (_traceparent, _input, fn) =>
+          await fn({
+            update,
+            getTraceparent: vi.fn().mockReturnValue(null),
+          }));
+
+        bridge = new HostToolsBridge(mockCtx);
+
+        let resolveDispatch!: (result: unknown) => void;
+        (bridge as any).dispatch = vi.fn().mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              resolveDispatch = resolve;
+            }),
+        );
+
+        const socket = { write: vi.fn() } as unknown as ReturnType<typeof createConnection>;
+        const handlePromise = (bridge as any).handleRequest(
+          JSON.stringify({
+            id: 'req-timeout',
+            tool: 'schedule_manage',
+            args: { action: 'list' },
+            context: {
+              runId: 'run-001',
+              threadId: 'thread-001',
+              personaId: 'persona-001',
+              requestId: 'req-timeout',
+              traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+            },
+          }),
+          socket,
+        );
+
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        expect((socket.write as any).mock.calls[0]?.[0]).toContain('"error":"Request timeout"');
+
+        resolveDispatch({
+          requestId: 'req-timeout',
+          tool: 'schedule.manage',
+          status: 'success',
+          result: { ok: true },
+        });
+
+        await handlePromise;
+
+        expect(update.mock.calls.at(-1)?.[0]).toEqual(
+          expect.objectContaining({
+            level: 'ERROR',
+            statusMessage: 'Request timeout',
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
