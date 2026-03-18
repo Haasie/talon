@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ok, err } from 'neverthrow';
-import pino from 'pino';
+import type pino from 'pino';
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -47,13 +47,14 @@ import { bootstrap } from '../../../src/daemon/daemon-bootstrap.js';
 import { loadConfig } from '../../../src/core/config/config-loader.js';
 import { ConfigError } from '../../../src/core/errors/index.js';
 import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
+import { createDiscardLogger } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
 function createSilentLogger(): pino.Logger {
-  return pino({ level: 'silent' });
+  return createDiscardLogger('silent');
 }
 
 /** Minimal valid TalondConfig fixture. */
@@ -264,7 +265,7 @@ describe('TalondDaemon.reload()', () => {
   describe('log level changes', () => {
     it('updates logger level when logLevel changes', async () => {
       setupSuccessfulStart({ logLevel: 'info' });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
 
@@ -280,7 +281,7 @@ describe('TalondDaemon.reload()', () => {
 
     it('does not change logger level when logLevel is unchanged', async () => {
       setupSuccessfulStart({ logLevel: 'info' });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
 
@@ -304,7 +305,7 @@ describe('TalondDaemon.reload()', () => {
   describe('channel diff logging', () => {
     it('logs added channels', async () => {
       setupSuccessfulStart({ channels: [] });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const logSpy = vi.spyOn(logger, 'info');
@@ -335,7 +336,7 @@ describe('TalondDaemon.reload()', () => {
       setupSuccessfulStart({
         channels: [{ type: 'telegram', name: 'old-channel', config: {}, enabled: true }],
       });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const logSpy = vi.spyOn(logger, 'info');
@@ -363,7 +364,7 @@ describe('TalondDaemon.reload()', () => {
     it('does not log channel changes when channels are identical', async () => {
       const channels = [{ type: 'telegram', name: 'stable', config: {}, enabled: true }];
       setupSuccessfulStart({ channels });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const logSpy = vi.spyOn(logger, 'info');
@@ -395,7 +396,7 @@ describe('TalondDaemon.reload()', () => {
   describe('persona diff logging', () => {
     it('logs added personas', async () => {
       setupSuccessfulStart({ personas: [] });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const logSpy = vi.spyOn(logger, 'info');
@@ -426,7 +427,7 @@ describe('TalondDaemon.reload()', () => {
       setupSuccessfulStart({
         personas: [{ name: 'old-bot', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] }],
       });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const logSpy = vi.spyOn(logger, 'info');
@@ -454,7 +455,7 @@ describe('TalondDaemon.reload()', () => {
     it('logs changed personas', async () => {
       const persona = { name: 'agent', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] };
       setupSuccessfulStart({ personas: [persona] });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const logSpy = vi.spyOn(logger, 'info');
@@ -489,7 +490,7 @@ describe('TalondDaemon.reload()', () => {
   describe('queue / scheduler config changes', () => {
     it('logs a warning when queue config changes', async () => {
       setupSuccessfulStart({ queue: { maxAttempts: 3, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 } });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const warnSpy = vi.spyOn(logger, 'warn');
@@ -511,7 +512,7 @@ describe('TalondDaemon.reload()', () => {
 
     it('logs a warning when scheduler config changes', async () => {
       setupSuccessfulStart({ scheduler: { tickIntervalMs: 5000 } });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const warnSpy = vi.spyOn(logger, 'warn');
@@ -549,7 +550,7 @@ describe('TalondDaemon.reload()', () => {
           resourceLimits: { memoryMb: 1024, cpus: 1, pidsLimit: 256 },
         },
       });
-      const logger = pino({ level: 'silent' });
+      const logger = createDiscardLogger('silent');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
       const warnSpy = vi.spyOn(logger, 'warn');

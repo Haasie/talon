@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ok, err } from 'neverthrow';
-import pino from 'pino';
+import type pino from 'pino';
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -142,13 +142,14 @@ import { recoverFromCrash } from '../../../src/daemon/lifecycle.js';
 import { registerChannels } from '../../../src/channels/channel-setup.js';
 import { BackgroundTaskRepository } from '../../../src/core/database/repositories/index.js';
 import { BackgroundAgentManager } from '../../../src/subagents/background/background-agent-manager.js';
+import { createDiscardLogger } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
 function createSilentLogger(): pino.Logger {
-  return pino({ level: 'silent' });
+  return createDiscardLogger('silent');
 }
 
 /** Minimal valid TalondConfig fixture. */
@@ -391,7 +392,7 @@ describe('bootstrap', () => {
 
     it('applies the configured log level during bootstrap', async () => {
       setupSuccessfulMocks();
-      const configuredLogger = pino({ level: 'info' });
+      const configuredLogger = createDiscardLogger('info');
       vi.mocked(loadConfig).mockReturnValue(ok(makeConfig({ logLevel: 'debug' }) as any));
 
       const result = await bootstrap('/config.yaml', configuredLogger);
@@ -399,7 +400,6 @@ describe('bootstrap', () => {
       expect(result.isOk()).toBe(true);
       expect(configuredLogger.level).toBe('debug');
     });
-
     it('calls recoverFromCrash during bootstrap', async () => {
       setupSuccessfulMocks();
 

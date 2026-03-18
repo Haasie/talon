@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ok, err } from 'neverthrow';
-import pino from 'pino';
+import type pino from 'pino';
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -48,13 +48,14 @@ import { loadConfig } from '../../../src/core/config/config-loader.js';
 import { writePidFile, removePidFile } from '../../../src/daemon/lifecycle.js';
 import { DaemonError } from '../../../src/core/errors/index.js';
 import type { DaemonContext } from '../../../src/daemon/daemon-context.js';
+import { createDiscardLogger } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
 function createSilentLogger(): pino.Logger {
-  return pino({ level: 'silent' });
+  return createDiscardLogger('silent');
 }
 
 /**
@@ -269,14 +270,13 @@ describe('TalondDaemon', () => {
       expect(health.uptime).toBeGreaterThanOrEqual(0);
       expect(health.schedulerRunning).toBe(true);
     });
-
     it('applies the configured log level on initial start', async () => {
       setupSuccessfulBootstrap({
         config: {
           logLevel: 'debug',
         } as any,
       });
-      const logger = pino({ level: 'info' });
+      const logger = createDiscardLogger('info');
       const localDaemon = new TalondDaemon(logger);
 
       await localDaemon.start('/config.yaml');
@@ -284,6 +284,24 @@ describe('TalondDaemon', () => {
       expect(logger.level).toBe('debug');
 
       await localDaemon.stop();
+    });
+
+    it('can keep the startup logger from writing to stdout when log level changes', async () => {
+      setupSuccessfulBootstrap({
+        config: {
+          logLevel: 'debug',
+        } as any,
+      });
+      const stdoutWriteSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true as any);
+      const logger = createDiscardLogger('info');
+      const localDaemon = new TalondDaemon(logger);
+
+      await localDaemon.start('/config.yaml');
+
+      expect(stdoutWriteSpy).not.toHaveBeenCalled();
+
+      await localDaemon.stop();
+      stdoutWriteSpy.mockRestore();
     });
   });
 
