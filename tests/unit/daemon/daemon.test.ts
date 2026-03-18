@@ -269,6 +269,22 @@ describe('TalondDaemon', () => {
       expect(health.uptime).toBeGreaterThanOrEqual(0);
       expect(health.schedulerRunning).toBe(true);
     });
+
+    it('applies the configured log level on initial start', async () => {
+      setupSuccessfulBootstrap({
+        config: {
+          logLevel: 'debug',
+        } as any,
+      });
+      const logger = pino({ level: 'info' });
+      const localDaemon = new TalondDaemon(logger);
+
+      await localDaemon.start('/config.yaml');
+
+      expect(logger.level).toBe('debug');
+
+      await localDaemon.stop();
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -389,6 +389,17 @@ describe('bootstrap', () => {
       expect(ctx.logger).toBeDefined();
     });
 
+    it('applies the configured log level during bootstrap', async () => {
+      setupSuccessfulMocks();
+      const configuredLogger = pino({ level: 'info' });
+      vi.mocked(loadConfig).mockReturnValue(ok(makeConfig({ logLevel: 'debug' }) as any));
+
+      const result = await bootstrap('/config.yaml', configuredLogger);
+
+      expect(result.isOk()).toBe(true);
+      expect(configuredLogger.level).toBe('debug');
+    });
+
     it('calls recoverFromCrash during bootstrap', async () => {
       setupSuccessfulMocks();
 

@@ -73,6 +73,10 @@ export class TalondDaemon {
     }
     this.ctx = ctxResult.value;
 
+    if (this.logger.level !== this.ctx.config.logLevel) {
+      this.logger.level = this.ctx.config.logLevel;
+    }
+
     // 2. Register and start MCP servers from loaded skills.
     this.mcpRegistry = new McpRegistry(this.logger);
     for (const skill of this.ctx.loadedSkills) {
