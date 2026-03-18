@@ -305,9 +305,9 @@ describe('TalondDaemon.reload()', () => {
     it('logs added channels', async () => {
       setupSuccessfulStart({ channels: [] });
       const logger = pino({ level: 'silent' });
-      const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const logSpy = vi.spyOn(logger, 'info');
 
       const newConfig = makeConfig({
         channels: [{ type: 'telegram', name: 'my-telegram', config: {}, enabled: true }],
@@ -336,9 +336,9 @@ describe('TalondDaemon.reload()', () => {
         channels: [{ type: 'telegram', name: 'old-channel', config: {}, enabled: true }],
       });
       const logger = pino({ level: 'silent' });
-      const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const logSpy = vi.spyOn(logger, 'info');
 
       const newConfig = makeConfig({ channels: [] });
       vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
@@ -364,9 +364,9 @@ describe('TalondDaemon.reload()', () => {
       const channels = [{ type: 'telegram', name: 'stable', config: {}, enabled: true }];
       setupSuccessfulStart({ channels });
       const logger = pino({ level: 'silent' });
-      const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const logSpy = vi.spyOn(logger, 'info');
 
       const newConfig = makeConfig({ channels });
       vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
@@ -396,9 +396,9 @@ describe('TalondDaemon.reload()', () => {
     it('logs added personas', async () => {
       setupSuccessfulStart({ personas: [] });
       const logger = pino({ level: 'silent' });
-      const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const logSpy = vi.spyOn(logger, 'info');
 
       const newConfig = makeConfig({
         personas: [{ name: 'new-bot', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] }],
@@ -427,9 +427,9 @@ describe('TalondDaemon.reload()', () => {
         personas: [{ name: 'old-bot', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] }],
       });
       const logger = pino({ level: 'silent' });
-      const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const logSpy = vi.spyOn(logger, 'info');
 
       const newConfig = makeConfig({ personas: [] });
       vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
@@ -455,9 +455,9 @@ describe('TalondDaemon.reload()', () => {
       const persona = { name: 'agent', model: 'claude-sonnet-4-6', skills: [], capabilities: { allow: [], requireApproval: [] }, mounts: [] };
       setupSuccessfulStart({ personas: [persona] });
       const logger = pino({ level: 'silent' });
-      const logSpy = vi.spyOn(logger, 'info');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const logSpy = vi.spyOn(logger, 'info');
 
       const newConfig = makeConfig({
         personas: [{ ...persona, model: 'claude-opus-4-6' }],
@@ -490,9 +490,9 @@ describe('TalondDaemon.reload()', () => {
     it('logs a warning when queue config changes', async () => {
       setupSuccessfulStart({ queue: { maxAttempts: 3, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 } });
       const logger = pino({ level: 'silent' });
-      const warnSpy = vi.spyOn(logger, 'warn');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const warnSpy = vi.spyOn(logger, 'warn');
 
       const newConfig = makeConfig({ queue: { maxAttempts: 5, backoffBaseMs: 1000, backoffMaxMs: 60000, concurrencyLimit: 2 } });
       vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
@@ -512,9 +512,9 @@ describe('TalondDaemon.reload()', () => {
     it('logs a warning when scheduler config changes', async () => {
       setupSuccessfulStart({ scheduler: { tickIntervalMs: 5000 } });
       const logger = pino({ level: 'silent' });
-      const warnSpy = vi.spyOn(logger, 'warn');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const warnSpy = vi.spyOn(logger, 'warn');
 
       const newConfig = makeConfig({ scheduler: { tickIntervalMs: 10000 } });
       vi.mocked(loadConfig).mockReturnValue(ok(newConfig as any));
@@ -550,9 +550,9 @@ describe('TalondDaemon.reload()', () => {
         },
       });
       const logger = pino({ level: 'silent' });
-      const warnSpy = vi.spyOn(logger, 'warn');
       const localDaemon = new TalondDaemon(logger);
       await localDaemon.start('/config.yaml');
+      const warnSpy = vi.spyOn(logger, 'warn');
 
       const newConfig = makeConfig({
         sandbox: {

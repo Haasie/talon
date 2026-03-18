@@ -87,6 +87,11 @@ export async function bootstrap(
   }
   const config = configResult.value;
   const dataDir = config.dataDir;
+
+  if (logger.level !== config.logLevel) {
+    logger.level = config.logLevel;
+  }
+
   logger.info({ logLevel: config.logLevel }, 'bootstrap: config loaded');
 
   // 2. Open database
