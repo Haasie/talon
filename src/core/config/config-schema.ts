@@ -138,8 +138,59 @@ export const ProviderConfigSchema = z.object({
   enabled: z.boolean().default(false),
   command: z.string(),
   contextWindowTokens: z.number().int().min(1000).default(200_000),
-  rotationThreshold: z.number().min(0).max(1).default(0.4),
   options: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const ContextManagementConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    triggerMetric: z.enum(['input_tokens', 'cache_read_input_tokens']).optional(),
+    thresholdRatio: z.number().min(0).max(1).optional(),
+    recentMessageCount: z.number().int().min(0).optional(),
+    summarizer: z.string().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.enabled) {
+      return;
+    }
+
+    if (!value.triggerMetric) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['triggerMetric'],
+        message: 'triggerMetric is required when contextManagement.enabled is true',
+      });
+    }
+
+    if (value.thresholdRatio === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['thresholdRatio'],
+        message: 'thresholdRatio is required when contextManagement.enabled is true',
+      });
+    }
+
+    if (value.recentMessageCount === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recentMessageCount'],
+        message: 'recentMessageCount is required when contextManagement.enabled is true',
+      });
+    }
+
+    if (!value.summarizer) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['summarizer'],
+        message: 'summarizer is required when contextManagement.enabled is true',
+      });
+    }
+  });
+
+export const AgentRunnerProviderConfigSchema = ProviderConfigSchema.extend({
+  contextManagement: ContextManagementConfigSchema.default(() =>
+    ContextManagementConfigSchema.parse({}),
+  ),
 });
 
 function defaultClaudeProviderConfig() {
@@ -147,40 +198,29 @@ function defaultClaudeProviderConfig() {
     enabled: true,
     command: 'claude',
     contextWindowTokens: 200_000,
-    rotationThreshold: 0.4,
+  });
+}
+
+function defaultClaudeAgentRunnerProviderConfig() {
+  return AgentRunnerProviderConfigSchema.parse({
+    enabled: true,
+    command: 'claude',
+    contextWindowTokens: 200_000,
+    contextManagement: {
+      enabled: true,
+      triggerMetric: 'cache_read_input_tokens',
+      thresholdRatio: 0.4,
+      recentMessageCount: 10,
+      summarizer: 'session-summarizer',
+    },
   });
 }
 
 export const AgentRunnerConfigSchema = z.object({
   defaultProvider: z.string().default('claude-code'),
   providers: z
-    .record(z.string(), ProviderConfigSchema)
-    .default(() => ({ 'claude-code': defaultClaudeProviderConfig() })),
-});
-
-// ---------------------------------------------------------------------------
-// Context (rolling context window)
-// ---------------------------------------------------------------------------
-
-export const ContextConfigSchema = z.object({
-  /**
-   * Enable automatic context rotation. Default: true.
-   *
-   * When enabled, sessions are rotated when cache_read_input_tokens approaches
-   * the context window limit (controlled by the provider's rotationThreshold).
-   * This reduces per-turn token costs for API-billed users by keeping context
-   * size in check.
-   *
-   * Claude Max subscribers may want to disable this — cached tokens are free
-   * under Max plans, so long sessions with high cache hit ratios are the
-   * cheapest possible state. Rotation actually increases cost by forcing
-   * expensive cache creation (1.25×) on fresh sessions.
-   */
-  enabled: z.boolean().default(true),
-  /** Legacy token threshold fallback converted to provider rotation ratios. Default: 80 000. */
-  thresholdTokens: z.number().int().min(10_000).default(80_000),
-  /** Number of recent messages to include verbatim in fresh sessions. Default: 10. */
-  recentMessageCount: z.number().int().min(0).default(10),
+    .record(z.string(), AgentRunnerProviderConfigSchema)
+    .default(() => ({ 'claude-code': defaultClaudeAgentRunnerProviderConfig() })),
 });
 
 // ---------------------------------------------------------------------------
@@ -250,7 +290,6 @@ export const TalondConfigSchema = z.object({
   scheduler: SchedulerConfigSchema.default(() => SchedulerConfigSchema.parse({})),
   auth: AuthConfigSchema.default(() => AuthConfigSchema.parse({})),
   agentRunner: AgentRunnerConfigSchema.default(() => AgentRunnerConfigSchema.parse({})),
-  context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
   backgroundAgent: BackgroundAgentConfigSchema.default(() => BackgroundAgentConfigSchema.parse({})),
   langfuse: LangfuseConfigSchema.default(() => LangfuseConfigSchema.parse({})),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),

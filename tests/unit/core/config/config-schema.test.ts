@@ -442,7 +442,6 @@ describe('BackgroundAgentConfigSchema', () => {
             enabled: true,
             command: 'claude',
             contextWindowTokens: 200000,
-            rotationThreshold: 0.4,
           },
         },
       });
@@ -460,7 +459,6 @@ describe('BackgroundAgentConfigSchema', () => {
           enabled: true,
           command: '/usr/local/bin/claude',
           contextWindowTokens: 250000,
-          rotationThreshold: 0.55,
         },
       },
     });
@@ -474,7 +472,6 @@ describe('BackgroundAgentConfigSchema', () => {
         enabled: true,
         command: '/usr/local/bin/claude',
         contextWindowTokens: 250000,
-        rotationThreshold: 0.55,
       });
     }
   });
@@ -503,18 +500,8 @@ describe('ProviderConfigSchema', () => {
         enabled: false,
         command: 'claude',
         contextWindowTokens: 200000,
-        rotationThreshold: 0.4,
       });
     }
-  });
-
-  it('rejects invalid rotationThreshold values', () => {
-    expect(
-      ProviderConfigSchema.safeParse({ command: 'claude', rotationThreshold: -0.1 }).success,
-    ).toBe(false);
-    expect(
-      ProviderConfigSchema.safeParse({ command: 'claude', rotationThreshold: 1.1 }).success,
-    ).toBe(false);
   });
 });
 
@@ -530,11 +517,131 @@ describe('AgentRunnerConfigSchema', () => {
             enabled: true,
             command: 'claude',
             contextWindowTokens: 200000,
-            rotationThreshold: 0.4,
+            contextManagement: {
+              enabled: true,
+              triggerMetric: 'cache_read_input_tokens',
+              thresholdRatio: 0.4,
+              recentMessageCount: 10,
+              summarizer: 'session-summarizer',
+            },
           },
         },
       });
     }
+  });
+
+  it('accepts explicit contextManagement overrides', () => {
+    const result = AgentRunnerConfigSchema.safeParse({
+      defaultProvider: 'claude-code',
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: '/usr/local/bin/claude',
+          contextWindowTokens: 1000000,
+          contextManagement: {
+            enabled: true,
+            triggerMetric: 'cache_read_input_tokens',
+            thresholdRatio: 0.5,
+            recentMessageCount: 12,
+            summarizer: 'session-summarizer',
+          },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.providers['claude-code']).toEqual({
+        enabled: true,
+        command: '/usr/local/bin/claude',
+        contextWindowTokens: 1000000,
+        contextManagement: {
+          enabled: true,
+          triggerMetric: 'cache_read_input_tokens',
+          thresholdRatio: 0.5,
+          recentMessageCount: 12,
+          summarizer: 'session-summarizer',
+        },
+      });
+    }
+  });
+
+  it('rejects invalid contextManagement.thresholdRatio values', () => {
+    expect(
+      AgentRunnerConfigSchema.safeParse({
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+            contextManagement: {
+              enabled: true,
+              triggerMetric: 'cache_read_input_tokens',
+              thresholdRatio: -0.1,
+              recentMessageCount: 10,
+              summarizer: 'session-summarizer',
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+
+    expect(
+      AgentRunnerConfigSchema.safeParse({
+        providers: {
+          'claude-code': {
+            enabled: true,
+            command: 'claude',
+            contextWindowTokens: 200000,
+            contextManagement: {
+              enabled: true,
+              triggerMetric: 'cache_read_input_tokens',
+              thresholdRatio: 1.1,
+              recentMessageCount: 10,
+              summarizer: 'session-summarizer',
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects unsupported contextManagement.triggerMetric values', () => {
+    const result = AgentRunnerConfigSchema.safeParse({
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          contextManagement: {
+            enabled: true,
+            triggerMetric: 'cache_write_input_tokens',
+            thresholdRatio: 0.4,
+            recentMessageCount: 10,
+            summarizer: 'session-summarizer',
+          },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects enabled contextManagement without a summarizer', () => {
+    const result = AgentRunnerConfigSchema.safeParse({
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          contextManagement: {
+            enabled: true,
+            triggerMetric: 'cache_read_input_tokens',
+            thresholdRatio: 0.4,
+            recentMessageCount: 10,
+          },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
   });
 });
 
@@ -563,7 +670,13 @@ describe('TalondConfigSchema', () => {
             enabled: true,
             command: 'claude',
             contextWindowTokens: 200000,
-            rotationThreshold: 0.4,
+            contextManagement: {
+              enabled: true,
+              triggerMetric: 'cache_read_input_tokens',
+              thresholdRatio: 0.4,
+              recentMessageCount: 10,
+              summarizer: 'session-summarizer',
+            },
           },
         },
       });
@@ -577,7 +690,6 @@ describe('TalondConfigSchema', () => {
             enabled: true,
             command: 'claude',
             contextWindowTokens: 200000,
-            rotationThreshold: 0.4,
           },
         },
       });
@@ -613,7 +725,13 @@ describe('TalondConfigSchema', () => {
             enabled: true,
             command: '/opt/bin/claude-sdk',
             contextWindowTokens: 220000,
-            rotationThreshold: 0.6,
+            contextManagement: {
+              enabled: true,
+              triggerMetric: 'cache_read_input_tokens',
+              thresholdRatio: 0.6,
+              recentMessageCount: 8,
+              summarizer: 'session-summarizer',
+            },
           },
         },
       },
@@ -627,7 +745,6 @@ describe('TalondConfigSchema', () => {
             enabled: true,
             command: '/opt/bin/claude',
             contextWindowTokens: 220000,
-            rotationThreshold: 0.6,
           },
         },
       },
