@@ -141,7 +141,7 @@ describe('ClaudeCodeProvider', () => {
     expect(result.usage).toBeUndefined();
   });
 
-  it('estimates context usage from cache-read tokens for context window fullness', () => {
+  it('estimates context usage from supported Claude cache metrics', () => {
     expect(
       provider.estimateContextUsage({
         inputTokens: 1000,
@@ -154,6 +154,8 @@ describe('ClaudeCodeProvider', () => {
       metrics: {
         input_tokens: 1000,
         cache_read_input_tokens: 50000,
+        cache_creation_input_tokens: 500,
+        cache_total_input_tokens: 50500,
       },
     });
   });
@@ -294,6 +296,8 @@ describe('ClaudeCodeProvider', () => {
       metrics: {
         input_tokens: 0,
         cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_total_input_tokens: 0,
       },
     });
   });

@@ -144,7 +144,12 @@ export const ProviderConfigSchema = z.object({
 export const ContextManagementConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    triggerMetric: z.enum(['input_tokens', 'cache_read_input_tokens']).optional(),
+    triggerMetric: z.enum([
+      'input_tokens',
+      'cache_read_input_tokens',
+      'cache_creation_input_tokens',
+      'cache_total_input_tokens',
+    ]).optional(),
     thresholdRatio: z.number().min(0).max(1).optional(),
     recentMessageCount: z.number().int().min(0).optional(),
     summarizer: z.string().trim().min(1).optional(),

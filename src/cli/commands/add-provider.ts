@@ -19,7 +19,11 @@ import {
 // ---------------------------------------------------------------------------
 
 export type ProviderContext = 'agent-runner' | 'background' | 'both';
-export type TriggerMetric = 'input_tokens' | 'cache_read_input_tokens';
+export type TriggerMetric =
+  | 'input_tokens'
+  | 'cache_read_input_tokens'
+  | 'cache_creation_input_tokens'
+  | 'cache_total_input_tokens';
 
 export interface AddProviderOptions {
   name: string;
@@ -111,8 +115,15 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
 
   const contextEnabled = options.contextEnabled ?? (ctx !== 'background');
   const triggerMetric = options.triggerMetric ?? inferDefaultTriggerMetric(options.name, options.command);
-  if (!['input_tokens', 'cache_read_input_tokens'].includes(triggerMetric)) {
-    throw new Error('triggerMetric must be one of: input_tokens, cache_read_input_tokens.');
+  if (![
+    'input_tokens',
+    'cache_read_input_tokens',
+    'cache_creation_input_tokens',
+    'cache_total_input_tokens',
+  ].includes(triggerMetric)) {
+    throw new Error(
+      'triggerMetric must be one of: input_tokens, cache_read_input_tokens, cache_creation_input_tokens, cache_total_input_tokens.',
+    );
   }
 
   const thresholdRatio = options.thresholdRatio ?? 0.5;

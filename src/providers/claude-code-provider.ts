@@ -125,11 +125,15 @@ export class ClaudeCodeProvider implements AgentProvider {
   }
 
   estimateContextUsage(usage: AgentUsage): ContextUsage {
+    const cacheReadTokens = usage.cacheReadTokens ?? 0;
+    const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
     return {
       inputTokens: usage.inputTokens,
       metrics: {
         input_tokens: usage.inputTokens,
-        cache_read_input_tokens: usage.cacheReadTokens ?? 0,
+        cache_read_input_tokens: cacheReadTokens,
+        cache_creation_input_tokens: cacheWriteTokens,
+        cache_total_input_tokens: cacheReadTokens + cacheWriteTokens,
       },
     };
   }

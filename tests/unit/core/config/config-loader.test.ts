@@ -259,6 +259,40 @@ agentRunner:
     }
   });
 
+  it('loads cache_total_input_tokens as a provider-scoped trigger metric', () => {
+    const yaml = `
+agentRunner:
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 1000000
+      contextManagement:
+        enabled: true
+        triggerMetric: cache_total_input_tokens
+        thresholdRatio: 0.5
+        recentMessageCount: 10
+        summarizer: session-summarizer
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agentRunner.providers['claude-code']).toEqual({
+        enabled: true,
+        command: 'claude',
+        contextWindowTokens: 1000000,
+        contextManagement: {
+          enabled: true,
+          triggerMetric: 'cache_total_input_tokens',
+          thresholdRatio: 0.5,
+          recentMessageCount: 10,
+          summarizer: 'session-summarizer',
+        },
+      });
+    }
+  });
+
   it('rejects legacy top-level context config in YAML input', () => {
     const yaml = `
 context:

@@ -131,6 +131,32 @@ describe('addProvider()', () => {
     });
   });
 
+  it('accepts cache_total_input_tokens for Claude providers', async () => {
+    const p = writeYaml('logLevel: info\nagentRunner:\n  providers: {}\n');
+
+    await addProvider({
+      name: 'claude-max',
+      command: 'claude',
+      context: 'agent-runner',
+      contextEnabled: true,
+      triggerMetric: 'cache_total_input_tokens',
+      configPath: p,
+    });
+
+    const doc = readYaml(p);
+    const agentRunner = doc.agentRunner as Record<string, unknown>;
+    const providers = agentRunner.providers as Record<string, unknown>;
+    const provider = providers['claude-max'] as Record<string, unknown>;
+
+    expect(provider.contextManagement).toEqual({
+      enabled: true,
+      triggerMetric: 'cache_total_input_tokens',
+      thresholdRatio: 0.5,
+      recentMessageCount: 10,
+      summarizer: 'session-summarizer',
+    });
+  });
+
   it('rejects an invalid threshold ratio', async () => {
     const p = writeYaml('logLevel: info\n');
 

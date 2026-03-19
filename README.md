@@ -783,12 +783,12 @@ This sub-agent is called automatically by the **rolling context window** (see be
 
 ### Rolling Context Window
 
-Long conversations eventually fill the Agent SDK's context window. Talon monitors `cacheReadTokens` after each agent run and automatically rotates the session when usage exceeds 80K tokens, keeping conversations seamless without jarring resets.
+Long conversations eventually fill the Agent SDK's context window. Talon monitors provider-specific context metrics after each agent run and automatically rotates the session when the configured threshold is exceeded, keeping conversations seamless without jarring resets. For Claude latency optimization, `cache_total_input_tokens` is the strongest signal because it tracks the total cached session footprint after the run.
 
 **How it works:**
 
 ```
-Agent run completes → cacheReadTokens > 80K?
+Agent run completes → selected trigger metric exceeds threshold?
   ├── No  → Continue normally (session resumes next time)
   └── Yes → ContextRoller triggers:
             1. Reconstruct transcript from messages table

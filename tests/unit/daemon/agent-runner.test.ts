@@ -466,6 +466,52 @@ describe('AgentRunner', () => {
       );
     });
 
+    it('passes the configured cache-total trigger metric into the roller', async () => {
+      ctx.contextRoller = {
+        checkAndRotate: vi.fn().mockResolvedValue(undefined),
+      } as any;
+      mockQuery.mockReturnValue(
+        makeAgentStream({
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 9_240,
+            cache_creation_input_tokens: 109_113,
+          },
+        }),
+      );
+      ctx.providerRegistry = new ProviderRegistry(
+        {
+          'claude-code': makeAgentRunnerProviderConfig({
+            contextWindowTokens: 300_000,
+            contextManagement: makeContextManagement({
+              triggerMetric: 'cache_total_input_tokens',
+              thresholdRatio: 0.39,
+            }),
+          }) as any,
+        },
+        {
+          'claude-code': (config) => new ClaudeCodeProvider(config),
+        },
+      ) as any;
+      runner = new AgentRunner(ctx);
+
+      await runner.run(makeQueueItem());
+
+      expect(ctx.contextRoller.checkAndRotate).toHaveBeenCalledWith(
+        'thread-001',
+        'persona-001',
+        {
+          ratio: 118_353 / 300_000,
+          inputTokens: 100,
+          rawMetric: 118_353,
+          rawMetricName: 'cache_total_input_tokens',
+        },
+        0.39,
+        'session-summarizer',
+      );
+    });
+
     it('runs Gemini through the existing CLI branch, persists provider_name, and sends a waiting message', async () => {
       const cliRun = vi.fn().mockResolvedValue({
         output: 'Gemini result',

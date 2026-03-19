@@ -565,6 +565,44 @@ describe('AgentRunnerConfigSchema', () => {
     }
   });
 
+  it('accepts cache creation and total trigger metrics', () => {
+    const creationMetricResult = AgentRunnerConfigSchema.safeParse({
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          contextManagement: {
+            enabled: true,
+            triggerMetric: 'cache_creation_input_tokens',
+            thresholdRatio: 0.5,
+            recentMessageCount: 10,
+            summarizer: 'session-summarizer',
+          },
+        },
+      },
+    });
+    expect(creationMetricResult.success).toBe(true);
+
+    const totalMetricResult = AgentRunnerConfigSchema.safeParse({
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          contextManagement: {
+            enabled: true,
+            triggerMetric: 'cache_total_input_tokens',
+            thresholdRatio: 0.5,
+            recentMessageCount: 10,
+            summarizer: 'session-summarizer',
+          },
+        },
+      },
+    });
+    expect(totalMetricResult.success).toBe(true);
+  });
+
   it('rejects invalid contextManagement.thresholdRatio values', () => {
     expect(
       AgentRunnerConfigSchema.safeParse({

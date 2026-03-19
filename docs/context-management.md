@@ -83,13 +83,19 @@ for providers where cached-context cost is low or unavailable.
 
 - `cache_read_input_tokens`:
   Best for latency control on Claude Code. It tracks resumed-session growth.
+- `cache_creation_input_tokens`:
+  Tracks the new cache written by the current Claude run.
+- `cache_total_input_tokens`:
+  Tracks total Claude cached context after the run (`cache_read_input_tokens` +
+  `cache_creation_input_tokens`). This is the best signal when you want
+  rotation to follow total cached session footprint.
 - `input_tokens`:
   Best when you want the policy tied to fresh prompt size instead of cached
   context size. This also works for providers that do not report cache-read
   metrics.
 
-If you configure a metric the selected provider does not expose, Talon fails the
-run with a clear error instead of silently falling back.
+If you configure a metric the selected provider does not expose, Talon logs an
+error and skips rotation for that run instead of silently falling back.
 
 ## Choosing `thresholdRatio`
 

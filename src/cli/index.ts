@@ -412,7 +412,10 @@ program
   .option('--context <ctx>', 'Context: agent-runner, background, or both', 'both')
   .option('--context-window <tokens>', 'Context window size in tokens', '200000')
   .option('--context-enabled <enabled>', 'Enable context management for agent-runner providers (true/false)')
-  .option('--trigger-metric <metric>', 'Context rotation trigger metric (input_tokens or cache_read_input_tokens)')
+  .option(
+    '--trigger-metric <metric>',
+    'Context rotation trigger metric (input_tokens, cache_read_input_tokens, cache_creation_input_tokens, or cache_total_input_tokens)',
+  )
   .option('--threshold-ratio <ratio>', 'Context rotation threshold ratio 0-1 float', '0.5')
   .option('--recent-message-count <count>', 'Recent messages to preserve in fresh sessions', '10')
   .option('--summarizer <name>', 'Subagent name used for session summarization', 'session-summarizer')
@@ -441,7 +444,12 @@ program
       contextEnabled: opts.contextEnabled === undefined
         ? undefined
         : parseBooleanOption(opts.contextEnabled),
-      triggerMetric: opts.triggerMetric as 'input_tokens' | 'cache_read_input_tokens' | undefined,
+      triggerMetric: opts.triggerMetric as
+        | 'input_tokens'
+        | 'cache_read_input_tokens'
+        | 'cache_creation_input_tokens'
+        | 'cache_total_input_tokens'
+        | undefined,
       thresholdRatio: parseFloat(opts.thresholdRatio),
       recentMessageCount: parseInt(opts.recentMessageCount, 10),
       summarizer: opts.summarizer,
