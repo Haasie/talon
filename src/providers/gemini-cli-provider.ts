@@ -92,12 +92,11 @@ export class GeminiCliProvider implements AgentProvider {
   }
 
   estimateContextUsage(usage: AgentUsage): ContextUsage {
-    const inputTokens = usage.inputTokens ?? 0;
     return {
-      ratio: inputTokens / Math.max(1, this.config.contextWindowTokens),
-      inputTokens,
-      rawMetric: inputTokens,
-      rawMetricName: 'input_tokens',
+      inputTokens: usage.inputTokens ?? 0,
+      metrics: {
+        input_tokens: usage.inputTokens ?? 0,
+      },
     };
   }
 

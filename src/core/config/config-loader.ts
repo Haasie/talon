@@ -70,7 +70,6 @@ function normalizeLegacyConfig(raw: unknown): unknown {
           enabled: true,
           command: claudePath,
           contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
         },
       };
     }

@@ -20,7 +20,7 @@ import type { MemoryRepository } from '../core/database/repositories/memory-repo
 import type { SessionTracker } from '../sandbox/session-tracker.js';
 import type { SubAgentResult } from '../subagents/subagent-types.js';
 import type { SubAgentError } from '../core/errors/index.js';
-import type { ContextUsage } from '../providers/provider-types.js';
+import type { ResolvedContextUsage } from '../providers/provider-types.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,9 +55,11 @@ export interface ContextRollerDeps {
   sessionTracker: Pick<SessionTracker, 'rotateSession'>;
   /** Pre-bound summarizer function. Model, prompt, and services are captured at bootstrap. */
   summarizerRun: SummarizerRunFn;
+  /** Optional resolver for provider-selected summarizer names. */
+  resolveSummarizerRun?: (name: string) => SummarizerRunFn | null;
   logger: pino.Logger;
-  /** Context ratio threshold for triggering rotation. Default: 0.4. */
-  thresholdRatio: number;
+  /** Optional fallback context ratio threshold. */
+  thresholdRatio?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,10 +82,11 @@ export class ContextRoller {
   async checkAndRotate(
     threadId: string,
     personaId: string,
-    contextUsage: ContextUsage,
+    contextUsage: ResolvedContextUsage,
     overrideThreshold?: number,
+    summarizerName: string = 'session-summarizer',
   ): Promise<void> {
-    const threshold = overrideThreshold ?? this.deps.thresholdRatio;
+    const threshold = overrideThreshold ?? this.deps.thresholdRatio ?? 0.4;
     if (contextUsage.ratio < threshold) {
       return;
     }
@@ -110,9 +113,17 @@ export class ContextRoller {
     }
 
     const transcript = this.buildTranscript(messages, MAX_TRANSCRIPT_CHARS);
+    const summarizerRun = this.deps.resolveSummarizerRun?.(summarizerName) ?? this.deps.summarizerRun;
+    if (!summarizerRun) {
+      this.deps.logger.error(
+        { threadId, summarizer: summarizerName },
+        'context-roller: summarizer not available, keeping current session',
+      );
+      return;
+    }
 
     // 2. Call pre-bound summarizer (model, prompt, and services captured at bootstrap).
-    const summaryResult = await this.deps.summarizerRun(
+    const summaryResult = await summarizerRun(
       threadId,
       personaId,
       { transcript },

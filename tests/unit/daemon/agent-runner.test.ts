@@ -68,6 +68,27 @@ function makeStartedObservationHandle(traceparent: string | null): StartedObserv
   };
 }
 
+function makeContextManagement(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    enabled: true,
+    triggerMetric: 'cache_read_input_tokens',
+    thresholdRatio: 0.4,
+    recentMessageCount: 10,
+    summarizer: 'session-summarizer',
+    ...overrides,
+  };
+}
+
+function makeAgentRunnerProviderConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    enabled: true,
+    command: 'claude',
+    contextWindowTokens: 200000,
+    contextManagement: makeContextManagement(),
+    ...overrides,
+  };
+}
+
 function makeMockContext(): DaemonContext {
   const mockLogger = {
     info: vi.fn(),
@@ -83,12 +104,7 @@ function makeMockContext(): DaemonContext {
       agentRunner: {
         defaultProvider: 'claude-code',
         providers: {
-          'claude-code': {
-            enabled: true,
-            command: 'claude',
-            contextWindowTokens: 200000,
-            rotationThreshold: 0.4,
-          },
+          'claude-code': makeAgentRunnerProviderConfig(),
         },
       },
     } as any,
@@ -197,12 +213,7 @@ function makeMockContext(): DaemonContext {
     } as any,
     providerRegistry: new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
+        'claude-code': makeAgentRunnerProviderConfig(),
       },
       {
         'claude-code': (config) => new ClaudeCodeProvider(config),
@@ -418,7 +429,13 @@ describe('AgentRunner', () => {
       );
     });
 
-    it('passes normalized context usage into the roller', async () => {
+    it('uses the selected provider recentMessageCount when assembling fresh-session context', async () => {
+      await runner.run(makeQueueItem());
+
+      expect(ctx.contextAssembler.assemble).toHaveBeenCalledWith('thread-001', 10);
+    });
+
+    it('passes the configured cache-read trigger metric into the roller', async () => {
       ctx.contextRoller = {
         checkAndRotate: vi.fn().mockResolvedValue(undefined),
       } as any;
@@ -445,6 +462,7 @@ describe('AgentRunner', () => {
           rawMetricName: 'cache_read_input_tokens',
         },
         0.4,
+        'session-summarizer',
       );
     });
 
@@ -490,18 +508,20 @@ describe('AgentRunner', () => {
                   prepareBackgroundInvocation: vi.fn(),
                   parseBackgroundResult: vi.fn(),
                   estimateContextUsage: vi.fn().mockReturnValue({
-                    ratio: 0.5,
                     inputTokens: 500_000,
-                    rawMetric: 500_000,
-                    rawMetricName: 'input_tokens',
+                    metrics: {
+                      input_tokens: 500_000,
+                    },
                   }),
                 },
-                config: {
-                  enabled: true,
+                config: makeAgentRunnerProviderConfig({
                   command: 'gemini',
                   contextWindowTokens: 1_000_000,
-                  rotationThreshold: 0.8,
-                },
+                  contextManagement: makeContextManagement({
+                    triggerMetric: 'input_tokens',
+                    thresholdRatio: 0.8,
+                  }),
+                }),
               }
             : undefined
         )),
@@ -516,18 +536,20 @@ describe('AgentRunner', () => {
             prepareBackgroundInvocation: vi.fn(),
             parseBackgroundResult: vi.fn(),
             estimateContextUsage: vi.fn().mockReturnValue({
-              ratio: 0.5,
               inputTokens: 500_000,
-              rawMetric: 500_000,
-              rawMetricName: 'input_tokens',
+              metrics: {
+                input_tokens: 500_000,
+              },
             }),
           },
-          config: {
-            enabled: true,
+          config: makeAgentRunnerProviderConfig({
             command: 'gemini',
             contextWindowTokens: 1_000_000,
-            rotationThreshold: 0.8,
-          },
+            contextManagement: makeContextManagement({
+              triggerMetric: 'input_tokens',
+              thresholdRatio: 0.8,
+            }),
+          }),
         })),
       } as any;
 
@@ -564,7 +586,79 @@ describe('AgentRunner', () => {
           rawMetricName: 'input_tokens',
         },
         0.8,
+        'session-summarizer',
       );
+    });
+
+    it('skips context rotation when provider context management is disabled', async () => {
+      ctx.contextRoller = {
+        checkAndRotate: vi.fn().mockResolvedValue(undefined),
+      } as any;
+      ctx.providerRegistry = new ProviderRegistry(
+        {
+          'claude-code': makeAgentRunnerProviderConfig({
+            contextManagement: {
+              enabled: false,
+            },
+          }) as any,
+        },
+        {
+          'claude-code': (config) => new ClaudeCodeProvider(config),
+        },
+      ) as any;
+      runner = new AgentRunner(ctx);
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isOk()).toBe(true);
+      expect(ctx.contextRoller.checkAndRotate).not.toHaveBeenCalled();
+    });
+
+    it('fails clearly when the configured trigger metric is unavailable', async () => {
+      ctx.contextRoller = {
+        checkAndRotate: vi.fn().mockResolvedValue(undefined),
+      } as any;
+      ctx.providerRegistry = {
+        getDefault: vi.fn().mockReturnValue({
+          provider: {
+            name: 'gemini-cli',
+            createExecutionStrategy: () => ({
+              type: 'cli' as const,
+              supportsSessionResumption: false as const,
+              run: vi.fn().mockResolvedValue({
+                output: 'Gemini result',
+                sessionId: undefined,
+                usage: {
+                  inputTokens: 500_000,
+                  outputTokens: 120,
+                },
+                isError: false,
+              }),
+            }),
+            prepareBackgroundInvocation: vi.fn(),
+            parseBackgroundResult: vi.fn(),
+            estimateContextUsage: vi.fn().mockReturnValue({
+              inputTokens: 500_000,
+              metrics: {
+                input_tokens: 500_000,
+              },
+            }),
+          },
+          config: makeAgentRunnerProviderConfig({
+            command: 'gemini',
+            contextWindowTokens: 1_000_000,
+            contextManagement: makeContextManagement({
+              triggerMetric: 'cache_read_input_tokens',
+            }),
+          }),
+        }),
+      } as any;
+
+      const result = await runner.run(makeQueueItem());
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().message).toContain('does not provide context metric "cache_read_input_tokens"');
+      expect(ctx.contextRoller.checkAndRotate).not.toHaveBeenCalled();
     });
   });
 
@@ -725,18 +819,20 @@ describe('AgentRunner', () => {
                 prepareBackgroundInvocation: vi.fn(),
                 parseBackgroundResult: vi.fn(),
                 estimateContextUsage: vi.fn().mockReturnValue({
-                  ratio: 0.25,
                   inputTokens: 250_000,
-                  rawMetric: 250_000,
-                  rawMetricName: 'input_tokens',
+                  metrics: {
+                    input_tokens: 250_000,
+                  },
                 }),
               },
-              config: {
-                enabled: true,
+              config: makeAgentRunnerProviderConfig({
                 command: 'gemini',
                 contextWindowTokens: 1_000_000,
-                rotationThreshold: 0.8,
-              },
+                contextManagement: makeContextManagement({
+                  triggerMetric: 'input_tokens',
+                  thresholdRatio: 0.8,
+                }),
+              }),
             };
           }
           return {
@@ -750,18 +846,13 @@ describe('AgentRunner', () => {
               prepareBackgroundInvocation: vi.fn(),
               parseBackgroundResult: vi.fn(),
               estimateContextUsage: vi.fn().mockReturnValue({
-                ratio: 0,
                 inputTokens: 0,
-                rawMetric: 0,
-                rawMetricName: 'cache_read_input_tokens',
+                metrics: {
+                  cache_read_input_tokens: 0,
+                },
               }),
             },
-            config: {
-              enabled: true,
-              command: 'claude',
-              contextWindowTokens: 200_000,
-              rotationThreshold: 0.4,
-            },
+            config: makeAgentRunnerProviderConfig(),
           };
         });
       ctx.providerRegistry = {
@@ -809,18 +900,20 @@ describe('AgentRunner', () => {
           prepareBackgroundInvocation: vi.fn(),
           parseBackgroundResult: vi.fn(),
           estimateContextUsage: vi.fn().mockReturnValue({
-            ratio: 0.00001,
             inputTokens: 10,
-            rawMetric: 10,
-            rawMetricName: 'input_tokens',
+            metrics: {
+              input_tokens: 10,
+            },
           }),
         },
-        config: {
-          enabled: true,
+        config: makeAgentRunnerProviderConfig({
           command: 'gemini',
           contextWindowTokens: 1_000_000,
-          rotationThreshold: 0.8,
-        },
+          contextManagement: makeContextManagement({
+            triggerMetric: 'input_tokens',
+            thresholdRatio: 0.8,
+          }),
+        }),
       });
 
       vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok({
@@ -1002,18 +1095,19 @@ describe('AgentRunner', () => {
             prepareBackgroundInvocation: vi.fn(),
             parseBackgroundResult: vi.fn(),
             estimateContextUsage: vi.fn().mockReturnValue({
-              ratio: 0,
               inputTokens: 0,
-              rawMetric: 0,
-              rawMetricName: 'test',
+              metrics: {
+                input_tokens: 0,
+              },
             }),
           },
-          config: {
-            enabled: true,
+          config: makeAgentRunnerProviderConfig({
             command: 'test-sdk',
             contextWindowTokens: 1000,
-            rotationThreshold: 0.4,
-          },
+            contextManagement: makeContextManagement({
+              triggerMetric: 'input_tokens',
+            }),
+          }),
         }),
       } as any;
 
@@ -1072,18 +1166,19 @@ describe('AgentRunner', () => {
             prepareBackgroundInvocation: vi.fn(),
             parseBackgroundResult: vi.fn(),
             estimateContextUsage: vi.fn().mockReturnValue({
-              ratio: 0,
               inputTokens: 0,
-              rawMetric: 0,
-              rawMetricName: 'test',
+              metrics: {
+                input_tokens: 0,
+              },
             }),
           },
-          config: {
-            enabled: true,
+          config: makeAgentRunnerProviderConfig({
             command: 'slow-sdk',
             contextWindowTokens: 1000,
-            rotationThreshold: 0.4,
-          },
+            contextManagement: makeContextManagement({
+              triggerMetric: 'input_tokens',
+            }),
+          }),
         }),
       } as any;
 

@@ -18,8 +18,6 @@ import type { MemoryRepository } from '../core/database/repositories/memory-repo
 export interface ContextAssemblerDeps {
   messageRepo: Pick<MessageRepository, 'findLatestByThread'>;
   memoryRepo: Pick<MemoryRepository, 'findByThread'>;
-  /** Number of recent messages to include verbatim. Default: 10. */
-  recentMessageCount: number;
 }
 
 export interface AssembledContext {
@@ -41,7 +39,7 @@ export class ContextAssembler {
    *
    * Returns a markdown string and metadata for observability.
    */
-  assemble(threadId: string): AssembledContext {
+  assemble(threadId: string, recentMessageLimit: number = 0): AssembledContext {
     const sections: string[] = [];
     let summaryFound = false;
     let recentMessageCount = 0;
@@ -58,7 +56,7 @@ export class ContextAssembler {
     // 2. Get recent messages for immediate conversational context.
     const messagesResult = this.deps.messageRepo.findLatestByThread(
       threadId,
-      this.deps.recentMessageCount,
+      recentMessageLimit,
     );
     if (messagesResult.isOk() && messagesResult.value.length > 0) {
       const formatted = this.formatMessages(messagesResult.value);

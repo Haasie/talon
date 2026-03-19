@@ -58,8 +58,8 @@ This matters because it means you can:
 
 - Run different providers for foreground vs background work (e.g., Claude for interactive, a local model for batch tasks)
 - Add new providers without touching core pipeline code — implement the interface, register in config, done
-- Configure provider-specific settings like context window size and rotation thresholds per provider instance
-- Keep backward compatibility — existing configs without provider sections still work, the loader normalizes them
+- Configure provider-specific context windows and context-management policy per agent-runner provider
+- Keep provider defaults simple while failing fast on removed legacy `context` config that now requires migration
 
 ```yaml
 agentRunner:
@@ -69,7 +69,12 @@ agentRunner:
       enabled: true
       command: claude
       contextWindowTokens: 200000
-      rotationThreshold: 0.5
+      contextManagement:
+        enabled: true
+        triggerMetric: cache_read_input_tokens
+        thresholdRatio: 0.5
+        recentMessageCount: 10
+        summarizer: session-summarizer
 
 backgroundAgent:
   enabled: true
@@ -92,7 +97,7 @@ backgroundAgent:
 - **Hot reload** — Change config, personas, and skills without restarting the daemon
 - **Systemd integration** — Watchdog heartbeat, graceful shutdown, timer-based wake-only mode
 - **Session persistence** — Agent sessions resume across messages in the same thread
-- **Rolling context window** — Automatic session rotation when context usage hits a configurable ratio of the provider's context window, with compressed history injection into fresh sessions
+- **Provider-scoped context management** — Per-provider session rotation policy for latency or cost control, with compressed history injection into fresh sessions
 
 ### Observability (Langfuse)
 
@@ -310,9 +315,19 @@ auth:
     openai:
       apiKey: ${OPENAI_API_KEY}
 
-context:
-  thresholdTokens: 80000  # legacy fallback if provider rotationThreshold is omitted
-  recentMessageCount: 10
+agentRunner:
+  defaultProvider: claude-code
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 1000000
+      contextManagement:
+        enabled: true
+        triggerMetric: cache_read_input_tokens
+        thresholdRatio: 0.5
+        recentMessageCount: 10
+        summarizer: session-summarizer
 
 logLevel: info
 dataDir: data
@@ -324,6 +339,7 @@ dataDir: data
 | ---------------------- | ----------------------------------------------------------------------------- |
 | `storage`              | Database backend and SQLite path                                              |
 | `queue`                | Retry/backoff/concurrency controls for durable queue processing               |
+| `agentRunner`          | Foreground provider config, including provider-scoped context management      |
 | `backgroundAgent`      | Enable and tune long-running background Claude Code workers                   |
 | `personas`             | Persona profiles: model, system prompt, skills, capabilities                  |
 | `channels`             | Channel connector entries with `type`, `name`, and connector `config` payload |
@@ -331,9 +347,10 @@ dataDir: data
 | `schedules`            | Agent-managed schedule entries (cron, interval, one-shot)                     |
 | `scheduler`            | Scheduler tick interval                                                       |
 | `auth`                 | `subscription` or `api_key` authentication mode                               |
-| `context`              | Rolling context window: legacy threshold fallback and verbatim message count  |
 | `langfuse`             | Langfuse observability: API keys, base URL, environment, flush settings       |
 | `logLevel` / `dataDir` | Runtime logging level and data root                                           |
+
+For the context-management strategies and migration details, see [docs/context-management.md](docs/context-management.md).
 
 ### Environment Variable Substitution
 

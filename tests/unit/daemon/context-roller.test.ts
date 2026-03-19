@@ -79,6 +79,45 @@ describe('ContextRoller', () => {
     expect(deps.sessionTracker.rotateSession).toHaveBeenCalledWith('thread-1');
   });
 
+  it('uses the configured summarizer name when a resolver is available', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'hello' }), created_at: 1000 },
+    ];
+    const alternateSummarizerRun = vi.fn().mockResolvedValueOnce(ok({
+      summary: 'Greeting exchange',
+      data: {
+        keyFacts: ['User greeted'],
+        openThreads: [],
+        summary: 'Greeting exchange',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+      resolveSummarizerRun: vi.fn().mockReturnValue(alternateSummarizerRun),
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate(
+      'thread-1',
+      'persona-1',
+      {
+        ratio: 0.45,
+        inputTokens: 90_000,
+        rawMetric: 90_000,
+        rawMetricName: 'cache_read_input_tokens',
+      },
+      0.4,
+      'custom-summarizer',
+    );
+
+    expect(deps.resolveSummarizerRun).toHaveBeenCalledWith('custom-summarizer');
+    expect(alternateSummarizerRun).toHaveBeenCalledOnce();
+    expect(mockSummarizerRun).not.toHaveBeenCalled();
+  });
+
   it('stores summary as memory item with type summary', async () => {
     const messages = [
       { direction: 'inbound', content: JSON.stringify({ body: 'hello' }), created_at: 1000 },

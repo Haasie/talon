@@ -55,6 +55,16 @@ if (existsSync(envPath)) {
 
 const program = new Command();
 
+function parseBooleanOption(value: string): boolean {
+  if (value === 'true') {
+    return true;
+  }
+  if (value === 'false') {
+    return false;
+  }
+  throw new Error(`Invalid boolean value "${value}". Use true or false.`);
+}
+
 program
   .name('talonctl')
   .description('CLI for managing the talond daemon')
@@ -401,17 +411,38 @@ program
   .requiredOption('--command <cmd>', 'CLI binary path (e.g. gemini or /usr/local/bin/gemini)')
   .option('--context <ctx>', 'Context: agent-runner, background, or both', 'both')
   .option('--context-window <tokens>', 'Context window size in tokens', '200000')
-  .option('--rotation-threshold <ratio>', 'Rotation threshold 0-1 float', '0.4')
+  .option('--context-enabled <enabled>', 'Enable context management for agent-runner providers (true/false)', 'true')
+  .option('--trigger-metric <metric>', 'Context rotation trigger metric (input_tokens or cache_read_input_tokens)', 'cache_read_input_tokens')
+  .option('--threshold-ratio <ratio>', 'Context rotation threshold ratio 0-1 float', '0.5')
+  .option('--recent-message-count <count>', 'Recent messages to preserve in fresh sessions', '10')
+  .option('--summarizer <name>', 'Subagent name used for session summarization', 'session-summarizer')
   .option('--enabled', 'Enable the provider immediately (default: disabled)')
   .option('--default-model <model>', 'Set options.defaultModel (e.g. gemini-2.5-pro)')
   .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
-  .action(async (opts: { name: string; command: string; context: string; contextWindow: string; rotationThreshold: string; enabled?: boolean; defaultModel?: string; config: string }) => {
+  .action(async (opts: {
+    name: string;
+    command: string;
+    context: string;
+    contextWindow: string;
+    contextEnabled: string;
+    triggerMetric: string;
+    thresholdRatio: string;
+    recentMessageCount: string;
+    summarizer: string;
+    enabled?: boolean;
+    defaultModel?: string;
+    config: string;
+  }) => {
     await addProviderCommand({
       name: opts.name,
       command: opts.command,
       context: opts.context as 'agent-runner' | 'background' | 'both',
       contextWindowTokens: parseInt(opts.contextWindow, 10),
-      rotationThreshold: parseFloat(opts.rotationThreshold),
+      contextEnabled: parseBooleanOption(opts.contextEnabled),
+      triggerMetric: opts.triggerMetric as 'input_tokens' | 'cache_read_input_tokens',
+      thresholdRatio: parseFloat(opts.thresholdRatio),
+      recentMessageCount: parseInt(opts.recentMessageCount, 10),
+      summarizer: opts.summarizer,
       enabled: opts.enabled ?? false,
       defaultModel: opts.defaultModel,
       configPath: opts.config,

@@ -64,6 +64,9 @@ export type AuthConfig = z.infer<typeof AuthConfigSchema>;
 /** Provider execution settings shared by agent runners and background agents. */
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
+/** Agent runner provider settings, including provider-scoped context management. */
+export type AgentRunnerProviderConfig = AgentRunnerConfig['providers'][string];
+
 /** Main agent runner provider settings. */
 export type AgentRunnerConfig = z.infer<typeof AgentRunnerConfigSchema>;
 

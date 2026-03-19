@@ -10,14 +10,13 @@ const makeDeps = (overrides: Partial<ContextAssemblerDeps> = {}): ContextAssembl
   memoryRepo: {
     findByThread: vi.fn().mockReturnValue(ok([])),
   } as any,
-  recentMessageCount: 10,
   ...overrides,
 });
 
 describe('ContextAssembler', () => {
   it('returns empty metadata when no summary and no recent messages', () => {
     const assembler = new ContextAssembler(makeDeps());
-    const result = assembler.assemble('thread-1');
+    const result = assembler.assemble('thread-1', 10);
     expect(result).toEqual({
       text: '',
       summaryFound: false,
@@ -42,7 +41,7 @@ describe('ContextAssembler', () => {
     });
 
     const assembler = new ContextAssembler(deps);
-    const result = assembler.assemble('thread-1');
+    const result = assembler.assemble('thread-1', 10);
     expect(result.summaryFound).toBe(true);
     expect(result.recentMessageCount).toBe(0);
     expect(result.text).toContain('Previous Context');
@@ -63,7 +62,7 @@ describe('ContextAssembler', () => {
     });
 
     const assembler = new ContextAssembler(deps);
-    const result = assembler.assemble('thread-1');
+    const result = assembler.assemble('thread-1', 10);
     expect(result.summaryFound).toBe(false);
     expect(result.recentMessageCount).toBe(2);
     expect(result.text).toContain('Recent Messages');
@@ -87,7 +86,7 @@ describe('ContextAssembler', () => {
     });
 
     const assembler = new ContextAssembler(deps);
-    const result = assembler.assemble('thread-1');
+    const result = assembler.assemble('thread-1', 10);
     expect(result.summaryFound).toBe(true);
     expect(result.recentMessageCount).toBe(1);
     expect(result.text).toContain('Previous Context');
@@ -107,7 +106,7 @@ describe('ContextAssembler', () => {
     });
 
     const assembler = new ContextAssembler(deps);
-    const result = assembler.assemble('thread-1');
+    const result = assembler.assemble('thread-1', 10);
     expect(result.text).toContain('New summary.');
     // Should only include one Previous Context section
     expect(result.text.match(/## Previous Context/g)?.length).toBe(1);
@@ -123,7 +122,7 @@ describe('ContextAssembler', () => {
     });
 
     const assembler = new ContextAssembler(deps);
-    const result = assembler.assemble('thread-1');
+    const result = assembler.assemble('thread-1', 10);
     expect(result.recentMessageCount).toBe(1);
     expect(result.text).toContain('User: plain text');
   });
