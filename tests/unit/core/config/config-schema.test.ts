@@ -520,7 +520,7 @@ describe('AgentRunnerConfigSchema', () => {
             contextManagement: {
               enabled: true,
               triggerMetric: 'cache_read_input_tokens',
-              thresholdRatio: 0.4,
+              thresholdRatio: 0.5,
               recentMessageCount: 10,
               summarizer: 'session-summarizer',
             },
@@ -643,6 +643,26 @@ describe('AgentRunnerConfigSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('rejects enabled contextManagement with a whitespace-only summarizer', () => {
+    const result = AgentRunnerConfigSchema.safeParse({
+      providers: {
+        'claude-code': {
+          enabled: true,
+          command: 'claude',
+          contextWindowTokens: 200000,
+          contextManagement: {
+            enabled: true,
+            triggerMetric: 'cache_read_input_tokens',
+            thresholdRatio: 0.5,
+            recentMessageCount: 10,
+            summarizer: '   ',
+          },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -673,7 +693,7 @@ describe('TalondConfigSchema', () => {
             contextManagement: {
               enabled: true,
               triggerMetric: 'cache_read_input_tokens',
-              thresholdRatio: 0.4,
+              thresholdRatio: 0.5,
               recentMessageCount: 10,
               summarizer: 'session-summarizer',
             },

@@ -143,7 +143,7 @@ describe('BackgroundAgentHandler', () => {
 
   it('spawns a background task using current persona and thread context', async () => {
     process.env.PERPLEXITY_API_KEY = 'secret';
-    const { handler, backgroundAgentManager } = createHandler();
+    const { handler, backgroundAgentManager, deps } = createHandler();
 
     const result = await handler.execute(
       {
@@ -183,6 +183,7 @@ describe('BackgroundAgentHandler', () => {
         personaPrompt: expect.stringContaining('Base system prompt.'),
       }),
     );
+    expect(deps.contextAssembler.assemble).toHaveBeenCalledWith('thread-1', 10);
     expect(backgroundAgentManager.spawn.mock.calls[0][0].personaPrompt).toContain(
       'Friendly personality.',
     );

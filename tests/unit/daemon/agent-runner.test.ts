@@ -614,10 +614,11 @@ describe('AgentRunner', () => {
       expect(ctx.contextRoller.checkAndRotate).not.toHaveBeenCalled();
     });
 
-    it('fails clearly when the configured trigger metric is unavailable', async () => {
+    it('logs and skips rotation when the configured trigger metric is unavailable', async () => {
       ctx.contextRoller = {
         checkAndRotate: vi.fn().mockResolvedValue(undefined),
       } as any;
+      const connector = ctx.channelRegistry.get('test-channel')!;
       ctx.providerRegistry = {
         getDefault: vi.fn().mockReturnValue({
           provider: {
@@ -656,9 +657,22 @@ describe('AgentRunner', () => {
 
       const result = await runner.run(makeQueueItem());
 
-      expect(result.isErr()).toBe(true);
-      expect(result._unsafeUnwrapErr().message).toContain('does not provide context metric "cache_read_input_tokens"');
+      expect(result.isOk()).toBe(true);
+      expect(connector.send).toHaveBeenNthCalledWith(1, 'ext-001', {
+        body: 'Thinking...',
+      });
+      expect(connector.send).toHaveBeenNthCalledWith(2, 'ext-001', {
+        body: 'Gemini result',
+      });
       expect(ctx.contextRoller.checkAndRotate).not.toHaveBeenCalled();
+      expect(ctx.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: 'thread-001',
+          metric: 'cache_read_input_tokens',
+          provider: 'gemini-cli',
+        }),
+        expect.stringContaining('configured trigger metric not available'),
+      );
     });
   });
 

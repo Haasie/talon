@@ -337,7 +337,7 @@ export async function bootstrap(
 
     const defaultSummarizer =
       boundSummarizers.get('session-summarizer')
-      ?? boundSummarizers.values().next().value;
+      ?? [...boundSummarizers.values()][0];
 
     if (defaultSummarizer) {
       contextRoller = new ContextRoller({

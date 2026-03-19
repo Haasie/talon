@@ -106,6 +106,31 @@ describe('addProvider()', () => {
     expect(backgroundAgent.contextManagement).toBeUndefined();
   });
 
+  it('defaults Gemini-style providers to the input_tokens trigger metric', async () => {
+    const p = writeYaml('logLevel: info\nagentRunner:\n  providers: {}\n');
+
+    await addProvider({
+      name: 'gemini-cli',
+      command: '/usr/local/bin/gemini',
+      context: 'agent-runner',
+      contextEnabled: true,
+      configPath: p,
+    });
+
+    const doc = readYaml(p);
+    const agentRunner = doc.agentRunner as Record<string, unknown>;
+    const providers = agentRunner.providers as Record<string, unknown>;
+    const provider = providers['gemini-cli'] as Record<string, unknown>;
+
+    expect(provider.contextManagement).toEqual({
+      enabled: true,
+      triggerMetric: 'input_tokens',
+      thresholdRatio: 0.5,
+      recentMessageCount: 10,
+      summarizer: 'session-summarizer',
+    });
+  });
+
   it('rejects an invalid threshold ratio', async () => {
     const p = writeYaml('logLevel: info\n');
 
@@ -168,6 +193,18 @@ describe('addProvider()', () => {
       summarizer: '   ',
       configPath: p,
     })).rejects.toThrow(/summarizer/);
+  });
+
+  it('rejects background providers with context management enabled', async () => {
+    const p = writeYaml('logLevel: info\n');
+
+    await expect(addProvider({
+      name: 'claude-background',
+      command: 'claude',
+      context: 'background',
+      contextEnabled: true,
+      configPath: p,
+    })).rejects.toThrow(/background.*context management/i);
   });
 });
 

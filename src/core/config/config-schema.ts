@@ -147,7 +147,7 @@ export const ContextManagementConfigSchema = z
     triggerMetric: z.enum(['input_tokens', 'cache_read_input_tokens']).optional(),
     thresholdRatio: z.number().min(0).max(1).optional(),
     recentMessageCount: z.number().int().min(0).optional(),
-    summarizer: z.string().min(1).optional(),
+    summarizer: z.string().trim().min(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.enabled) {
@@ -209,7 +209,7 @@ function defaultClaudeAgentRunnerProviderConfig() {
     contextManagement: {
       enabled: true,
       triggerMetric: 'cache_read_input_tokens',
-      thresholdRatio: 0.4,
+      thresholdRatio: 0.5,
       recentMessageCount: 10,
       summarizer: 'session-summarizer',
     },

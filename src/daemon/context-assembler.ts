@@ -39,7 +39,7 @@ export class ContextAssembler {
    *
    * Returns a markdown string and metadata for observability.
    */
-  assemble(threadId: string, recentMessageLimit: number = 0): AssembledContext {
+  assemble(threadId: string, recentMessageLimit: number): AssembledContext {
     const sections: string[] = [];
     let summaryFound = false;
     let recentMessageCount = 0;

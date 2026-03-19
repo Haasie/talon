@@ -5,6 +5,8 @@
  * or both in talond.yaml.
  */
 
+import { basename } from 'node:path';
+
 import {
   DEFAULT_CONFIG_PATH,
   validateName,
@@ -50,6 +52,19 @@ export interface ProviderEntry {
   options?: Record<string, unknown>;
 }
 
+function inferDefaultTriggerMetric(name: string, command: string): TriggerMetric {
+  const normalizedCommand = basename(command.trim())
+    .toLowerCase()
+    .replace(/\.(cmd|exe|bat)$/u, '');
+  const normalizedName = name.trim().toLowerCase();
+
+  if (normalizedCommand.includes('claude') || normalizedName.includes('claude')) {
+    return 'cache_read_input_tokens';
+  }
+
+  return 'input_tokens';
+}
+
 // ---------------------------------------------------------------------------
 // Core logic (importable)
 // ---------------------------------------------------------------------------
@@ -90,8 +105,12 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
     throw new Error('contextWindowTokens must be a finite number >= 1000.');
   }
 
+  if (ctx === 'background' && options.contextEnabled === true) {
+    throw new Error('Background providers do not support context management. See the README for agentRunner-only context management.');
+  }
+
   const contextEnabled = options.contextEnabled ?? (ctx !== 'background');
-  const triggerMetric = options.triggerMetric ?? 'cache_read_input_tokens';
+  const triggerMetric = options.triggerMetric ?? inferDefaultTriggerMetric(options.name, options.command);
   if (!['input_tokens', 'cache_read_input_tokens'].includes(triggerMetric)) {
     throw new Error('triggerMetric must be one of: input_tokens, cache_read_input_tokens.');
   }

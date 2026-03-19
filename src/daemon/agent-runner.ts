@@ -637,31 +637,36 @@ export class AgentRunner {
               const contextUsage = providerEntry.provider.estimateContextUsage(usage);
               const selectedMetricValue = contextUsage.metrics[enabledContextManagement.triggerMetric];
               if (selectedMetricValue === undefined) {
-                throw new Error(
-                  `Provider "${providerEntry.provider.name}" does not provide context metric "${enabledContextManagement.triggerMetric}". Update agentRunner.providers.${providerEntry.provider.name}.contextManagement.triggerMetric or switch providers.`,
+                this.ctx.logger.error(
+                  {
+                    threadId: item.threadId,
+                    metric: enabledContextManagement.triggerMetric,
+                    provider: providerEntry.provider.name,
+                  },
+                  'agent-runner: configured trigger metric not available from provider, skipping context rotation',
                 );
-              }
-
-              try {
-                if (selectedMetricValue > 0) {
-                  await this.ctx.contextRoller.checkAndRotate(
-                    item.threadId,
-                    personaId,
-                    {
-                      ratio: selectedMetricValue / Math.max(1, providerEntry.config.contextWindowTokens),
-                      inputTokens: contextUsage.inputTokens,
-                      rawMetric: selectedMetricValue,
-                      rawMetricName: enabledContextManagement.triggerMetric,
-                    },
-                    enabledContextManagement.thresholdRatio,
-                    enabledContextManagement.summarizer,
+              } else {
+                try {
+                  if (selectedMetricValue > 0) {
+                    await this.ctx.contextRoller.checkAndRotate(
+                      item.threadId,
+                      personaId,
+                      {
+                        ratio: selectedMetricValue / Math.max(1, providerEntry.config.contextWindowTokens),
+                        inputTokens: contextUsage.inputTokens,
+                        rawMetric: selectedMetricValue,
+                        rawMetricName: enabledContextManagement.triggerMetric,
+                      },
+                      enabledContextManagement.thresholdRatio,
+                      enabledContextManagement.summarizer,
+                    );
+                  }
+                } catch (e: unknown) {
+                  this.ctx.logger.error(
+                    { threadId: item.threadId, err: e },
+                    'agent-runner: context rotation failed',
                   );
                 }
-              } catch (e: unknown) {
-                this.ctx.logger.error(
-                  { threadId: item.threadId, err: e },
-                  'agent-runner: context rotation failed',
-                );
               }
             }
 

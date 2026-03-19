@@ -118,6 +118,45 @@ describe('ContextRoller', () => {
     expect(mockSummarizerRun).not.toHaveBeenCalled();
   });
 
+  it('does not fall back to the default summarizer when a named summarizer cannot be resolved', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'hello' }), created_at: 1000 },
+    ];
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+      resolveSummarizerRun: vi.fn().mockReturnValue(null),
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate(
+      'thread-1',
+      'persona-1',
+      {
+        ratio: 0.45,
+        inputTokens: 90_000,
+        rawMetric: 90_000,
+        rawMetricName: 'cache_read_input_tokens',
+      },
+      0.4,
+      'missing-summarizer',
+    );
+
+    expect(deps.resolveSummarizerRun).toHaveBeenCalledWith('missing-summarizer');
+    expect(mockSummarizerRun).not.toHaveBeenCalled();
+    expect(deps.memoryRepo.insert).not.toHaveBeenCalled();
+    expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: 'thread-1',
+        summarizer: 'missing-summarizer',
+      }),
+      expect.stringContaining('summarizer not available'),
+    );
+  });
+
   it('stores summary as memory item with type summary', async () => {
     const messages = [
       { direction: 'inbound', content: JSON.stringify({ body: 'hello' }), created_at: 1000 },

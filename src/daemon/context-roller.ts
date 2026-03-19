@@ -113,7 +113,9 @@ export class ContextRoller {
     }
 
     const transcript = this.buildTranscript(messages, MAX_TRANSCRIPT_CHARS);
-    const summarizerRun = this.deps.resolveSummarizerRun?.(summarizerName) ?? this.deps.summarizerRun;
+    const summarizerRun = this.deps.resolveSummarizerRun
+      ? this.deps.resolveSummarizerRun(summarizerName)
+      : this.deps.summarizerRun;
     if (!summarizerRun) {
       this.deps.logger.error(
         { threadId, summarizer: summarizerName },
