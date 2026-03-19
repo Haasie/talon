@@ -94,6 +94,13 @@ backgroundAgent:
 - **Session persistence** — Agent sessions resume across messages in the same thread
 - **Rolling context window** — Automatic session rotation when context usage hits a configurable ratio of the provider's context window, with compressed history injection into fresh sessions
 
+### Observability (Langfuse)
+
+- **Trace every agent run** — Each message-to-response cycle becomes a Langfuse trace with spans for agent execution, tool calls, and LLM generations
+- **OpenTelemetry-native** — Built on the `@langfuse/otel` span processor and the standard `NodeTracerProvider`
+- **No overhead when disabled** — A noop service replaces the real one; no Langfuse initialization or network traffic
+- **Self-hosted or cloud** — Point `baseUrl` at your own Langfuse instance or use Langfuse Cloud
+
 ### Security
 
 - **Default-deny capabilities** — Tools are gated by capability labels (`channel.send`, `schedule.manage`, etc.)
@@ -325,6 +332,7 @@ dataDir: data
 | `scheduler`            | Scheduler tick interval                                                       |
 | `auth`                 | `subscription` or `api_key` authentication mode                               |
 | `context`              | Rolling context window: legacy threshold fallback and verbatim message count  |
+| `langfuse`             | Langfuse observability: API keys, base URL, environment, flush settings       |
 | `logLevel` / `dataDir` | Runtime logging level and data root                                           |
 
 ### Environment Variable Substitution
@@ -1294,6 +1302,69 @@ When using Anthropic API keys, Talon records token usage from Agent SDK results 
 - `total_cost_usd` from Agent SDK results
 
 Per-persona budget limits and a `talonctl usage` report command are planned (TASK-047).
+
+---
+
+## Observability with Langfuse
+
+[Langfuse](https://langfuse.com) is an open-source LLM observability platform. When enabled, Talon exports structured traces for every agent run so you can inspect latency, token usage, tool calls, and model inputs/outputs from a single dashboard.
+
+### Why it matters
+
+Running autonomous agents across multiple channels means you lose visibility fast. Langfuse gives you:
+
+- **Trace-level debugging** — See the full chain of events for any message: which persona handled it, what tools were called, what the model saw and produced
+- **Cost tracking** — Token counts and cost breakdowns per trace when the provider reports them
+- **Latency profiling** — Spot slow tool calls or bloated prompts before they become user-facing problems
+- **Environment tagging** — Separate production, staging, and development traces cleanly
+
+### How it works
+
+Talon uses the `@langfuse/otel` span processor to emit OpenTelemetry spans directly to Langfuse. Each agent run creates a trace with nested spans for generations, tool invocations, and retriever calls. When Langfuse is disabled (the default), a noop service replaces it — no Langfuse libraries are initialized and no network calls are made. If initialization fails when enabled, Talon logs a warning and falls back to the noop service rather than crashing, so `enabled: true` does not guarantee traces will be exported.
+
+### Setup
+
+**1. Get Langfuse credentials**
+
+Sign up at [cloud.langfuse.com](https://cloud.langfuse.com) or deploy a [self-hosted instance](https://langfuse.com/docs/deployment/self-host). Create a project and grab the public and secret keys.
+
+**2. Set environment variables**
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+**3. Add the config block to `talond.yaml`**
+
+```yaml
+langfuse:
+  enabled: true
+  publicKey: ${LANGFUSE_PUBLIC_KEY}
+  secretKey: ${LANGFUSE_SECRET_KEY}
+  baseUrl: https://cloud.langfuse.com   # or your self-hosted URL
+  environment: production                # tags traces by environment
+  # release: v1.2.3                      # optional version tag
+  # exportMode: batched                  # batched (default) or immediate
+  # flushAt: 20                          # spans buffered before flush
+  # flushIntervalSeconds: 5              # max seconds between flushes
+```
+
+All fields except `enabled`, `publicKey`, and `secretKey` have sensible defaults. If `enabled` is `false` (or the section is omitted entirely), no Langfuse dependencies are loaded and no network calls are made.
+
+### Configuration reference
+
+| Field                  | Default                         | Description                                         |
+| ---------------------- | ------------------------------- | --------------------------------------------------- |
+| `enabled`              | `false`                         | Master switch for Langfuse integration              |
+| `publicKey`            | `''`                            | Langfuse project public key (required when enabled)  |
+| `secretKey`            | `''`                            | Langfuse project secret key (required when enabled)  |
+| `baseUrl`              | `https://cloud.langfuse.com`    | Langfuse API endpoint                               |
+| `environment`          | `production`                    | Environment tag attached to all traces              |
+| `release`              | —                               | Optional release/version tag                        |
+| `exportMode`           | `batched`                       | `batched` buffers spans; `immediate` sends one by one |
+| `flushAt`              | `20`                            | Number of spans buffered before a flush             |
+| `flushIntervalSeconds` | `5`                             | Maximum seconds between flushes                     |
 
 ---
 
