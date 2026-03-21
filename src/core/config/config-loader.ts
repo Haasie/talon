@@ -70,7 +70,6 @@ function normalizeLegacyConfig(raw: unknown): unknown {
           enabled: true,
           command: claudePath,
           contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
         },
       };
     }
@@ -78,45 +77,17 @@ function normalizeLegacyConfig(raw: unknown): unknown {
     root['backgroundAgent'] = normalizedBackgroundAgent;
   }
 
-  const context = isRecord(root['context']) ? root['context'] : undefined;
-  const thresholdTokens = context?.['thresholdTokens'];
-  if (typeof thresholdTokens === 'number') {
-    const normalizedAgentRunner = isRecord(root['agentRunner']) ? { ...root['agentRunner'] } : {};
-    const defaultProvider =
-      typeof normalizedAgentRunner['defaultProvider'] === 'string'
-        ? normalizedAgentRunner['defaultProvider']
-        : 'claude-code';
-    const normalizedProviders = isRecord(normalizedAgentRunner['providers'])
-      ? { ...normalizedAgentRunner['providers'] }
-      : {};
-    const rawProviderConfig = isRecord(normalizedProviders[defaultProvider])
-      ? { ...normalizedProviders[defaultProvider] }
-      : {};
-
-    if (!Object.hasOwn(rawProviderConfig, 'rotationThreshold')) {
-      const contextWindowTokens =
-        typeof rawProviderConfig['contextWindowTokens'] === 'number'
-          ? rawProviderConfig['contextWindowTokens']
-          : defaultProvider === 'claude-code'
-            ? 200000
-            : undefined;
-
-      if (contextWindowTokens !== undefined) {
-        normalizedProviders[defaultProvider] = {
-          enabled: true,
-          ...(defaultProvider === 'claude-code' ? { command: 'claude' } : {}),
-          ...rawProviderConfig,
-          contextWindowTokens,
-          rotationThreshold: Math.min(1, Math.max(0, thresholdTokens / contextWindowTokens)),
-        };
-        normalizedAgentRunner['defaultProvider'] ??= defaultProvider;
-        normalizedAgentRunner['providers'] = normalizedProviders;
-        root['agentRunner'] = normalizedAgentRunner;
-      }
-    }
-  }
-
   return root;
+}
+
+function hasLegacyContextConfig(raw: unknown): boolean {
+  return isRecord(raw) && Object.hasOwn(raw, 'context');
+}
+
+function legacyContextConfigError(source: string): ConfigError {
+  return new ConfigError(
+    `Top-level "context" configuration has been removed. Migrate context management to agentRunner.providers.<name>.contextManagement. See README.md. (${source})`,
+  );
 }
 
 /**
@@ -143,6 +114,10 @@ function parseAndValidate(yamlContent: string, source: string): Result<TalondCon
   // yaml.load returns undefined for an empty document; treat that as {}
   if (raw === undefined || raw === null) {
     raw = {};
+  }
+
+  if (hasLegacyContextConfig(raw)) {
+    return err(legacyContextConfigError(source));
   }
 
   raw = normalizeLegacyConfig(raw);
@@ -214,6 +189,10 @@ export function loadConfigFromString(yamlContent: string): Result<TalondConfig, 
  * @returns    Ok(TalondConfig) on success, Err(ConfigError) on failure.
  */
 export function validateConfig(raw: unknown): Result<TalondConfig, ConfigError> {
+  if (hasLegacyContextConfig(raw)) {
+    return err(legacyContextConfigError('validateConfig'));
+  }
+
   const result = TalondConfigSchema.safeParse(normalizeLegacyConfig(raw));
   if (!result.success) {
     const issues = result.error.issues.map(formatIssue);

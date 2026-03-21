@@ -113,12 +113,22 @@ agentRunner:
       enabled: true
       command: claude
       contextWindowTokens: 200000
-      rotationThreshold: 0.4
+      contextManagement:
+        enabled: true
+        triggerMetric: cache_read_input_tokens
+        thresholdRatio: 0.5
+        recentMessageCount: 10
+        summarizer: session-summarizer
     gemini-cli:
       enabled: false
       command: gemini
       contextWindowTokens: 1000000
-      rotationThreshold: 0.8
+      contextManagement:
+        enabled: true
+        triggerMetric: input_tokens
+        thresholdRatio: 0.8
+        recentMessageCount: 10
+        summarizer: session-summarizer
       options:
         defaultModel: gemini-2.5-pro
 
@@ -135,12 +145,10 @@ backgroundAgent:
       enabled: true
       command: claude
       contextWindowTokens: 200000
-      rotationThreshold: 0.4
     gemini-cli:
       enabled: false
       command: gemini
       contextWindowTokens: 1000000
-      rotationThreshold: 0.8
       options:
         defaultModel: gemini-2.5-pro
 
@@ -167,13 +175,6 @@ auth:
     #   apiKey: ${GOOGLE_AI_API_KEY}        # Gemini API key (from ai.google.dev)
     # ollama:                               # local models — no API key needed
     #   baseURL: http://localhost:11434/v1   # Ollama server URL
-
-# ---------------------------------------------------------------------------
-# Context — rolling context window (auto-summarize + rotate long conversations)
-# ---------------------------------------------------------------------------
-context:
-  thresholdTokens: 80000             # legacy fallback converted to default provider rotationThreshold
-  recentMessageCount: 10             # recent messages included verbatim in new session
 
 # ---------------------------------------------------------------------------
 # Langfuse — cloud observability for foreground runs, tools, and sub-agents

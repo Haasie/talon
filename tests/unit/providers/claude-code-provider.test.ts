@@ -9,7 +9,6 @@ describe('ClaudeCodeProvider', () => {
     enabled: true,
     command: 'claude',
     contextWindowTokens: 200000,
-    rotationThreshold: 0.4,
   });
 
   afterEach(() => {
@@ -142,7 +141,7 @@ describe('ClaudeCodeProvider', () => {
     expect(result.usage).toBeUndefined();
   });
 
-  it('estimates context usage from cache-read tokens for context window fullness', () => {
+  it('estimates context usage from supported Claude cache metrics', () => {
     expect(
       provider.estimateContextUsage({
         inputTokens: 1000,
@@ -151,10 +150,13 @@ describe('ClaudeCodeProvider', () => {
         cacheWriteTokens: 500,
       }),
     ).toEqual({
-      ratio: 0.25, // cacheReadTokens / contextWindowTokens
       inputTokens: 1000,
-      rawMetric: 50000,
-      rawMetricName: 'cache_read_input_tokens',
+      metrics: {
+        input_tokens: 1000,
+        cache_read_input_tokens: 50000,
+        cache_creation_input_tokens: 500,
+        cache_total_input_tokens: 50500,
+      },
     });
   });
 
@@ -194,7 +196,6 @@ describe('ClaudeCodeProvider', () => {
         enabled: true,
         command: 'claude',
         contextWindowTokens: 200000,
-        rotationThreshold: 0.4,
       });
 
       const result = isolatedProvider.prepareBackgroundInvocation({
@@ -291,10 +292,13 @@ describe('ClaudeCodeProvider', () => {
     });
 
     expect(result).toEqual({
-      ratio: 0,
       inputTokens: 0,
-      rawMetric: 0,
-      rawMetricName: 'cache_read_input_tokens',
+      metrics: {
+        input_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_total_input_tokens: 0,
+      },
     });
   });
 

@@ -8,7 +8,18 @@ export interface AgentUsage {
   totalCostUsd?: number;
 }
 
+export type ContextMetricName =
+  | 'input_tokens'
+  | 'cache_read_input_tokens'
+  | 'cache_creation_input_tokens'
+  | 'cache_total_input_tokens';
+
 export interface ContextUsage {
+  inputTokens: number;
+  metrics: Partial<Record<ContextMetricName, number>>;
+}
+
+export interface ResolvedContextUsage {
   ratio: number;
   inputTokens: number;
   rawMetric: number;

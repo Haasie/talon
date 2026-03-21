@@ -20,7 +20,6 @@ import type {
   SchedulerConfigSchema,
   AuthConfigSchema,
   AgentRunnerConfigSchema,
-  ContextConfigSchema,
   BackgroundAgentConfigSchema,
   LangfuseConfigSchema,
   ProviderConfigSchema,
@@ -65,11 +64,11 @@ export type AuthConfig = z.infer<typeof AuthConfigSchema>;
 /** Provider execution settings shared by agent runners and background agents. */
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
+/** Agent runner provider settings, including provider-scoped context management. */
+export type AgentRunnerProviderConfig = AgentRunnerConfig['providers'][string];
+
 /** Main agent runner provider settings. */
 export type AgentRunnerConfig = z.infer<typeof AgentRunnerConfigSchema>;
-
-/** Rolling context window settings. */
-export type ContextConfig = z.infer<typeof ContextConfigSchema>;
 
 /** Background Claude Code worker settings. */
 export type BackgroundAgentConfig = z.infer<typeof BackgroundAgentConfigSchema>;

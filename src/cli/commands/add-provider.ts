@@ -5,6 +5,8 @@
  * or both in talond.yaml.
  */
 
+import { basename } from 'node:path';
+
 import {
   DEFAULT_CONFIG_PATH,
   validateName,
@@ -17,24 +19,54 @@ import {
 // ---------------------------------------------------------------------------
 
 export type ProviderContext = 'agent-runner' | 'background' | 'both';
+export type TriggerMetric =
+  | 'input_tokens'
+  | 'cache_read_input_tokens'
+  | 'cache_creation_input_tokens'
+  | 'cache_total_input_tokens';
 
 export interface AddProviderOptions {
   name: string;
   command: string;
   context?: ProviderContext;
   contextWindowTokens?: number;
-  rotationThreshold?: number;
+  contextEnabled?: boolean;
+  triggerMetric?: TriggerMetric;
+  thresholdRatio?: number;
+  recentMessageCount?: number;
+  summarizer?: string;
   enabled?: boolean;
   defaultModel?: string;
   configPath?: string;
+}
+
+export interface ContextManagementEntry {
+  enabled: boolean;
+  triggerMetric: TriggerMetric;
+  thresholdRatio: number;
+  recentMessageCount: number;
+  summarizer: string;
 }
 
 export interface ProviderEntry {
   enabled: boolean;
   command: string;
   contextWindowTokens: number;
-  rotationThreshold: number;
+  contextManagement?: ContextManagementEntry;
   options?: Record<string, unknown>;
+}
+
+function inferDefaultTriggerMetric(name: string, command: string): TriggerMetric {
+  const normalizedCommand = basename(command.trim())
+    .toLowerCase()
+    .replace(/\.(cmd|exe|bat)$/u, '');
+  const normalizedName = name.trim().toLowerCase();
+
+  if (normalizedCommand.includes('claude') || normalizedName.includes('claude')) {
+    return 'cache_read_input_tokens';
+  }
+
+  return 'input_tokens';
 }
 
 // ---------------------------------------------------------------------------
@@ -77,10 +109,36 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
     throw new Error('contextWindowTokens must be a finite number >= 1000.');
   }
 
-  // Validate rotationThreshold.
-  const rotationThreshold = options.rotationThreshold ?? 0.4;
-  if (!Number.isFinite(rotationThreshold) || rotationThreshold < 0 || rotationThreshold > 1) {
-    throw new Error('rotationThreshold must be a finite number between 0 and 1.');
+  if (ctx === 'background' && options.contextEnabled === true) {
+    throw new Error('Background providers do not support context management. See the README for agentRunner-only context management.');
+  }
+
+  const contextEnabled = options.contextEnabled ?? (ctx !== 'background');
+  const triggerMetric = options.triggerMetric ?? inferDefaultTriggerMetric(options.name, options.command);
+  if (![
+    'input_tokens',
+    'cache_read_input_tokens',
+    'cache_creation_input_tokens',
+    'cache_total_input_tokens',
+  ].includes(triggerMetric)) {
+    throw new Error(
+      'triggerMetric must be one of: input_tokens, cache_read_input_tokens, cache_creation_input_tokens, cache_total_input_tokens.',
+    );
+  }
+
+  const thresholdRatio = options.thresholdRatio ?? 0.5;
+  if (!Number.isFinite(thresholdRatio) || thresholdRatio < 0 || thresholdRatio > 1) {
+    throw new Error('thresholdRatio must be a finite number between 0 and 1.');
+  }
+
+  const recentMessageCount = options.recentMessageCount ?? 10;
+  if (!Number.isInteger(recentMessageCount) || recentMessageCount < 0) {
+    throw new Error('recentMessageCount must be an integer >= 0.');
+  }
+
+  const summarizer = options.summarizer?.trim() ?? 'session-summarizer';
+  if (contextEnabled && summarizer.length === 0) {
+    throw new Error('summarizer must not be empty when context management is enabled.');
   }
 
   // Read existing config.
@@ -91,17 +149,30 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
     enabled: options.enabled ?? false,
     command: options.command.trim(),
     contextWindowTokens,
-    rotationThreshold,
   };
 
   if (options.defaultModel) {
     entry.options = { defaultModel: options.defaultModel };
   }
 
+  if (contextEnabled && ctx !== 'background') {
+    entry.contextManagement = {
+      enabled: true,
+      triggerMetric,
+      thresholdRatio,
+      recentMessageCount,
+      summarizer,
+    };
+  }
+
   const appliedContexts: ProviderContext[] = [];
 
   // Helper to add to a specific section.
-  function applyToSection(sectionKey: 'agentRunner' | 'backgroundAgent', contextLabel: ProviderContext): void {
+  function applyToSection(
+    sectionKey: 'agentRunner' | 'backgroundAgent',
+    contextLabel: ProviderContext,
+    includeContextManagement: boolean,
+  ): void {
     // Ensure section exists.
     if (!doc[sectionKey] || typeof doc[sectionKey] !== 'object') {
       doc[sectionKey] = {} as Record<string, unknown>;
@@ -123,16 +194,21 @@ export async function addProvider(options: AddProviderOptions): Promise<{ entry:
       );
     }
 
-    providers[options.name] = { ...entry };
+    const sectionEntry = includeContextManagement ? { ...entry } : { ...entry, contextManagement: undefined };
+    if (!includeContextManagement) {
+      delete sectionEntry.contextManagement;
+    }
+
+    providers[options.name] = sectionEntry;
     appliedContexts.push(contextLabel);
   }
 
   if (ctx === 'agent-runner' || ctx === 'both') {
-    applyToSection('agentRunner', 'agent-runner');
+    applyToSection('agentRunner', 'agent-runner', contextEnabled);
   }
 
   if (ctx === 'background' || ctx === 'both') {
-    applyToSection('backgroundAgent', 'background');
+    applyToSection('backgroundAgent', 'background', false);
   }
 
   // Write atomically.

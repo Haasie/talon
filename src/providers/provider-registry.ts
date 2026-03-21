@@ -2,21 +2,21 @@ import type { AgentProvider } from './provider.js';
 import type { ProviderConfig } from '../core/config/config-types.js';
 import type { ProviderName } from './provider-types.js';
 
-export interface ProviderFactoryMap {
-  [name: string]: (config: ProviderConfig) => AgentProvider;
+export interface ProviderFactoryMap<Config extends ProviderConfig = ProviderConfig> {
+  [name: string]: (config: Config) => AgentProvider;
 }
 
-export interface ProviderEntry {
+export interface ProviderEntry<Config extends ProviderConfig = ProviderConfig> {
   provider: AgentProvider;
-  config: ProviderConfig;
+  config: Config;
 }
 
-export class ProviderRegistry {
-  private readonly providers = new Map<ProviderName, ProviderEntry>();
+export class ProviderRegistry<Config extends ProviderConfig = ProviderConfig> {
+  private readonly providers = new Map<ProviderName, ProviderEntry<Config>>();
 
   constructor(
-    configs: Record<string, ProviderConfig>,
-    factories: ProviderFactoryMap,
+    configs: Record<string, Config>,
+    factories: ProviderFactoryMap<Config>,
   ) {
     for (const [name, config] of Object.entries(configs)) {
       if (!config.enabled) {
@@ -35,11 +35,11 @@ export class ProviderRegistry {
     }
   }
 
-  get(name: ProviderName): ProviderEntry | undefined {
+  get(name: ProviderName): ProviderEntry<Config> | undefined {
     return this.providers.get(name);
   }
 
-  getDefault(preferredOrder: ProviderName[]): ProviderEntry | undefined {
+  getDefault(preferredOrder: ProviderName[]): ProviderEntry<Config> | undefined {
     for (const name of preferredOrder) {
       const entry = this.providers.get(name);
       if (entry) {

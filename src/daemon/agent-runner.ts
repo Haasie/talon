@@ -269,6 +269,31 @@ export class AgentRunner {
 
             let previousContextResolved = false;
             let previousContext: AssembledContext | undefined;
+            const contextManagement = providerEntry.config.contextManagement;
+            if (
+              contextManagement?.enabled
+              && (
+                contextManagement.triggerMetric === undefined
+                || contextManagement.thresholdRatio === undefined
+                || contextManagement.recentMessageCount === undefined
+                || contextManagement.summarizer === undefined
+              )
+            ) {
+              throw new Error(
+                `Provider "${providerEntry.provider.name}" has incomplete contextManagement configuration. Check agentRunner.providers.${providerEntry.provider.name}.contextManagement.`,
+              );
+            }
+            const enabledContextManagement = contextManagement?.enabled
+              ? {
+                  triggerMetric: contextManagement.triggerMetric!,
+                  thresholdRatio: contextManagement.thresholdRatio!,
+                  recentMessageCount: contextManagement.recentMessageCount!,
+                  summarizer: contextManagement.summarizer!,
+                }
+              : null;
+            const freshSessionRecentMessageCount = enabledContextManagement
+              ? enabledContextManagement.recentMessageCount
+              : 0;
             const getPreviousContext = async (): Promise<AssembledContext> => {
               if (!previousContextResolved) {
                 previousContext = await this.ctx.observability.observe(
@@ -280,7 +305,10 @@ export class AgentRunner {
                     },
                   },
                   async (retrieverObservation) => {
-                    const assembled = this.ctx.contextAssembler.assemble(item.threadId);
+                    const assembled = this.ctx.contextAssembler.assemble(
+                      item.threadId,
+                      freshSessionRecentMessageCount,
+                    );
                     retrieverObservation.update({
                       output: assembled.text,
                       metadata: {
@@ -605,20 +633,40 @@ export class AgentRunner {
 
             // Check if context needs rotation (rolling window).
             // Awaited to prevent race with next queue item for the same thread.
-            const contextUsage = providerEntry.provider.estimateContextUsage(usage);
-            if (this.ctx.contextRoller && contextUsage.rawMetric > 0) {
-              try {
-                await this.ctx.contextRoller.checkAndRotate(
-                  item.threadId,
-                  personaId,
-                  contextUsage,
-                  providerEntry.config.rotationThreshold,
-                );
-              } catch (e: unknown) {
+            if (this.ctx.contextRoller && enabledContextManagement) {
+              const contextUsage = providerEntry.provider.estimateContextUsage(usage);
+              const selectedMetricValue = contextUsage.metrics[enabledContextManagement.triggerMetric];
+              if (selectedMetricValue === undefined) {
                 this.ctx.logger.error(
-                  { threadId: item.threadId, err: e },
-                  'agent-runner: context rotation failed',
+                  {
+                    threadId: item.threadId,
+                    metric: enabledContextManagement.triggerMetric,
+                    provider: providerEntry.provider.name,
+                  },
+                  'agent-runner: configured trigger metric not available from provider, skipping context rotation',
                 );
+              } else {
+                try {
+                  if (selectedMetricValue > 0) {
+                    await this.ctx.contextRoller.checkAndRotate(
+                      item.threadId,
+                      personaId,
+                      {
+                        ratio: selectedMetricValue / Math.max(1, providerEntry.config.contextWindowTokens),
+                        inputTokens: contextUsage.inputTokens,
+                        rawMetric: selectedMetricValue,
+                        rawMetricName: enabledContextManagement.triggerMetric,
+                      },
+                      enabledContextManagement.thresholdRatio,
+                      enabledContextManagement.summarizer,
+                    );
+                  }
+                } catch (e: unknown) {
+                  this.ctx.logger.error(
+                    { threadId: item.threadId, err: e },
+                    'agent-runner: context rotation failed',
+                  );
+                }
               }
             }
 

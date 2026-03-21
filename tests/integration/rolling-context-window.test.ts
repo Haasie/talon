@@ -205,10 +205,9 @@ describe('Rolling context window integration', () => {
     const assembler = new ContextAssembler({
       messageRepo,
       memoryRepo,
-      recentMessageCount: 10,
     });
 
-    const context = assembler.assemble(threadId);
+    const context = assembler.assemble(threadId, 10);
 
     // Should contain the summary
     expect(context.text).toContain('Previous Context');
@@ -252,10 +251,9 @@ describe('Rolling context window integration', () => {
     const assembler = new ContextAssembler({
       messageRepo,
       memoryRepo,
-      recentMessageCount: 10,
     });
 
-    const context = assembler.assemble('nonexistent-thread');
+    const context = assembler.assemble('nonexistent-thread', 10);
     expect(context).toEqual({
       text: '',
       summaryFound: false,
@@ -288,10 +286,9 @@ describe('Rolling context window integration', () => {
     const assembler = new ContextAssembler({
       messageRepo,
       memoryRepo,
-      recentMessageCount: 10,
     });
 
-    const context = assembler.assemble(threadId);
+    const context = assembler.assemble(threadId, 10);
     expect(context.text).toContain('Recent Messages');
     expect(context.text).toContain('User: first message');
     expect(context.text).toContain('Assistant: first reply');

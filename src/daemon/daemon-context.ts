@@ -11,7 +11,7 @@
 
 import type pino from 'pino';
 import type Database from 'better-sqlite3';
-import type { TalondConfig } from '../core/config/config-types.js';
+import type { AgentRunnerProviderConfig, TalondConfig } from '../core/config/config-types.js';
 import type {
   QueueRepository,
   ThreadRepository,
@@ -90,7 +90,7 @@ export interface DaemonContext {
   readonly messagePipeline: MessagePipeline;
   readonly observability: ObservabilityService;
   readonly hostToolsBridge: HostToolsBridge;
-  readonly providerRegistry: ProviderRegistry;
+  readonly providerRegistry: ProviderRegistry<AgentRunnerProviderConfig>;
   readonly subAgentRunner: SubAgentRunner | null;
   readonly backgroundAgentManager: BackgroundAgentManager | null;
   readonly contextRoller: ContextRoller | null;

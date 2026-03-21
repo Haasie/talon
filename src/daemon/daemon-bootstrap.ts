@@ -253,7 +253,6 @@ export async function bootstrap(
   const contextAssembler = new ContextAssembler({
     messageRepo: repos.message,
     memoryRepo: repos.memory,
-    recentMessageCount: config.context.recentMessageCount,
   });
 
   // 9. Session tracker
@@ -269,20 +268,44 @@ export async function bootstrap(
     providerFactories,
   );
 
-  // 9b. Context roller (needs sessionTracker + session-summarizer sub-agent)
-  //     Disabled when context.enabled is false (e.g. Claude Max subscribers).
+  // 9b. Context roller (needs configured summarizer sub-agents)
   let contextRoller: ContextRoller | null = null;
-  const summarizerAgent = mergedAgentMap.get('session-summarizer');
-  if (config.context.enabled === false) {
-    logger.info('bootstrap: context rotation disabled via config');
-  } else if (summarizerAgent && modelResolver) {
-    const summarizerModelResult = await modelResolver.resolve(summarizerAgent.manifest.model);
-    if (summarizerModelResult.isOk()) {
+  const enabledContextProviders = Object.entries(config.agentRunner.providers)
+    .filter(([, providerConfig]) => providerConfig.contextManagement.enabled);
+  const requestedSummarizers = [
+    ...new Set(
+      enabledContextProviders
+        .map(([, providerConfig]) => providerConfig.contextManagement.summarizer)
+        .filter((name): name is string => typeof name === 'string' && name.length > 0),
+    ),
+  ];
+
+  if (enabledContextProviders.length === 0) {
+    logger.info('bootstrap: context rotation disabled for all agent runner providers');
+  } else if (modelResolver) {
+    const boundSummarizers = new Map<string, import('./context-roller.js').SummarizerRunFn>();
+
+    for (const summarizerName of requestedSummarizers) {
+      const summarizerAgent = mergedAgentMap.get(summarizerName);
+      if (!summarizerAgent) {
+        logger.warn(
+          { summarizer: summarizerName },
+          'bootstrap: configured summarizer sub-agent not found, skipping',
+        );
+        continue;
+      }
+
+      const summarizerModelResult = await modelResolver.resolve(summarizerAgent.manifest.model);
+      if (summarizerModelResult.isErr()) {
+        logger.warn(
+          { summarizer: summarizerName, error: summarizerModelResult.error.message },
+          'bootstrap: failed to resolve model for configured summarizer, skipping',
+        );
+        continue;
+      }
+
       const summarizerModel = summarizerModelResult.value;
       const summarizerPrompt = summarizerAgent.promptContents.join('\n\n');
-
-      // Pre-bind model, prompt, and services so the roller's SummarizerRunFn
-      // only needs threadId, personaId, and the transcript input.
       const boundSummarizer: import('./context-roller.js').SummarizerRunFn = (
         threadId, personaId, input,
       ) =>
@@ -292,7 +315,7 @@ export async function bootstrap(
             personaId,
             model: summarizerModel,
             systemPrompt: summarizerPrompt,
-            maxOutputTokens: 4096,
+            maxOutputTokens: summarizerAgent.manifest.model.maxTokens,
             rootPaths: [],
             services: {
               memory: repos.memory,
@@ -309,27 +332,31 @@ export async function bootstrap(
           input,
         );
 
-      const thresholdRatio =
-        providerRegistry.getDefault([config.agentRunner.defaultProvider, 'claude-code'])?.config.rotationThreshold
-        ?? 0.4;
+      boundSummarizers.set(summarizerName, boundSummarizer);
+    }
 
+    const defaultSummarizer =
+      boundSummarizers.get('session-summarizer')
+      ?? [...boundSummarizers.values()][0];
+
+    if (defaultSummarizer) {
       contextRoller = new ContextRoller({
         messageRepo: repos.message,
         memoryRepo: repos.memory,
         sessionTracker,
-        summarizerRun: boundSummarizer,
+        summarizerRun: defaultSummarizer,
+        resolveSummarizerRun: (name) => boundSummarizers.get(name) ?? null,
         logger,
-        thresholdRatio,
       });
 
       logger.info(
-        { thresholdRatio },
+        { summarizers: [...boundSummarizers.keys()] },
         'bootstrap: context roller initialized',
       );
     } else {
       logger.warn(
-        { error: summarizerModelResult.error.message },
-        'bootstrap: failed to resolve model for context roller, session rotation disabled',
+        { requestedSummarizers },
+        'bootstrap: no configured summarizer sub-agents were available, session rotation disabled',
       );
     }
   }

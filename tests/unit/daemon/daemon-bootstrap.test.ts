@@ -157,6 +157,36 @@ function createSilentLogger(): pino.Logger {
   return createDiscardLogger('silent');
 }
 
+function makeContextManagementConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    enabled: true,
+    triggerMetric: 'cache_read_input_tokens',
+    thresholdRatio: 0.4,
+    recentMessageCount: 10,
+    summarizer: 'session-summarizer',
+    ...overrides,
+  };
+}
+
+function makeAgentRunnerProviderConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    enabled: true,
+    command: 'claude',
+    contextWindowTokens: 200000,
+    contextManagement: makeContextManagementConfig(),
+    ...overrides,
+  };
+}
+
+function makeBackgroundProviderConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    enabled: true,
+    command: 'claude',
+    contextWindowTokens: 200000,
+    ...overrides,
+  };
+}
+
 /** Minimal valid TalondConfig fixture. */
 function makeConfig(overrides: Record<string, unknown> = {}): unknown {
   return {
@@ -182,27 +212,16 @@ function makeConfig(overrides: Record<string, unknown> = {}): unknown {
     agentRunner: {
       defaultProvider: 'claude-code',
       providers: {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
+        'claude-code': makeAgentRunnerProviderConfig(),
       },
     },
-    context: { thresholdTokens: 80_000, recentMessageCount: 10 },
     backgroundAgent: {
       enabled: true,
       maxConcurrent: 3,
       defaultTimeoutMinutes: 30,
       defaultProvider: 'claude-code',
       providers: {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
+        'claude-code': makeBackgroundProviderConfig(),
       },
     },
     langfuse: {
@@ -426,7 +445,6 @@ describe('bootstrap', () => {
       expect(ctx.logger).toBeDefined();
     });
 
-<<<<<<< HEAD
     it('applies the configured log level during bootstrap', async () => {
       setupSuccessfulMocks();
       const configuredLogger = createDiscardLogger('info');
@@ -501,16 +519,17 @@ describe('bootstrap', () => {
               defaultProvider: 'gemini-cli',
               providers: {
                 'claude-code': {
-                  enabled: true,
-                  command: 'claude',
-                  contextWindowTokens: 200000,
-                  rotationThreshold: 0.4,
+                  ...makeAgentRunnerProviderConfig(),
                 },
                 'gemini-cli': {
-                  enabled: true,
-                  command: 'gemini',
-                  contextWindowTokens: 1000000,
-                  rotationThreshold: 0.8,
+                  ...makeAgentRunnerProviderConfig({
+                    command: 'gemini',
+                    contextWindowTokens: 1000000,
+                    contextManagement: makeContextManagementConfig({
+                      triggerMetric: 'input_tokens',
+                      thresholdRatio: 0.8,
+                    }),
+                  }),
                   options: {
                     defaultModel: 'gemini-2.5-pro',
                   },
@@ -524,16 +543,13 @@ describe('bootstrap', () => {
               defaultProvider: 'gemini-cli',
               providers: {
                 'claude-code': {
-                  enabled: true,
-                  command: 'claude',
-                  contextWindowTokens: 200000,
-                  rotationThreshold: 0.4,
+                  ...makeBackgroundProviderConfig(),
                 },
                 'gemini-cli': {
-                  enabled: true,
-                  command: 'gemini',
-                  contextWindowTokens: 1000000,
-                  rotationThreshold: 0.8,
+                  ...makeBackgroundProviderConfig({
+                    command: 'gemini',
+                    contextWindowTokens: 1000000,
+                  }),
                   options: {
                     defaultModel: 'gemini-2.5-pro',
                   },
@@ -563,6 +579,96 @@ describe('bootstrap', () => {
       await bootstrap('/config.yaml', logger);
 
       expect(registerChannels).toHaveBeenCalledOnce();
+    });
+
+    it('binds the session summarizer with the manifest maxTokens budget', async () => {
+      const summarizerRun = vi.fn().mockResolvedValue(ok({
+        summary: 'Summarized.',
+      }));
+
+      vi.doMock('../../../src/subagents/subagent-loader.js', () => ({
+        SubAgentLoader: vi.fn().mockImplementation(() => ({
+          loadAll: vi.fn().mockImplementation(async (dir: string) => {
+            if (dir.includes('subagents/default')) {
+              return ok([
+                {
+                  manifest: {
+                    name: 'session-summarizer',
+                    version: '0.1.0',
+                    description: 'Test summarizer',
+                    model: {
+                      provider: 'anthropic',
+                      name: 'claude-sonnet-4-6',
+                      maxTokens: 12345,
+                    },
+                    requiredCapabilities: [],
+                    rootPaths: [],
+                    timeoutMs: 30000,
+                  },
+                  promptContents: ['Summarize the transcript.'],
+                  run: summarizerRun,
+                  rootDir: '/tmp/session-summarizer',
+                },
+              ]);
+            }
+            return ok([]);
+          }),
+        })),
+      }));
+      vi.doMock('../../../src/subagents/model-resolver.js', () => ({
+        ModelResolver: vi.fn().mockImplementation(() => ({
+          resolve: vi.fn().mockReturnValue(ok({ provider: 'anthropic', model: 'resolved-model' })),
+        })),
+      }));
+      vi.resetModules();
+
+      try {
+        const { loadConfig: isolatedLoadConfig } = await import('../../../src/core/config/config-loader.js');
+        const { createDatabase: isolatedCreateDatabase } = await import('../../../src/core/database/connection.js');
+        const { runMigrations: isolatedRunMigrations } = await import('../../../src/core/database/migrations/runner.js');
+        const { createObservabilityService: isolatedCreateObservabilityService } = await import('../../../src/observability/langfuse/index.js');
+        const { bootstrap: isolatedBootstrap } = await import('../../../src/daemon/daemon-bootstrap.js');
+
+        const config = makeConfig();
+        const db = makeMockDb();
+        const observability = {
+          observe: vi.fn(),
+          observeWithTraceparent: vi.fn(),
+          shutdown: vi.fn().mockResolvedValue(undefined),
+        };
+
+        vi.mocked(isolatedLoadConfig).mockReturnValue(ok(config as any));
+        vi.mocked(isolatedCreateDatabase).mockReturnValue(ok(db as any));
+        vi.mocked(isolatedRunMigrations).mockReturnValue(ok(1));
+        vi.mocked(isolatedCreateObservabilityService).mockResolvedValue(observability as any);
+
+        const result = await isolatedBootstrap('/config.yaml', logger);
+
+        expect(result.isOk()).toBe(true);
+        const ctx = result._unsafeUnwrap();
+        expect(ctx.contextRoller).toBeTruthy();
+
+        const boundSummarizer = (ctx.contextRoller as any).deps.summarizerRun as (
+          threadId: string,
+          personaId: string,
+          input: { transcript: string },
+        ) => Promise<unknown>;
+
+        await boundSummarizer('thread-1', 'persona-1', { transcript: 'hello' });
+
+        expect(summarizerRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            threadId: 'thread-1',
+            personaId: 'persona-1',
+            maxOutputTokens: 12345,
+          }),
+          { transcript: 'hello' },
+        );
+      } finally {
+        vi.doUnmock('../../../src/subagents/subagent-loader.js');
+        vi.doUnmock('../../../src/subagents/model-resolver.js');
+        vi.resetModules();
+      }
     });
   });
 });

@@ -120,7 +120,6 @@ describe('BackgroundAgentManager', () => {
         enabled: true,
         command: 'claude',
         contextWindowTokens: 200000,
-        rotationThreshold: 0.4,
       },
     };
     const geminiProviderEntry = {
@@ -129,7 +128,6 @@ describe('BackgroundAgentManager', () => {
         enabled: true,
         command: 'gemini',
         contextWindowTokens: 1000000,
-        rotationThreshold: 0.8,
       },
     };
 

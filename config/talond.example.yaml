@@ -79,12 +79,22 @@ agentRunner:
       enabled: true
       command: claude
       contextWindowTokens: 200000
-      rotationThreshold: 0.4
+      contextManagement:
+        enabled: true
+        triggerMetric: cache_read_input_tokens
+        thresholdRatio: 0.5
+        recentMessageCount: 10
+        summarizer: session-summarizer
     gemini-cli:
       enabled: false
       command: gemini
       contextWindowTokens: 1000000
-      rotationThreshold: 0.8
+      contextManagement:
+        enabled: true
+        triggerMetric: input_tokens
+        thresholdRatio: 0.8
+        recentMessageCount: 10
+        summarizer: session-summarizer
       options:
         defaultModel: gemini-2.5-pro
 
@@ -98,12 +108,10 @@ backgroundAgent:
       enabled: true
       command: claude
       contextWindowTokens: 200000
-      rotationThreshold: 0.4
     gemini-cli:
       enabled: false
       command: gemini
       contextWindowTokens: 1000000
-      rotationThreshold: 0.8
       options:
         defaultModel: gemini-2.5-pro
 
@@ -122,10 +130,6 @@ auth:
       # baseURL: https://api.openai.com/v1
     # google:
     #   apiKey: ${GOOGLE_AI_API_KEY}
-
-context:
-  thresholdTokens: 80000       # legacy fallback; converted to default provider rotationThreshold if omitted
-  recentMessageCount: 10       # verbatim messages injected into fresh sessions
 
 # Langfuse observability — traces agent runs, tool calls, and LLM generations.
 # Sign up at https://cloud.langfuse.com or self-host: https://langfuse.com/docs/deployment/self-host

@@ -13,6 +13,8 @@ import { buildPersonaRuntimeContext } from '../../personas/persona-runtime-conte
 import type { BackgroundTask } from '../../subagents/background/background-agent-types.js';
 import { BackgroundAgentError } from '../../core/errors/error-types.js';
 
+const DEFAULT_BACKGROUND_CONTEXT_RECENT_MESSAGE_COUNT = 10;
+
 export interface BackgroundAgentArgs {
   action: 'spawn' | 'status' | 'cancel' | 'result';
   prompt?: string;
@@ -137,7 +139,10 @@ export class BackgroundAgentHandler {
 
     let previousContext: string | undefined;
     try {
-      previousContext = this.deps.contextAssembler.assemble(context.threadId).text || undefined;
+      previousContext = this.deps.contextAssembler.assemble(
+        context.threadId,
+        DEFAULT_BACKGROUND_CONTEXT_RECENT_MESSAGE_COUNT,
+      ).text || undefined;
     } catch (cause) {
       this.deps.logger.warn(
         {

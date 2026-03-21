@@ -1,28 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderRegistry } from '../../../src/providers/provider-registry.js';
 
+function makeProviderConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    enabled: true,
+    command: 'claude',
+    contextWindowTokens: 200000,
+    ...overrides,
+  };
+}
+
 describe('ProviderRegistry', () => {
   it('registers enabled providers and resolves preferred defaults', () => {
     const registry = new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
-        'gemini-cli': {
+        'claude-code': makeProviderConfig(),
+        'gemini-cli': makeProviderConfig({
           enabled: false,
           command: 'gemini',
           contextWindowTokens: 1000000,
-          rotationThreshold: 0.8,
-        },
-        'codex-cli': {
-          enabled: true,
+        }),
+        'codex-cli': makeProviderConfig({
           command: 'codex',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.6,
-        },
+        }),
       },
       {
         'claude-code': () => ({ name: 'claude-code' }) as any,
@@ -40,12 +40,7 @@ describe('ProviderRegistry', () => {
   it('falls back to the first enabled provider when no preferred provider matches', () => {
     const registry = new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
+        'claude-code': makeProviderConfig(),
       },
       {
         'claude-code': () => ({ name: 'claude-code' }) as any,
@@ -58,18 +53,11 @@ describe('ProviderRegistry', () => {
   it('silently skips a provider whose name has no matching factory', () => {
     const registry = new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
-        'unknown-provider': {
-          enabled: true,
+        'claude-code': makeProviderConfig(),
+        'unknown-provider': makeProviderConfig({
           command: 'unknown',
           contextWindowTokens: 100000,
-          rotationThreshold: 0.5,
-        },
+        }),
       },
       {
         'claude-code': () => ({ name: 'claude-code' }) as any,
@@ -84,18 +72,12 @@ describe('ProviderRegistry', () => {
   it('returns empty list and undefined default when all providers are disabled', () => {
     const registry = new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: false,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
-        'gemini-cli': {
+        'claude-code': makeProviderConfig({ enabled: false }),
+        'gemini-cli': makeProviderConfig({
           enabled: false,
           command: 'gemini',
           contextWindowTokens: 1000000,
-          rotationThreshold: 0.8,
-        },
+        }),
       },
       {
         'claude-code': () => ({ name: 'claude-code' }) as any,
@@ -111,12 +93,7 @@ describe('ProviderRegistry', () => {
     expect(() => {
       new ProviderRegistry(
         {
-          'claude-code': {
-            enabled: true,
-            command: 'claude',
-            contextWindowTokens: 200000,
-            rotationThreshold: 0.4,
-          },
+          'claude-code': makeProviderConfig(),
         },
         {
           'claude-code': () => {
@@ -130,30 +107,20 @@ describe('ProviderRegistry', () => {
   it('registers only enabled providers when config contains a mix', () => {
     const registry = new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
-        'gemini-cli': {
+        'claude-code': makeProviderConfig(),
+        'gemini-cli': makeProviderConfig({
           enabled: false,
           command: 'gemini',
           contextWindowTokens: 1000000,
-          rotationThreshold: 0.8,
-        },
-        'codex-cli': {
-          enabled: true,
+        }),
+        'codex-cli': makeProviderConfig({
           command: 'codex',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.6,
-        },
-        'grok-cli': {
+        }),
+        'grok-cli': makeProviderConfig({
           enabled: false,
           command: 'grok',
           contextWindowTokens: 131072,
-          rotationThreshold: 0.7,
-        },
+        }),
       },
       {
         'claude-code': () => ({ name: 'claude-code' }) as any,
@@ -171,12 +138,7 @@ describe('ProviderRegistry', () => {
   it('returns undefined from get() for a provider name that was never registered', () => {
     const registry = new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
+        'claude-code': makeProviderConfig(),
       },
       {
         'claude-code': () => ({ name: 'claude-code' }) as any,
@@ -189,18 +151,10 @@ describe('ProviderRegistry', () => {
   it('falls back to first enabled provider when preferredOrder is empty', () => {
     const registry = new ProviderRegistry(
       {
-        'claude-code': {
-          enabled: true,
-          command: 'claude',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.4,
-        },
-        'codex-cli': {
-          enabled: true,
+        'claude-code': makeProviderConfig(),
+        'codex-cli': makeProviderConfig({
           command: 'codex',
-          contextWindowTokens: 200000,
-          rotationThreshold: 0.6,
-        },
+        }),
       },
       {
         'claude-code': () => ({ name: 'claude-code' }) as any,

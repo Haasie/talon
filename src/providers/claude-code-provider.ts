@@ -125,19 +125,16 @@ export class ClaudeCodeProvider implements AgentProvider {
   }
 
   estimateContextUsage(usage: AgentUsage): ContextUsage {
-    // cache_read_input_tokens tracks context window fullness — it grows as
-    // the conversation gets longer.  For API-billed users this drives per-turn
-    // cost (cache reads are 0.1× base rate), so rotating keeps costs in check.
-    //
-    // Claude Max subscribers should disable the roller entirely via
-    // context.enabled: false — cache reads don't count toward Max rate limits,
-    // so long sessions with high cache hits are the cheapest state.
     const cacheReadTokens = usage.cacheReadTokens ?? 0;
+    const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
     return {
-      ratio: cacheReadTokens / Math.max(1, this.config.contextWindowTokens),
       inputTokens: usage.inputTokens,
-      rawMetric: cacheReadTokens,
-      rawMetricName: 'cache_read_input_tokens',
+      metrics: {
+        input_tokens: usage.inputTokens,
+        cache_read_input_tokens: cacheReadTokens,
+        cache_creation_input_tokens: cacheWriteTokens,
+        cache_total_input_tokens: cacheReadTokens + cacheWriteTokens,
+      },
     };
   }
 

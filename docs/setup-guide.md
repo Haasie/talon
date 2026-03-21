@@ -91,12 +91,22 @@ agentRunner:
       enabled: true
       command: claude               # or full path
       contextWindowTokens: 200000
-      rotationThreshold: 0.5       # rotate session at 50% context usage
+      contextManagement:
+        enabled: true
+        triggerMetric: cache_read_input_tokens
+        thresholdRatio: 0.5
+        recentMessageCount: 10
+        summarizer: session-summarizer
     gemini-cli:
       enabled: true
       command: /home/talon/.npm-global/bin/gemini
       contextWindowTokens: 1000000
-      rotationThreshold: 0.8
+      contextManagement:
+        enabled: true
+        triggerMetric: input_tokens
+        thresholdRatio: 0.8
+        recentMessageCount: 10
+        summarizer: session-summarizer
       options:
         defaultModel: gemini-3.1-pro-preview
 
@@ -110,17 +120,17 @@ backgroundAgent:
       enabled: true
       command: claude
       contextWindowTokens: 200000
-      rotationThreshold: 0.4
     gemini-cli:
       enabled: true
       command: /home/talon/.npm-global/bin/gemini
       contextWindowTokens: 1000000
-      rotationThreshold: 0.8
       options:
         defaultModel: gemini-3.1-pro-preview
 ```
 
-You can run different providers for interactive vs background work. Claude for conversations, Gemini for batch research tasks, or the other way around. Each provider gets its own context window and rotation threshold because they have different limits.
+You can run different providers for interactive vs background work. Claude for conversations, Gemini for batch research tasks, or the other way around. Only `agentRunner` providers use `contextManagement`; background agents do not need rolling session state.
+
+For the context-management strategies and migration details, see [context-management.md](context-management.md).
 
 The `command` field needs to resolve on the server. If the binary isn't on PATH, use the full path. Run `which claude` or `which gemini` to find it.
 
@@ -137,7 +147,10 @@ npx talonctl add-provider --name gemini-cli \
   --command /usr/local/bin/gemini \
   --context both \
   --context-window 1000000 \
-  --rotation-threshold 0.8 \
+  --trigger-metric input_tokens \
+  --threshold-ratio 0.8 \
+  --recent-message-count 10 \
+  --summarizer session-summarizer \
   --enabled \
   --default-model gemini-3.1-pro-preview
 

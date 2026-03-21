@@ -8,7 +8,6 @@ describe('GeminiCliProvider', () => {
     enabled: true,
     command: 'gemini',
     contextWindowTokens: 1_000_000,
-    rotationThreshold: 0.8,
     options: {
       defaultModel: 'gemini-2.5-pro',
     },
@@ -196,10 +195,10 @@ describe('GeminiCliProvider', () => {
         outputTokens: 2_000,
       }),
     ).toEqual({
-      ratio: 0.5,
       inputTokens: 500_000,
-      rawMetric: 500_000,
-      rawMetricName: 'input_tokens',
+      metrics: {
+        input_tokens: 500_000,
+      },
     });
   });
 
@@ -234,7 +233,6 @@ describe('GeminiCliProvider', () => {
         enabled: true,
         command: 'gemini',
         contextWindowTokens: 1_000_000,
-        rotationThreshold: 0.8,
       });
 
       const result = isolatedProvider.prepareBackgroundInvocation({

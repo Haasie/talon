@@ -25,6 +25,9 @@ export interface ProviderInfo {
   command: string;
   contextWindowTokens: number;
   isDefault: boolean;
+  contextManagementEnabled: boolean;
+  triggerMetric?: string;
+  thresholdRatio?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +54,7 @@ export async function listProviders(options: ListProvidersOptions = {}): Promise
   if (agentRunnerProviders && typeof agentRunnerProviders === 'object') {
     for (const [name, entry] of Object.entries(agentRunnerProviders)) {
       const p = entry as Record<string, unknown>;
+      const contextManagement = p.contextManagement as Record<string, unknown> | undefined;
       results.push({
         context: 'agent-runner',
         name,
@@ -58,6 +62,9 @@ export async function listProviders(options: ListProvidersOptions = {}): Promise
         command: typeof p.command === 'string' ? p.command : '',
         contextWindowTokens: typeof p.contextWindowTokens === 'number' ? p.contextWindowTokens : 200000,
         isDefault: agentRunnerDefault === name,
+        contextManagementEnabled: contextManagement?.enabled === true,
+        triggerMetric: typeof contextManagement?.triggerMetric === 'string' ? contextManagement.triggerMetric : undefined,
+        thresholdRatio: typeof contextManagement?.thresholdRatio === 'number' ? contextManagement.thresholdRatio : undefined,
       });
     }
   }
@@ -78,6 +85,7 @@ export async function listProviders(options: ListProvidersOptions = {}): Promise
         command: typeof p.command === 'string' ? p.command : '',
         contextWindowTokens: typeof p.contextWindowTokens === 'number' ? p.contextWindowTokens : 200000,
         isDefault: backgroundDefault === name,
+        contextManagementEnabled: false,
       });
     }
   }
@@ -104,19 +112,22 @@ export async function listProvidersCommand(options: ListProvidersOptions = {}): 
     const COL_ENABLED = 7;
     const COL_COMMAND = 12;
     const COL_CW = 14;
+    const COL_CONTEXT_MGMT = 8;
+    const COL_TRIGGER = 23;
+    const COL_THRESHOLD = 9;
     const COL_DEFAULT = 7;
 
     // Header
     console.log(
-      `${'CONTEXT'.padEnd(COL_CONTEXT)} ${'NAME'.padEnd(COL_NAME)} ${'ENABLED'.padEnd(COL_ENABLED)} ${'COMMAND'.padEnd(COL_COMMAND)} ${'CONTEXT WINDOW'.padEnd(COL_CW)} DEFAULT`,
+      `${'CONTEXT'.padEnd(COL_CONTEXT)} ${'NAME'.padEnd(COL_NAME)} ${'ENABLED'.padEnd(COL_ENABLED)} ${'COMMAND'.padEnd(COL_COMMAND)} ${'CONTEXT WINDOW'.padEnd(COL_CW)} ${'CTX MGMT'.padEnd(COL_CONTEXT_MGMT)} ${'TRIGGER'.padEnd(COL_TRIGGER)} ${'THRESHOLD'.padEnd(COL_THRESHOLD)} DEFAULT`,
     );
     console.log(
-      `${'─'.repeat(COL_CONTEXT)} ${'─'.repeat(COL_NAME)} ${'─'.repeat(COL_ENABLED)} ${'─'.repeat(COL_COMMAND)} ${'─'.repeat(COL_CW)} ${'─'.repeat(COL_DEFAULT)}`,
+      `${'─'.repeat(COL_CONTEXT)} ${'─'.repeat(COL_NAME)} ${'─'.repeat(COL_ENABLED)} ${'─'.repeat(COL_COMMAND)} ${'─'.repeat(COL_CW)} ${'─'.repeat(COL_CONTEXT_MGMT)} ${'─'.repeat(COL_TRIGGER)} ${'─'.repeat(COL_THRESHOLD)} ${'─'.repeat(COL_DEFAULT)}`,
     );
 
     for (const p of providers) {
       console.log(
-        `${p.context.padEnd(COL_CONTEXT)} ${p.name.padEnd(COL_NAME)} ${(p.enabled ? 'yes' : 'no').padEnd(COL_ENABLED)} ${p.command.padEnd(COL_COMMAND)} ${String(p.contextWindowTokens).padEnd(COL_CW)} ${p.isDefault ? 'yes' : 'no'}`,
+        `${p.context.padEnd(COL_CONTEXT)} ${p.name.padEnd(COL_NAME)} ${(p.enabled ? 'yes' : 'no').padEnd(COL_ENABLED)} ${p.command.padEnd(COL_COMMAND)} ${String(p.contextWindowTokens).padEnd(COL_CW)} ${(p.contextManagementEnabled ? 'yes' : 'no').padEnd(COL_CONTEXT_MGMT)} ${(p.triggerMetric ?? '-').padEnd(COL_TRIGGER)} ${String(p.thresholdRatio ?? '-').padEnd(COL_THRESHOLD)} ${p.isDefault ? 'yes' : 'no'}`,
       );
     }
   } catch (error) {
