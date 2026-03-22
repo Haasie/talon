@@ -138,6 +138,39 @@ export class MemoryRepository extends BaseRepository {
   }
 
   /**
+   * Upserts a memory item by its compound key (thread_id, id).
+   * If the item exists, updates content (and optionally type). Otherwise inserts.
+   *
+   * @param threadId - Thread the item belongs to.
+   * @param id       - Item key within the thread.
+   * @param fields   - Content and optional type/metadata to set.
+   */
+  upsertByKey(
+    threadId: string,
+    id: string,
+    fields: { content: string; type?: MemoryType; metadata?: string },
+  ): Result<MemoryItemRow, DbError> {
+    try {
+      const existing = this.findByIdStmt.get(threadId, id) as MemoryItemRow | undefined;
+      if (existing) {
+        const updateFields: UpdateMemoryItemInput = { content: fields.content };
+        if (fields.metadata) updateFields.metadata = fields.metadata;
+        return this.update(threadId, id, updateFields) as Result<MemoryItemRow, DbError>;
+      }
+      return this.insert({
+        id,
+        thread_id: threadId,
+        type: fields.type ?? 'note',
+        content: fields.content,
+        embedding_ref: null,
+        metadata: fields.metadata ?? '{}',
+      });
+    } catch (cause) {
+      return err(new DbError(`Failed to upsert memory item: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /**
    * Deletes a memory item by its compound key.
    *
    * @param threadId - Thread the item belongs to.

@@ -51,7 +51,7 @@ export type SummarizerRunFn = (
 
 export interface ContextRollerDeps {
   messageRepo: Pick<MessageRepository, 'findLatestByThread'>;
-  memoryRepo: Pick<MemoryRepository, 'insert'>;
+  memoryRepo: Pick<MemoryRepository, 'insert' | 'findById' | 'upsertByKey'>;
   sessionTracker: Pick<SessionTracker, 'rotateSession'>;
   /** Pre-bound summarizer function. Model, prompt, and services are captured at bootstrap. */
   summarizerRun: SummarizerRunFn;
@@ -143,15 +143,59 @@ export class ContextRoller {
     const data = summary.data as {
       keyFacts?: string[];
       openThreads?: string[];
+      memoryUpdates?: Array<{ key: string; value: string; mode: 'append' | 'replace' }>;
       summary?: string;
     } | undefined;
 
-    // 3. Store summary as memory items.
+    // 3a. Process memory updates — distribute facts to named keys.
+    if (data?.memoryUpdates && data.memoryUpdates.length > 0) {
+      for (const update of data.memoryUpdates) {
+        if (!update.key || !update.value) continue;
+
+        if (update.mode === 'append') {
+          // Read existing entry and append.
+          const existingResult = this.deps.memoryRepo.findById(threadId, update.key);
+          const existingContent = existingResult.isOk() && existingResult.value
+            ? existingResult.value.content
+            : '';
+          const newContent = existingContent
+            ? `${existingContent}\n${update.value}`
+            : update.value;
+
+          const upsertResult = this.deps.memoryRepo.upsertByKey(threadId, update.key, {
+            type: 'note',
+            content: newContent,
+          });
+          if (upsertResult.isErr()) {
+            this.deps.logger.warn(
+              { key: update.key, error: upsertResult.error.message },
+              'context-roller: failed to upsert memory update',
+            );
+          }
+        } else {
+          // Replace mode — overwrite.
+          const upsertResult = this.deps.memoryRepo.upsertByKey(threadId, update.key, {
+            type: 'note',
+            content: update.value,
+          });
+          if (upsertResult.isErr()) {
+            this.deps.logger.warn(
+              { key: update.key, error: upsertResult.error.message },
+              'context-roller: failed to upsert memory update',
+            );
+          }
+        }
+      }
+
+      this.deps.logger.info(
+        { threadId, updateCount: data.memoryUpdates.length },
+        'context-roller: distributed memory updates to named keys',
+      );
+    }
+
+    // 3b. Store compact session summary (not the full blob — facts are in named keys now).
     const summaryContent = [
       data?.summary ?? summary.summary,
-      '',
-      'Key facts:',
-      ...(data?.keyFacts ?? []).map((f) => `- ${f}`),
       '',
       'Open threads:',
       ...(data?.openThreads ?? []).map((t) => `- ${t}`),

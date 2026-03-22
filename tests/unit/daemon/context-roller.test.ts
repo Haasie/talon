@@ -11,6 +11,8 @@ const makeDeps = (overrides: Partial<ContextRollerDeps> = {}): ContextRollerDeps
   } as any,
   memoryRepo: {
     insert: vi.fn().mockReturnValue(ok({})),
+    findById: vi.fn().mockReturnValue(ok(null)),
+    upsertByKey: vi.fn().mockReturnValue(ok({})),
   } as any,
   sessionTracker: {
     rotateSession: vi.fn(),
@@ -191,7 +193,7 @@ describe('ContextRoller', () => {
     expect(summaryInsert.thread_id).toBe('thread-1');
     expect(summaryInsert.type).toBe('summary');
     expect(summaryInsert.content).toContain('Brief greeting');
-    expect(summaryInsert.content).toContain('User name is Ivo');
+    // keyFacts are no longer stored in summary blob — they go to named keys via memoryUpdates
     expect(summaryInsert.content).toContain('Deployment pending');
   });
 
@@ -250,6 +252,8 @@ describe('ContextRoller', () => {
       } as any,
       memoryRepo: {
         insert: vi.fn().mockReturnValue(err(new Error('DB full'))),
+        findById: vi.fn().mockReturnValue(ok(null)),
+        upsertByKey: vi.fn().mockReturnValue(ok({})),
       } as any,
     });
     const roller = new ContextRoller(deps);
@@ -471,7 +475,8 @@ describe('ContextRoller', () => {
 
     const insertCall = (deps.memoryRepo.insert as any).mock.calls[0][0];
     expect(insertCall.content).toContain('Top-level fallback summary');
-    expect(insertCall.content).toContain('fact one');
+    // keyFacts are no longer in the summary blob — they get distributed to named keys via memoryUpdates
+    expect(insertCall.content).not.toContain('fact one');
     expect(insertCall.content).toContain('thread one');
   });
 
@@ -558,6 +563,134 @@ describe('ContextRoller', () => {
       expect.objectContaining({ threadId: 'thread-1' }),
       expect.stringContaining('failed to read messages'),
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // memoryUpdates distribution
+  // ---------------------------------------------------------------------------
+
+  it('distributes memoryUpdates to named keys via upsertByKey', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
+    ];
+    mockSummarizerRun.mockResolvedValueOnce(ok({
+      summary: 'Summary with updates',
+      data: {
+        keyFacts: ['User prefers dark mode'],
+        openThreads: [],
+        memoryUpdates: [
+          { key: 'work:preferences', value: '2026-03-22 — Prefers dark mode', mode: 'replace' },
+          { key: 'work:people', value: '2026-03-22 — Met with Sarah about API design', mode: 'append' },
+        ],
+        summary: 'Brief session',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+
+    // Replace mode: upsertByKey called directly
+    expect(deps.memoryRepo.upsertByKey).toHaveBeenCalledWith('thread-1', 'work:preferences', {
+      type: 'note',
+      content: '2026-03-22 — Prefers dark mode',
+    });
+
+    // Append mode: findById called first, then upsertByKey with appended content
+    expect(deps.memoryRepo.findById).toHaveBeenCalledWith('thread-1', 'work:people');
+    expect(deps.memoryRepo.upsertByKey).toHaveBeenCalledWith('thread-1', 'work:people', {
+      type: 'note',
+      content: '2026-03-22 — Met with Sarah about API design',
+    });
+
+    // Summary blob should still be inserted
+    expect(deps.memoryRepo.insert).toHaveBeenCalled();
+    expect(deps.sessionTracker.rotateSession).toHaveBeenCalledWith('thread-1');
+  });
+
+  it('appends to existing memory entry when mode is append', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
+    ];
+    mockSummarizerRun.mockResolvedValueOnce(ok({
+      summary: 'Summary',
+      data: {
+        keyFacts: [],
+        openThreads: [],
+        memoryUpdates: [
+          { key: 'work:people', value: '2026-03-22 — New fact about Sarah', mode: 'append' },
+        ],
+        summary: 'Summary',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+      memoryRepo: {
+        insert: vi.fn().mockReturnValue(ok({})),
+        findById: vi.fn().mockReturnValue(ok({ content: 'Existing content about Sarah' })),
+        upsertByKey: vi.fn().mockReturnValue(ok({})),
+      } as any,
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+
+    expect(deps.memoryRepo.upsertByKey).toHaveBeenCalledWith('thread-1', 'work:people', {
+      type: 'note',
+      content: 'Existing content about Sarah\n2026-03-22 — New fact about Sarah',
+    });
+  });
+
+  it('skips memoryUpdates with empty key or value', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
+    ];
+    mockSummarizerRun.mockResolvedValueOnce(ok({
+      summary: 'Summary',
+      data: {
+        keyFacts: [],
+        openThreads: [],
+        memoryUpdates: [
+          { key: '', value: 'orphan value', mode: 'replace' },
+          { key: 'work:valid', value: '', mode: 'replace' },
+        ],
+        summary: 'Summary',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+
+    expect(deps.memoryRepo.upsertByKey).not.toHaveBeenCalled();
   });
 
   // ---------------------------------------------------------------------------
