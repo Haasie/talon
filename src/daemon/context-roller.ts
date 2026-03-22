@@ -148,6 +148,9 @@ export class ContextRoller {
     } | undefined;
 
     // 3a. Process memory updates — distribute facts to named keys.
+    let appliedCount = 0;
+    let failedCount = 0;
+
     if (data?.memoryUpdates && data.memoryUpdates.length > 0) {
       for (const update of data.memoryUpdates) {
         if (!update.key || !update.value) continue;
@@ -155,9 +158,15 @@ export class ContextRoller {
         if (update.mode === 'append') {
           // Read existing entry and append.
           const existingResult = this.deps.memoryRepo.findById(threadId, update.key);
-          const existingContent = existingResult.isOk() && existingResult.value
-            ? existingResult.value.content
-            : '';
+          let existingContent = '';
+          if (existingResult.isErr()) {
+            this.deps.logger.warn(
+              { key: update.key, error: existingResult.error.message },
+              'context-roller: findById failed in append mode, treating as new entry',
+            );
+          } else if (existingResult.value) {
+            existingContent = existingResult.value.content;
+          }
           const newContent = existingContent
             ? `${existingContent}\n${update.value}`
             : update.value;
@@ -167,10 +176,13 @@ export class ContextRoller {
             content: newContent,
           });
           if (upsertResult.isErr()) {
+            failedCount++;
             this.deps.logger.warn(
               { key: update.key, error: upsertResult.error.message },
               'context-roller: failed to upsert memory update',
             );
+          } else {
+            appliedCount++;
           }
         } else {
           // Replace mode — overwrite.
@@ -179,27 +191,35 @@ export class ContextRoller {
             content: update.value,
           });
           if (upsertResult.isErr()) {
+            failedCount++;
             this.deps.logger.warn(
               { key: update.key, error: upsertResult.error.message },
               'context-roller: failed to upsert memory update',
             );
+          } else {
+            appliedCount++;
           }
         }
       }
 
       this.deps.logger.info(
-        { threadId, updateCount: data.memoryUpdates.length },
+        { threadId, applied: appliedCount, failed: failedCount, total: data.memoryUpdates.length },
         'context-roller: distributed memory updates to named keys',
       );
     }
 
-    // 3b. Store compact session summary (not the full blob — facts are in named keys now).
-    const summaryContent = [
-      data?.summary ?? summary.summary,
-      '',
-      'Open threads:',
-      ...(data?.openThreads ?? []).map((t) => `- ${t}`),
-    ].join('\n');
+    // 3b. Store session summary.
+    // If memoryUpdates were absent or all failed, fall back to including keyFacts
+    // in the summary blob to avoid losing continuity.
+    const memoryUpdatesSucceeded = appliedCount > 0;
+    const summaryParts = [data?.summary ?? summary.summary, ''];
+
+    if (!memoryUpdatesSucceeded && data?.keyFacts && data.keyFacts.length > 0) {
+      summaryParts.push('Key facts:', ...data.keyFacts.map((f) => `- ${f}`), '');
+    }
+
+    summaryParts.push('Open threads:', ...(data?.openThreads ?? []).map((t) => `- ${t}`));
+    const summaryContent = summaryParts.join('\n');
 
     const insertResult = this.deps.memoryRepo.insert({
       id: randomUUID(),

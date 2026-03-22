@@ -193,7 +193,8 @@ describe('ContextRoller', () => {
     expect(summaryInsert.thread_id).toBe('thread-1');
     expect(summaryInsert.type).toBe('summary');
     expect(summaryInsert.content).toContain('Brief greeting');
-    // keyFacts are no longer stored in summary blob — they go to named keys via memoryUpdates
+    // No memoryUpdates present — keyFacts fall back into the summary blob
+    expect(summaryInsert.content).toContain('User name is Ivo');
     expect(summaryInsert.content).toContain('Deployment pending');
   });
 
@@ -475,8 +476,8 @@ describe('ContextRoller', () => {
 
     const insertCall = (deps.memoryRepo.insert as any).mock.calls[0][0];
     expect(insertCall.content).toContain('Top-level fallback summary');
-    // keyFacts are no longer in the summary blob — they get distributed to named keys via memoryUpdates
-    expect(insertCall.content).not.toContain('fact one');
+    // No memoryUpdates present — keyFacts should fall back into the summary blob
+    expect(insertCall.content).toContain('fact one');
     expect(insertCall.content).toContain('thread one');
   });
 
@@ -691,6 +692,129 @@ describe('ContextRoller', () => {
     });
 
     expect(deps.memoryRepo.upsertByKey).not.toHaveBeenCalled();
+  });
+
+  it('falls back to keyFacts in summary when all memoryUpdates fail', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
+    ];
+    mockSummarizerRun.mockResolvedValueOnce(ok({
+      summary: 'Summary',
+      data: {
+        keyFacts: ['Important fact that must not be lost'],
+        openThreads: ['Open thread'],
+        memoryUpdates: [
+          { key: 'work:test', value: '2026-03-22 — Some update', mode: 'replace' },
+        ],
+        summary: 'Summary',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+      memoryRepo: {
+        insert: vi.fn().mockReturnValue(ok({})),
+        findById: vi.fn().mockReturnValue(ok(null)),
+        upsertByKey: vi.fn().mockReturnValue(err(new Error('DB write failed'))),
+      } as any,
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+
+    // keyFacts should be in the summary blob as fallback
+    const insertCall = (deps.memoryRepo.insert as any).mock.calls[0][0];
+    expect(insertCall.content).toContain('Important fact that must not be lost');
+    expect(insertCall.content).toContain('Key facts:');
+  });
+
+  it('excludes keyFacts from summary when memoryUpdates succeed', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
+    ];
+    mockSummarizerRun.mockResolvedValueOnce(ok({
+      summary: 'Summary',
+      data: {
+        keyFacts: ['Fact stored via named key'],
+        openThreads: [],
+        memoryUpdates: [
+          { key: 'work:test', value: '2026-03-22 — Some update', mode: 'replace' },
+        ],
+        summary: 'Summary',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+
+    const insertCall = (deps.memoryRepo.insert as any).mock.calls[0][0];
+    expect(insertCall.content).not.toContain('Fact stored via named key');
+    expect(insertCall.content).not.toContain('Key facts:');
+  });
+
+  it('logs findById error in append mode and continues', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
+    ];
+    mockSummarizerRun.mockResolvedValueOnce(ok({
+      summary: 'Summary',
+      data: {
+        keyFacts: [],
+        openThreads: [],
+        memoryUpdates: [
+          { key: 'work:people', value: '2026-03-22 — New fact', mode: 'append' },
+        ],
+        summary: 'Summary',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+      memoryRepo: {
+        insert: vi.fn().mockReturnValue(ok({})),
+        findById: vi.fn().mockReturnValue(err(new Error('DB read error'))),
+        upsertByKey: vi.fn().mockReturnValue(ok({})),
+      } as any,
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+
+    // Should log warning about findById failure
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'work:people' }),
+      expect.stringContaining('findById failed'),
+    );
+    // Should still attempt upsert with just the new value
+    expect(deps.memoryRepo.upsertByKey).toHaveBeenCalledWith('thread-1', 'work:people', {
+      type: 'note',
+      content: '2026-03-22 — New fact',
+    });
   });
 
   // ---------------------------------------------------------------------------
