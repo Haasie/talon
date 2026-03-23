@@ -165,11 +165,13 @@ program
   .description('Scaffold a skill directory and add it to a persona in talond.yaml')
   .requiredOption('--name <name>', 'Skill name (e.g. web-search)')
   .requiredOption('--persona <persona>', 'Persona to attach the skill to')
+  .option('--format <format>', 'Skill format: yaml or skillmd', 'yaml')
   .option('--config <path>', 'Path to talond.yaml', 'talond.yaml')
-  .action(async (opts: { name: string; persona: string; config: string }) => {
+  .action(async (opts: { name: string; persona: string; format: string; config: string }) => {
     await addSkillCommand({
       name: opts.name,
       personaName: opts.persona,
+      format: opts.format as 'yaml' | 'skillmd',
       configPath: opts.config,
     });
   });
