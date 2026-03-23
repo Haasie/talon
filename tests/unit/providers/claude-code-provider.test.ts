@@ -462,7 +462,7 @@ describe('ClaudeCodeProvider', () => {
                   type: 'mcp_tool_use',
                   id: 'mcpu_001',
                   name: 'memory_access',
-                  server_name: 'host-tools',
+                  server_name: '__talond_host_tools',
                   input: { operation: 'read', key: 'profile' },
                 },
               ],
@@ -503,7 +503,7 @@ describe('ClaudeCodeProvider', () => {
         tool: 'memory_access',
         toolUseId: 'mcpu_001',
         input: { operation: 'read', key: 'profile' },
-        serverName: 'host-tools',
+        serverName: '__talond_host_tools',
         subtype: undefined,
       });
     } finally {
