@@ -138,6 +138,66 @@ export class MemoryRepository extends BaseRepository {
   }
 
   /**
+   * Upserts a memory item by its compound key (thread_id, id).
+   * If the item exists, updates content. Otherwise inserts.
+   *
+   * @param threadId - Thread the item belongs to.
+   * @param id       - Item key within the thread.
+   * @param fields   - Content and optional type (for insert) / metadata to set.
+   */
+  upsertByKey(
+    threadId: string,
+    id: string,
+    fields: { content: string; type?: MemoryType; metadata?: string },
+  ): Result<MemoryItemRow, DbError> {
+    try {
+      const upsertTx = this.db.transaction(
+        (
+          txThreadId: string,
+          txId: string,
+          txFields: { content: string; type?: MemoryType; metadata?: string },
+        ): Result<MemoryItemRow, DbError> => {
+          const existing = this.findByIdStmt.get(txThreadId, txId) as MemoryItemRow | undefined;
+          if (existing) {
+            const updateFields: UpdateMemoryItemInput = { content: txFields.content };
+            if (txFields.metadata !== undefined) updateFields.metadata = txFields.metadata;
+            const updateResult = this.update(txThreadId, txId, updateFields);
+            if (updateResult.isErr()) return err(updateResult.error);
+            if (updateResult.value === null) {
+              return err(new DbError('Memory item disappeared during upsert update'));
+            }
+            return ok(updateResult.value);
+          }
+          return this.insert({
+            id: txId,
+            thread_id: txThreadId,
+            type: txFields.type ?? 'note',
+            content: txFields.content,
+            embedding_ref: null,
+            metadata: txFields.metadata ?? '{}',
+          });
+        },
+      );
+      return upsertTx(threadId, id, fields);
+    } catch (cause) {
+      return err(new DbError(`Failed to upsert memory item: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /**
+   * Runs multiple repository operations inside a single SQLite transaction.
+   * If the callback throws, all writes are rolled back atomically.
+   */
+  runInTransaction<T>(fn: () => T): Result<T, DbError> {
+    try {
+      const txFn = this.db.transaction(() => fn());
+      return ok(txFn());
+    } catch (cause) {
+      return err(new DbError(`Transaction failed: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /**
    * Deletes a memory item by its compound key.
    *
    * @param threadId - Thread the item belongs to.

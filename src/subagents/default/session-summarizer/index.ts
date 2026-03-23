@@ -5,10 +5,17 @@ import type { SubAgentContext, SubAgentInput, SubAgentResult } from '../../subag
 import { SubAgentError } from '../../../core/errors/index.js';
 import type { Result } from 'neverthrow';
 
+const MemoryUpdateSchema = z.object({
+  key: z.string().describe('Namespace:topic key for this fact (e.g., work:people, groceries:preferences)'),
+  value: z.string().describe('The fact to store, prefixed with date'),
+  mode: z.enum(['append', 'replace']).describe('Whether to append to or replace the existing entry'),
+});
+
 const SummarySchema = z.object({
   keyFacts: z.array(z.string()).describe('Key facts and decisions from the conversation'),
   openThreads: z.array(z.string()).describe('Unresolved topics or pending items'),
-  summary: z.string().describe('Concise narrative summary of the conversation'),
+  memoryUpdates: z.array(MemoryUpdateSchema).describe('Facts to store in specific memory namespace:topic keys'),
+  summary: z.string().describe('Short narrative summary (max 500 chars) for conversation resumption context only'),
 });
 
 export async function run(

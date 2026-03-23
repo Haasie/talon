@@ -187,7 +187,7 @@ describe('Rolling context window integration', () => {
     expect(summaryItems).toHaveLength(1);
     expect(summaryItems[0].type).toBe('summary');
     expect(summaryItems[0].content).toContain('production deployment');
-    expect(summaryItems[0].content).toContain('staging config');
+    expect(summaryItems[0].content).toContain('Staged first, then promoted');
 
     // Verify metadata
     const metadata = JSON.parse(summaryItems[0].metadata);

@@ -151,7 +151,7 @@ export const ContextManagementConfigSchema = z
       'cache_total_input_tokens',
     ]).optional(),
     thresholdRatio: z.number().min(0).max(1).optional(),
-    recentMessageCount: z.number().int().min(0).optional(),
+    recentMessageCount: z.number().int().min(0).default(10),
     summarizer: z.string().trim().min(1).optional(),
   })
   .superRefine((value, ctx) => {
@@ -175,13 +175,7 @@ export const ContextManagementConfigSchema = z
       });
     }
 
-    if (value.recentMessageCount === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['recentMessageCount'],
-        message: 'recentMessageCount is required when contextManagement.enabled is true',
-      });
-    }
+    // recentMessageCount has a schema default(10), so it's always defined.
 
     if (!value.summarizer) {
       ctx.addIssue({

@@ -291,9 +291,14 @@ export class AgentRunner {
                   summarizer: contextManagement.summarizer!,
                 }
               : null;
+            // Fresh-session history injection is independent of automatic rotation.
+            // Non-resumable providers (e.g. Gemini) always run fresh sessions and
+            // need recent messages for multi-turn continuity even when automatic
+            // context management (rotation) is disabled.
+            const DEFAULT_FRESH_SESSION_RECENT_MESSAGES = 10;
             const freshSessionRecentMessageCount = enabledContextManagement
               ? enabledContextManagement.recentMessageCount
-              : 0;
+              : (contextManagement?.recentMessageCount ?? DEFAULT_FRESH_SESSION_RECENT_MESSAGES);
             const getPreviousContext = async (): Promise<AssembledContext> => {
               if (!previousContextResolved) {
                 previousContext = await this.ctx.observability.observe(
