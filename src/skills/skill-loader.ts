@@ -183,6 +183,7 @@ export class SkillLoader {
 
     const loaded: LoadedSkill = {
       manifest,
+      format: 'yaml',
       promptContents,
       resolvedToolManifests,
       resolvedMcpServers,
