@@ -119,7 +119,7 @@ To support native tool interception, we widen the provider interface:
    - Input schema: `{ name: { type: "string", description: "Skill name" } }`
    - Handler: looks up skill name in the content map, returns prompt content or error
 
-3. **Pass to provider:** Include `skill_load` in `customTools` on `ProviderSpawnInput`. The provider handles interception internally.
+3. **Pass to provider:** Include `skill_load` in `customTools` on `AgentRunInput`. `SDKExecutionStrategy.run()` handles interception internally.
 
 4. **Logging:** Log `skill.loaded` event with skill name and run ID when a skill is lazily loaded.
 
@@ -130,17 +130,17 @@ For CLI-based providers (Gemini, future Codex), `skill_load` is served via a lig
 **New file: `src/tools/skill-loader-mcp-server.ts`** (~60 lines)
 
 - Stdio MCP server exposing one tool: `skill_load({ name: string })`
-- Receives skill content map via `TALOND_SKILL_MAP` env var (JSON-encoded `Record<string, string>`)
+- Connects to `TALOND_SOCKET` (Unix socket) on startup — same pattern as `host-tools-mcp-server.ts`
+- On tool call: sends a `skill.load` request with the skill name over the socket to `HostToolsBridge`
+- `HostToolsBridge` looks up the skill content from an in-memory map (populated at daemon startup from loaded skills) and returns the prompt content
 - Returns prompt content for the requested skill name, or error if not found
 
 **Injection in agent-runner:**
 - When strategy type is `'cli'`, inject a `__talond_skill_loader` entry into the `mcpServers` map
-- Points to `dist/tools/skill-loader-mcp-server.js` with `TALOND_SKILL_MAP` env var
+- Points to `dist/tools/skill-loader-mcp-server.js` with `TALOND_SOCKET` env var (same as host-tools)
 - When strategy type is `'sdk'`, this MCP server is NOT injected (native interception handles it)
 - The `__talond_` prefix is reserved for internal MCP servers to prevent collision with user-defined servers. Validation in `persona-runtime-context.ts` should reject user-defined MCP servers with this prefix.
 - Also rename the existing internal `host-tools` MCP server to `__talond_host_tools` for consistency. This is a breaking change only for direct references to the server name, which don't exist in user-facing config.
-
-**Size:** 3K tokens of English text is roughly 12-15KB when serialized as UTF-8 (tokens average ~4 chars). With 20 skills: 20 × 15KB = ~300KB once JSON-encoded. This exceeds typical env var limits. Mitigation: instead of passing content via env var, use the existing Unix socket pattern — the skill-loader MCP server connects to `TALOND_SOCKET` and requests skill content from the `HostToolsBridge` via a new `skill.load` internal message type. This keeps the MCP server lightweight while avoiding env var size constraints.
 
 ### 5. CLI Changes
 
@@ -193,7 +193,6 @@ Update `.claude/skills/talon-setup/SKILL.md`:
 - `src/skills/skill-resolver.ts` — operates on `LoadedSkill`, format-agnostic
 - `src/personas/capability-merger.ts` — unaffected
 - `src/tools/tool-filter.ts` — `skill_load` is not capability-gated
-- `src/tools/host-tools-bridge.ts` — `skill_load` doesn't go through the bridge
 - Database schema — no new tables or columns
 - Config schema — no new config fields
 
