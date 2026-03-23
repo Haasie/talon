@@ -185,10 +185,7 @@ export class AgentRunner {
             );
             const skillContentMap = new Map<string, string>();
             for (const skill of personaSkills) {
-              const content = skill.promptContents.join('\n');
-              if (content) {
-                skillContentMap.set(skill.manifest.name, content);
-              }
+              skillContentMap.set(skill.manifest.name, skill.promptContents.join('\n'));
             }
             const personaRuntimeContext = buildPersonaRuntimeContext({
               loadedPersona,

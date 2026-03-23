@@ -286,7 +286,7 @@ async function main(): Promise<void> {
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify({ error: result.error }),
+              text: result.error ?? 'Unknown error',
             },
           ],
           isError: true,
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(result.result),
+            text: typeof result.result === 'string' ? result.result : JSON.stringify(result.result),
           },
         ],
       };

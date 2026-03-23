@@ -330,8 +330,7 @@ export class HostToolsBridge {
     if (!loadedPersona.value.config.skills.includes(skillName)) return null;
     const skill = this.ctx.loadedSkills.find((s) => s.manifest.name === skillName);
     if (!skill) return null;
-    const content = skill.promptContents.join('\n');
-    return content || null;
+    return skill.promptContents.join('\n');
   }
 
   private listAvailableSkills(personaId: string): string[] {
@@ -390,7 +389,7 @@ export class HostToolsBridge {
     if (tool === 'skill.load') {
       const name = typeof args.name === 'string' ? args.name : '';
       const content = this.resolveSkillContent(context.personaId, name);
-      if (!content) {
+      if (content === null) {
         const available = this.listAvailableSkills(context.personaId);
         return {
           requestId: context.requestId ?? 'unknown',

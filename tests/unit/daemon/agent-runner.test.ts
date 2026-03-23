@@ -1554,7 +1554,7 @@ describe('AgentRunner', () => {
         content: [
           {
             type: 'text',
-            text: 'Error: skill "missing" not found. Available: brainstorming',
+            text: 'Error: skill "missing" not found. Available: brainstorming, empty',
           },
         ],
         isError: true,
