@@ -447,6 +447,22 @@ export class AgentRunner {
                     },
                   };
 
+                  if (strategy.type === 'cli' && skillContentMap.size > 0) {
+                    mcpServers.__talond_skill_loader = {
+                      transport: 'stdio',
+                      command: 'node',
+                      args: [join(import.meta.dirname, '../../dist/tools/skill-loader-mcp-server.js')],
+                      env: {
+                        ...process.env,
+                        TALOND_SOCKET: this.ctx.hostToolsBridge.path,
+                        TALOND_RUN_ID: runId,
+                        TALOND_THREAD_ID: item.threadId,
+                        TALOND_PERSONA_ID: personaId,
+                        TALOND_TRACEPARENT: generationObservation.getTraceparent() ?? '',
+                      },
+                    };
+                  }
+
                   this.ctx.logger.info(
                     {
                       runId,

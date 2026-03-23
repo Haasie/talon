@@ -1560,6 +1560,90 @@ describe('AgentRunner', () => {
         isError: true,
       });
     });
+
+    it('injects the skill_load stdio MCP server for CLI providers when skills are available', async () => {
+      const cliRun = vi.fn().mockResolvedValue({
+        output: 'Gemini result',
+        sessionId: undefined,
+        usage: {
+          inputTokens: 500_000,
+          outputTokens: 120,
+        },
+        isError: false,
+      });
+
+      vi.mocked(ctx.personaLoader.getByName).mockReturnValue(ok({
+        config: {
+          model: 'gemini-2.5-pro',
+          provider: 'gemini-cli',
+          skills: ['brainstorming'],
+          capabilities: { allow: [] },
+        },
+        systemPromptContent: 'You are a Gemini test bot.',
+        resolvedCapabilities: {
+          allow: ['channel.send:*'],
+          requireApproval: [],
+        },
+      } as any));
+      ctx.config.agentRunner.defaultProvider = 'gemini-cli';
+      ctx.providerRegistry = {
+        getDefault: vi.fn().mockReturnValue({
+          provider: {
+            name: 'gemini-cli',
+            createExecutionStrategy: () => ({
+              type: 'cli' as const,
+              supportsSessionResumption: false as const,
+              run: cliRun,
+            }),
+            prepareBackgroundInvocation: vi.fn(),
+            parseBackgroundResult: vi.fn(),
+            estimateContextUsage: vi.fn().mockReturnValue({
+              inputTokens: 500_000,
+              metrics: {
+                input_tokens: 500_000,
+              },
+            }),
+          },
+          config: makeAgentRunnerProviderConfig({
+            command: 'gemini',
+            contextWindowTokens: 1_000_000,
+            contextManagement: makeContextManagement({
+              triggerMetric: 'input_tokens',
+              thresholdRatio: 0.8,
+            }),
+          }),
+        }),
+      } as any;
+      (ctx as any).loadedSkills = [
+        {
+          manifest: { name: 'brainstorming' },
+          format: 'yaml',
+          promptContents: ['Line 1', 'Line 2'],
+          resolvedToolManifests: [],
+          resolvedMcpServers: [],
+          migrationPaths: [],
+        },
+      ];
+
+      await runner.run(makeQueueItem());
+
+      const queryInput = cliRun.mock.calls[0]?.[0] as {
+        mcpServers: Record<string, any>;
+      };
+
+      expect(queryInput.mcpServers.__talond_skill_loader).toEqual({
+        transport: 'stdio',
+        command: 'node',
+        args: [expect.stringContaining('dist/tools/skill-loader-mcp-server.js')],
+        env: expect.objectContaining({
+          TALOND_SOCKET: '/tmp/test-data/host-tools.sock',
+          TALOND_RUN_ID: expect.any(String),
+          TALOND_THREAD_ID: 'thread-001',
+          TALOND_PERSONA_ID: 'persona-001',
+          TALOND_TRACEPARENT: GENERATION_TRACEPARENT,
+        }),
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
