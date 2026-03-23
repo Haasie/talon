@@ -1537,7 +1537,7 @@ describe('AgentRunner', () => {
         }),
       );
       expect(queryCall.options.mcpServers.__talond_skill_loader).toBe(
-        mockCreateSdkMcpServer.mock.results[0]?.value.instance,
+        mockCreateSdkMcpServer.mock.results[0]?.value,
       );
 
       const toolDefinition = mockSdkTool.mock.results[0]?.value as {

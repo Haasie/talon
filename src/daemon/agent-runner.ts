@@ -421,7 +421,7 @@ export class AgentRunner {
                     });
                     sdkSkillServer.__talond_skill_loader = {
                       transport: 'sdk',
-                      instance: skillLoaderServer.instance,
+                      instance: skillLoaderServer,
                     };
                   }
 

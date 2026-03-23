@@ -221,7 +221,7 @@ Update `.claude/skills/talon-setup/SKILL.md`:
 - Unit tests for native `skill_load` interception in agent-runner (mock SDK events)
 - Unit tests for `skill-loader-mcp-server.ts`: tool listing, skill lookup, error on unknown skill
 - Unit tests for CLI `add-skill --format skillmd`: file generation, config registration
-- Unit tests for `customTools` provider API: `ClaudeCodeProvider` intercepts and handles custom tools
+- Unit tests for `CanonicalMcpSdkServer` provider passthrough: `ClaudeCodeProvider` passes SDK instances to the Agent SDK
 - Unit tests for background agent eager loading: verify full prompts passed through
 - Unit tests for `__talond_` prefix validation: reject user-defined MCP servers with reserved prefix
 - Integration: existing skill tests continue to pass (backwards compatibility)
