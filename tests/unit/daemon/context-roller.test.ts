@@ -13,6 +13,7 @@ const makeDeps = (overrides: Partial<ContextRollerDeps> = {}): ContextRollerDeps
     insert: vi.fn().mockReturnValue(ok({})),
     findById: vi.fn().mockReturnValue(ok(null)),
     upsertByKey: vi.fn().mockReturnValue(ok({})),
+    delete: vi.fn().mockReturnValue(ok(undefined)),
   } as any,
   sessionTracker: {
     rotateSession: vi.fn(),
@@ -694,7 +695,7 @@ describe('ContextRoller', () => {
     expect(deps.memoryRepo.upsertByKey).not.toHaveBeenCalled();
   });
 
-  it('falls back to keyFacts in summary when all memoryUpdates fail', async () => {
+  it('aborts rotation and preserves keyFacts in summary when all memoryUpdates fail', async () => {
     const messages = [
       { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
     ];
@@ -718,6 +719,7 @@ describe('ContextRoller', () => {
         insert: vi.fn().mockReturnValue(ok({})),
         findById: vi.fn().mockReturnValue(ok(null)),
         upsertByKey: vi.fn().mockReturnValue(err(new Error('DB write failed'))),
+        delete: vi.fn().mockReturnValue(ok(undefined)),
       } as any,
     });
     const roller = new ContextRoller(deps);
@@ -729,13 +731,19 @@ describe('ContextRoller', () => {
       rawMetricName: 'cache_read_input_tokens',
     });
 
-    // keyFacts should be in the summary blob as fallback
+    // keyFacts should be in the summary blob as safety net
     const insertCall = (deps.memoryRepo.insert as any).mock.calls[0][0];
     expect(insertCall.content).toContain('Important fact that must not be lost');
     expect(insertCall.content).toContain('Key facts:');
+
+    // Session should NOT be rotated when memory updates fail
+    expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
+
+    // Orphaned summary should be cleaned up
+    expect(deps.memoryRepo.delete).toHaveBeenCalledWith('thread-1', insertCall.id);
   });
 
-  it('excludes keyFacts from summary when memoryUpdates succeed', async () => {
+  it('always includes keyFacts in summary as safety net even when memoryUpdates succeed', async () => {
     const messages = [
       { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
     ];
@@ -765,9 +773,10 @@ describe('ContextRoller', () => {
       rawMetricName: 'cache_read_input_tokens',
     });
 
+    // keyFacts are always included in summary as a safety net
     const insertCall = (deps.memoryRepo.insert as any).mock.calls[0][0];
-    expect(insertCall.content).not.toContain('Fact stored via named key');
-    expect(insertCall.content).not.toContain('Key facts:');
+    expect(insertCall.content).toContain('Fact stored via named key');
+    expect(insertCall.content).toContain('Key facts:');
   });
 
   it('logs findById error in append mode and continues', async () => {

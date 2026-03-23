@@ -16,7 +16,7 @@ import { randomUUID } from 'node:crypto';
 import type { Result } from 'neverthrow';
 import type pino from 'pino';
 import type { MessageRepository, MessageRow } from '../core/database/repositories/message-repository.js';
-import type { MemoryRepository } from '../core/database/repositories/memory-repository.js';
+import type { MemoryRepository, MemoryType } from '../core/database/repositories/memory-repository.js';
 import type { SessionTracker } from '../sandbox/session-tracker.js';
 import type { SubAgentResult } from '../subagents/subagent-types.js';
 import type { SubAgentError } from '../core/errors/index.js';
@@ -51,7 +51,7 @@ export type SummarizerRunFn = (
 
 export interface ContextRollerDeps {
   messageRepo: Pick<MessageRepository, 'findLatestByThread'>;
-  memoryRepo: Pick<MemoryRepository, 'insert' | 'findById' | 'upsertByKey'>;
+  memoryRepo: Pick<MemoryRepository, 'insert' | 'findById' | 'upsertByKey' | 'delete'>;
   sessionTracker: Pick<SessionTracker, 'rotateSession'>;
   /** Pre-bound summarizer function. Model, prompt, and services are captured at bootstrap. */
   summarizerRun: SummarizerRunFn;
@@ -147,82 +147,65 @@ export class ContextRoller {
       summary?: string;
     } | undefined;
 
-    // 3a. Process memory updates — distribute facts to named keys.
-    let appliedCount = 0;
-    let failedCount = 0;
+    // 3. Prepare memory updates (but don't persist yet — summary insert must succeed first).
+    // Track accumulated content per key so duplicate keys within the same batch
+    // are resolved correctly (e.g. two appends to the same key build on each other).
+    const pendingUpdates: Array<{ key: string; content: string; type: MemoryType }> = [];
+    const accumulatedContent = new Map<string, string>();
 
     if (data?.memoryUpdates && data.memoryUpdates.length > 0) {
       for (const update of data.memoryUpdates) {
         if (!update.key || !update.value) continue;
 
         if (update.mode === 'append') {
-          // Read existing entry and append.
-          const existingResult = this.deps.memoryRepo.findById(threadId, update.key);
-          let existingContent = '';
-          if (existingResult.isErr()) {
-            this.deps.logger.warn(
-              { key: update.key, error: existingResult.error.message },
-              'context-roller: findById failed in append mode, treating as new entry',
-            );
-          } else if (existingResult.value) {
-            existingContent = existingResult.value.content;
+          // Check in-batch accumulator first, then fall back to DB.
+          let existingContent = accumulatedContent.get(update.key);
+          if (existingContent === undefined) {
+            const existingResult = this.deps.memoryRepo.findById(threadId, update.key);
+            if (existingResult.isErr()) {
+              this.deps.logger.warn(
+                { key: update.key, error: existingResult.error.message },
+                'context-roller: findById failed in append mode, treating as new entry',
+              );
+              existingContent = '';
+            } else {
+              existingContent = existingResult.value?.content ?? '';
+            }
           }
           const newContent = existingContent
             ? `${existingContent}\n${update.value}`
             : update.value;
-
-          const upsertResult = this.deps.memoryRepo.upsertByKey(threadId, update.key, {
-            type: 'note',
-            content: newContent,
-          });
-          if (upsertResult.isErr()) {
-            failedCount++;
-            this.deps.logger.warn(
-              { key: update.key, error: upsertResult.error.message },
-              'context-roller: failed to upsert memory update',
-            );
-          } else {
-            appliedCount++;
-          }
+          accumulatedContent.set(update.key, newContent);
+          // Remove any prior pending entry for this key — last one wins.
+          const existingIdx = pendingUpdates.findIndex((p) => p.key === update.key);
+          if (existingIdx !== -1) pendingUpdates.splice(existingIdx, 1);
+          pendingUpdates.push({ key: update.key, content: newContent, type: 'note' });
         } else {
-          // Replace mode — overwrite.
-          const upsertResult = this.deps.memoryRepo.upsertByKey(threadId, update.key, {
-            type: 'note',
-            content: update.value,
-          });
-          if (upsertResult.isErr()) {
-            failedCount++;
-            this.deps.logger.warn(
-              { key: update.key, error: upsertResult.error.message },
-              'context-roller: failed to upsert memory update',
-            );
-          } else {
-            appliedCount++;
-          }
+          // Replace mode — overwrite accumulator and pending list.
+          accumulatedContent.set(update.key, update.value);
+          const existingIdx = pendingUpdates.findIndex((p) => p.key === update.key);
+          if (existingIdx !== -1) pendingUpdates.splice(existingIdx, 1);
+          pendingUpdates.push({ key: update.key, content: update.value, type: 'note' });
         }
       }
-
-      this.deps.logger.info(
-        { threadId, applied: appliedCount, failed: failedCount, total: data.memoryUpdates.length },
-        'context-roller: distributed memory updates to named keys',
-      );
     }
 
-    // 3b. Store session summary.
-    // If memoryUpdates were absent or all failed, fall back to including keyFacts
-    // in the summary blob to avoid losing continuity.
-    const memoryUpdatesSucceeded = appliedCount > 0;
+    // 4. Store session summary first — if this fails, nothing else is persisted.
+    // Always include keyFacts in the summary as a safety net. Named keys are
+    // the authoritative source, but keyFacts in the blob ensure continuity
+    // even if memory updates fail or the summarizer doesn't produce them.
     const summaryParts = [data?.summary ?? summary.summary, ''];
 
-    if (!memoryUpdatesSucceeded && data?.keyFacts && data.keyFacts.length > 0) {
+    if (data?.keyFacts && data.keyFacts.length > 0) {
       summaryParts.push('Key facts:', ...data.keyFacts.map((f) => `- ${f}`), '');
     }
 
     summaryParts.push('Open threads:', ...(data?.openThreads ?? []).map((t) => `- ${t}`));
     const summaryContent = summaryParts.join('\n');
 
+    const summaryId = randomUUID();
     const insertResult = this.deps.memoryRepo.insert({
-      id: randomUUID(),
+      id: summaryId,
       thread_id: threadId,
       type: 'summary',
       content: summaryContent,
@@ -246,7 +229,46 @@ export class ContextRoller {
       return;
     }
 
-    // 4. Clear session — next run starts fresh.
+    // 5. Persist memory updates — summary is already committed.
+    let appliedCount = 0;
+    let failedCount = 0;
+
+    for (const update of pendingUpdates) {
+      const upsertResult = this.deps.memoryRepo.upsertByKey(threadId, update.key, {
+        type: update.type,
+        content: update.content,
+      });
+      if (upsertResult.isErr()) {
+        failedCount++;
+        this.deps.logger.warn(
+          { key: update.key, error: upsertResult.error.message },
+          'context-roller: failed to upsert memory update',
+        );
+      } else {
+        appliedCount++;
+      }
+    }
+
+    if (pendingUpdates.length > 0) {
+      this.deps.logger.info(
+        { threadId, applied: appliedCount, failed: failedCount, total: pendingUpdates.length },
+        'context-roller: distributed memory updates to named keys',
+      );
+    }
+
+    // Abort rotation if ANY memory update failed — partial persistence is
+    // dangerous because the failed facts won't survive rotation. Clean up
+    // the orphaned summary so ContextAssembler doesn't pick it up prematurely.
+    if (failedCount > 0) {
+      this.deps.logger.error(
+        { threadId, failedCount, appliedCount },
+        'context-roller: memory update failures detected — removing summary and aborting rotation',
+      );
+      this.deps.memoryRepo.delete(threadId, summaryId);
+      return;
+    }
+
+    // 6. Clear session — next run starts fresh.
     this.deps.sessionTracker.rotateSession(threadId);
 
     this.deps.logger.info(
