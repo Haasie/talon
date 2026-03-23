@@ -175,13 +175,7 @@ export const ContextManagementConfigSchema = z
       });
     }
 
-    if (value.recentMessageCount === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['recentMessageCount'],
-        message: 'recentMessageCount is required when contextManagement.enabled is true',
-      });
-    }
+    // recentMessageCount has a schema default(10), so it's always defined.
 
     if (!value.summarizer) {
       ctx.addIssue({
