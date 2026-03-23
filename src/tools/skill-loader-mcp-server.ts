@@ -4,8 +4,10 @@
  * Skill Loader MCP Server
  *
  * A standalone Node.js script that implements the MCP protocol over stdio.
- * The Agent SDK spawns this as a child process. It connects to the talond
- * Unix domain socket and proxies skill.load calls from the agent to the daemon.
+ * Spawned as a child process by CLI-based agent providers (Gemini, Codex).
+ * SDK providers use the in-process createSdkMcpServer() path instead.
+ * Connects to the talond Unix domain socket and proxies skill.load calls
+ * from the agent to the daemon.
  *
  * Environment variables:
  *   TALOND_SOCKET       - Path to the Unix socket (required)
@@ -197,7 +199,7 @@ export function lookupSkillContent(
   name: string,
 ): string | null {
   const content = skillContentMap.get(name);
-  return content ? content : null;
+  return content === undefined ? null : content;
 }
 
 function getEnvRequired(name: string): string {

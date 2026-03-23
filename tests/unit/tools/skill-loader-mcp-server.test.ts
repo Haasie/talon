@@ -18,9 +18,9 @@ describe('lookupSkillContent', () => {
     expect(lookupSkillContent(skills, 'missing')).toBeNull();
   });
 
-  it('returns null for empty skill content', () => {
+  it('returns empty string for skill with no prompt content', () => {
     const skills = new Map<string, string>([['empty', '']]);
 
-    expect(lookupSkillContent(skills, 'empty')).toBeNull();
+    expect(lookupSkillContent(skills, 'empty')).toBe('');
   });
 });
