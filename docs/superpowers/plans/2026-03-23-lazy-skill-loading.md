@@ -561,9 +561,100 @@ git commit -m "feat(personas): reject user MCP servers with reserved __talond_ p
 
 ## Chunk 3: Native `skill_load` Tool (Claude SDK via In-Process MCP Server)
 
-The Claude Agent SDK provides `createSdkMcpServer()` and `tool()` helpers that create an in-process MCP server — no subprocess, no socket, runs in the same Node.js process. This is the native mechanism for custom tools. The server is passed as an entry in the `mcpServers` option alongside regular MCP servers. No provider API changes needed.
+The Claude Agent SDK provides `createSdkMcpServer()` and `tool()` helpers that create an in-process MCP server — no subprocess, no socket, runs in the same Node.js process. The server is passed as an entry in the `mcpServers` option alongside regular MCP servers.
 
-### Task 6: Wire `skill_load` in-process MCP server in `AgentRunner`
+However, the codebase currently types `mcpServers` as `Record<string, CanonicalMcpServer>` (only transport-based servers). The SDK's `query()` accepts `Record<string, McpServerConfig>` which is a union including `McpSdkServerConfigWithInstance`. We need to widen the type at the provider boundary and update `toClaudeMcpServers()` to pass SDK server instances through untouched.
+
+### Task 6a: Widen `CanonicalMcpServer` type for SDK in-process servers
+
+**Files:**
+- Modify: `src/providers/provider-types.ts:29-42`
+- Modify: `src/providers/claude-code-provider.ts:264-288` (`toClaudeMcpServers`)
+
+- [ ] **Step 1: Add SDK server type to `CanonicalMcpServer` union**
+
+In `src/providers/provider-types.ts`, add:
+
+```typescript
+/**
+ * An in-process MCP server created via the Claude Agent SDK's
+ * createSdkMcpServer(). Contains a live McpServer instance — not
+ * serializable, only usable with SDK providers.
+ */
+export interface CanonicalMcpSdkServer {
+  transport: 'sdk';
+  instance: unknown; // McpServer from @modelcontextprotocol/sdk
+}
+
+export type CanonicalMcpServer =
+  | CanonicalMcpStdioServer
+  | CanonicalMcpHttpServer
+  | CanonicalMcpSdkServer;
+```
+
+- [ ] **Step 2: Update `toClaudeMcpServers` to pass SDK instances through**
+
+In `src/providers/claude-code-provider.ts`, update the `toClaudeMcpServers` method:
+
+```typescript
+private toClaudeMcpServers(
+  mcpServers: Record<string, CanonicalMcpServer>,
+): Record<string, unknown> {
+  const nativeServers: Record<string, unknown> = {};
+
+  for (const [name, server] of Object.entries(mcpServers)) {
+    // SDK in-process servers pass through as-is (they already have the
+    // shape the Agent SDK expects: McpSdkServerConfigWithInstance).
+    if (server.transport === 'sdk') {
+      nativeServers[name] = server.instance;
+      continue;
+    }
+
+    if (server.transport === 'stdio') {
+      nativeServers[name] = {
+        type: 'stdio',
+        command: server.command,
+        args: server.args,
+        ...(server.env ? { env: server.env } : {}),
+      };
+      continue;
+    }
+
+    nativeServers[name] = {
+      type: server.transport,
+      url: server.url,
+      ...(server.headers ? { headers: server.headers } : {}),
+    };
+  }
+
+  return nativeServers;
+}
+```
+
+- [ ] **Step 3: Update `GeminiCliProvider.toGeminiMcpServers` to skip SDK servers**
+
+In the Gemini provider's MCP conversion, add a guard:
+
+```typescript
+if (server.transport === 'sdk') {
+  // SDK in-process servers are not supported by CLI providers — skip.
+  continue;
+}
+```
+
+- [ ] **Step 4: Run existing tests**
+
+Run: `npx vitest run tests/unit/providers/ tests/unit/daemon/`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/providers/provider-types.ts src/providers/claude-code-provider.ts src/providers/gemini-cli-provider.ts
+git commit -m "feat(providers): widen CanonicalMcpServer to support SDK in-process servers"
+```
+
+### Task 6b: Wire `skill_load` in-process MCP server in `AgentRunner`
 
 **Files:**
 - Modify: `src/daemon/agent-runner.ts:177-185` (skill filtering) and `381-397` (mcpServers construction)
@@ -585,16 +676,17 @@ for (const skill of personaSkills) {
 
 - [ ] **Step 2: Create in-process MCP server for SDK strategy**
 
-In the `executeAgentQuery` function, before `mcpServers` is used (line ~381), add the SDK MCP server for skill loading:
+In the `executeAgentQuery` function, before `mcpServers` is used (line ~381):
 
 ```typescript
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import type { CanonicalMcpSdkServer } from '../providers/provider-types.js';
 
 // For SDK providers, create in-process MCP server for skill_load
-let skillLoaderMcpEntry: Record<string, unknown> | undefined;
+const sdkSkillServer: Record<string, CanonicalMcpSdkServer> = {};
 if (strategy.type === 'sdk' && skillContentMap.size > 0) {
-  const skillLoaderServer = createSdkMcpServer({
+  const server = createSdkMcpServer({
     name: '__talond_skill_loader',
     tools: [
       tool(
@@ -620,18 +712,21 @@ if (strategy.type === 'sdk' && skillContentMap.size > 0) {
       ),
     ],
   });
-  skillLoaderMcpEntry = { '__talond_skill_loader': skillLoaderServer };
+  sdkSkillServer['__talond_skill_loader'] = {
+    transport: 'sdk',
+    instance: server,
+  };
 }
 ```
 
-- [ ] **Step 3: Inject into mcpServers map**
+- [ ] **Step 3: Inject into mcpServers map and rename host-tools**
 
 Update the `mcpServers` construction (line ~381):
 
 ```typescript
 const mcpServers: Record<string, CanonicalMcpServer> = {
   ...baseMcpServers,
-  ...(skillLoaderMcpEntry ?? {}),
+  ...sdkSkillServer,
   '__talond_host_tools': {
     transport: 'stdio',
     command: 'node',
@@ -649,11 +744,13 @@ const mcpServers: Record<string, CanonicalMcpServer> = {
 };
 ```
 
-Note: `mcpServers` type will need widening to accept `McpSdkServerConfigWithInstance` from the SDK. Update the type annotation to `Record<string, CanonicalMcpServer | McpSdkServerConfigWithInstance>` or use `as any` for the SDK entry. The SDK's `query()` function accepts both types in its `mcpServers` option.
+- [ ] **Step 4: Rename server identity in `host-tools-mcp-server.ts`**
 
-- [ ] **Step 4: Update `shouldSkipProviderToolObservation` for renamed server**
+In `src/tools/host-tools-mcp-server.ts`, find the MCP server name declaration (where it reports `name: 'host-tools'`) and rename to `name: '__talond_host_tools'` for consistency with the registration key.
 
-At line ~864, update the string comparison:
+- [ ] **Step 5: Update `shouldSkipProviderToolObservation` for renamed server**
+
+At line ~864, update:
 
 ```typescript
 private shouldSkipProviderToolObservation(event: {
@@ -667,15 +764,37 @@ private shouldSkipProviderToolObservation(event: {
 }
 ```
 
-- [ ] **Step 5: Run existing agent-runner tests for regression**
+- [ ] **Step 6: Write test for SDK skill_load server creation**
 
-Run: `npx vitest run tests/unit/daemon/`
-Expected: PASS (adjust for renamed MCP server if needed)
+Add to `tests/unit/daemon/agent-runner.test.ts` (or create):
 
-- [ ] **Step 6: Commit**
+```typescript
+describe('skill_load in-process MCP server', () => {
+  it('creates SDK MCP server entry when skills have content', () => {
+    // Verify that when personaSkills have prompt content and strategy
+    // is SDK, the mcpServers map includes __talond_skill_loader with
+    // transport: 'sdk'.
+  });
+
+  it('does not create SDK server when no skills have content', () => {
+    // Verify empty skills don't produce the server entry.
+  });
+
+  it('does not create SDK server for CLI strategy', () => {
+    // Verify CLI providers don't get the in-process server.
+  });
+});
+```
+
+- [ ] **Step 7: Run tests**
+
+Run: `npx vitest run tests/unit/daemon/ tests/unit/providers/`
+Expected: PASS
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/daemon/agent-runner.ts
+git add src/daemon/agent-runner.ts src/tools/host-tools-mcp-server.ts tests/unit/daemon/
 git commit -m "feat(agent-runner): add in-process skill_load MCP server and rename host-tools to __talond_host_tools"
 ```
 
@@ -783,24 +902,40 @@ git commit -m "feat(tools): add skill-loader MCP server for CLI provider fallbac
 **Files:**
 - Modify: `src/tools/host-tools-bridge.ts:359+` (dispatch method)
 
-- [ ] **Step 1: Add skill content map to bridge constructor**
+- [ ] **Step 1: Add per-persona skill content resolution to bridge**
 
-The bridge needs access to loaded skills. Add to `HostToolsBridge` constructor:
+The bridge needs to serve skill content scoped to the requesting persona (matching which skills the persona has attached). Instead of caching a global map in the constructor (which goes stale after daemon reload), resolve content per-request using `ctx.loadedSkills` and the persona's skill list:
 
 ```typescript
-private skillContentMap: Map<string, string>;
+// Add a method to HostToolsBridge:
+private resolveSkillContent(personaId: string, skillName: string): string | null {
+  // Look up persona to get its skill list
+  const personaRow = this.ctx.repos.persona.findById(personaId);
+  if (personaRow.isErr() || !personaRow.value) return null;
 
-constructor(private readonly ctx: DaemonContext) {
-  // ... existing code ...
+  const loadedPersona = this.ctx.personaLoader.getByName(personaRow.value.name);
+  if (loadedPersona.isErr() || !loadedPersona.value) return null;
 
-  // Build skill content map for lazy loading MCP fallback
-  this.skillContentMap = new Map();
-  for (const skill of ctx.loadedSkills) {
-    const content = skill.promptContents.join('\n');
-    if (content) {
-      this.skillContentMap.set(skill.manifest.name, content);
-    }
-  }
+  const personaSkillNames = loadedPersona.value.config.skills;
+  if (!personaSkillNames.includes(skillName)) return null;
+
+  const skill = this.ctx.loadedSkills.find(
+    (s) => s.manifest.name === skillName,
+  );
+  if (!skill) return null;
+
+  const content = skill.promptContents.join('\n');
+  return content || null;
+}
+
+private listAvailableSkills(personaId: string): string[] {
+  const personaRow = this.ctx.repos.persona.findById(personaId);
+  if (personaRow.isErr() || !personaRow.value) return [];
+
+  const loadedPersona = this.ctx.personaLoader.getByName(personaRow.value.name);
+  if (loadedPersona.isErr() || !loadedPersona.value) return [];
+
+  return loadedPersona.value.config.skills;
 }
 ```
 
@@ -809,39 +944,31 @@ constructor(private readonly ctx: DaemonContext) {
 In the `dispatch` method, add a case for `skill.load`:
 
 ```typescript
-private async dispatch(
-  tool: string,
-  args: Record<string, unknown>,
-  context: ToolExecutionContext,
-): Promise<ToolCallResult> {
-  // Add before existing switch/if chain:
-  if (tool === 'skill.load') {
-    const name = typeof args.name === 'string' ? args.name : '';
-    const content = this.skillContentMap.get(name);
-    if (!content) {
-      return {
-        requestId: context.requestId ?? 'unknown',
-        tool,
-        status: 'error',
-        error: `Skill "${name}" not found. Available: ${[...this.skillContentMap.keys()].join(', ')}`,
-      };
-    }
-    this.ctx.logger.info({ skill: name, runId: context.runId }, 'skill.loaded via bridge');
+if (tool === 'skill.load') {
+  const name = typeof args.name === 'string' ? args.name : '';
+  const content = this.resolveSkillContent(context.personaId, name);
+  if (!content) {
+    const available = this.listAvailableSkills(context.personaId);
     return {
       requestId: context.requestId ?? 'unknown',
       tool,
-      status: 'success',
-      result: content,
+      status: 'error',
+      error: `Skill "${name}" not found. Available: ${available.join(', ')}`,
     };
   }
-
-  // ... existing dispatch logic ...
+  this.ctx.logger.info({ skill: name, runId: context.runId }, 'skill.loaded via bridge');
+  return {
+    requestId: context.requestId ?? 'unknown',
+    tool,
+    status: 'success',
+    result: content,
+  };
 }
 ```
 
-Note: The `skill.load` tool does NOT go through capability checking since it's not in `HOST_TOOL_REGISTRY`. The bridge's capability check in `handleRequest` uses `isToolAllowed` which checks against the registry — `skill.load` won't be in there. We need to add a bypass for `skill.load` before the capability check, OR add it to the registry. The simplest approach: add an early return before the capability check for `skill.load`:
+- [ ] **Step 3: Bypass capability check for `skill.load`**
 
-In `handleRequest`, before the `isToolAllowed` check:
+In `handleRequest`, before the `isToolAllowed` check, add early return:
 
 ```typescript
 // skill.load bypasses capability checks — always allowed
@@ -852,12 +979,30 @@ if (normalizedTool === 'skill.load') {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [ ] **Step 4: Write test for skill.load bridge handler**
+
+```typescript
+describe('skill.load bridge handler', () => {
+  it('returns skill content for persona-attached skill', () => {
+    // Mock persona with skill 'codex', verify content returned
+  });
+
+  it('rejects skill not attached to persona', () => {
+    // Mock persona without the requested skill, verify error
+  });
+
+  it('bypasses capability check for skill.load', () => {
+    // Verify skill.load works even with empty capabilities
+  });
+});
+```
+
+- [ ] **Step 5: Run tests**
 
 Run: `npx vitest run tests/unit/tools/`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/tools/host-tools-bridge.ts
@@ -874,7 +1019,7 @@ git commit -m "feat(bridge): handle skill.load requests for MCP fallback"
 In the `executeAgentQuery` function, after the `mcpServers` object is built (line ~397), add:
 
 ```typescript
-// For CLI providers, inject skill-loader MCP server
+// For CLI providers, inject skill-loader MCP server with full bridge context
 if (strategy.type === 'cli' && skillContentMap.size > 0) {
   mcpServers['__talond_skill_loader'] = {
     transport: 'stdio',
@@ -883,10 +1028,16 @@ if (strategy.type === 'cli' && skillContentMap.size > 0) {
     env: {
       ...process.env,
       TALOND_SOCKET: this.ctx.hostToolsBridge.path,
+      TALOND_RUN_ID: runId,
+      TALOND_THREAD_ID: item.threadId,
+      TALOND_PERSONA_ID: personaId,
+      TALOND_TRACEPARENT: generationObservation.getTraceparent() ?? '',
     },
   };
 }
 ```
+
+Note: The bridge requires `context` fields (`runId`, `threadId`, `personaId`) on every request. The skill-loader MCP server must read these env vars and include them in the bridge request, same as `host-tools-mcp-server.ts` does.
 
 - [ ] **Step 2: Commit**
 
