@@ -116,6 +116,18 @@ export async function addSkill(options: AddSkillOptions): Promise<AddSkillResult
   const skillDir = path.join(skillsDir, options.name);
   const format = options.format ?? 'yaml';
 
+  // Prevent creating an ambiguous skill directory with both formats.
+  if (format === 'skillmd' && existsSync(path.join(skillDir, 'skill.yaml'))) {
+    throw new Error(
+      `Skill "${options.name}" already has a skill.yaml. Cannot create SKILL.md alongside it (ambiguous format).`,
+    );
+  }
+  if (format === 'yaml' && existsSync(path.join(skillDir, 'SKILL.md'))) {
+    throw new Error(
+      `Skill "${options.name}" already has a SKILL.md. Cannot create skill.yaml alongside it (ambiguous format).`,
+    );
+  }
+
   let skillFilePath: string;
 
   if (format === 'skillmd') {

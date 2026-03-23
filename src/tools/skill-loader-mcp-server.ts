@@ -17,7 +17,6 @@
 
 import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
-import { pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -321,9 +320,12 @@ async function main(): Promise<void> {
   console.error('[skill-loader-mcp] MCP server ready');
 }
 
+// Only start the server when executed directly, not when imported for testing.
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 const isEntrypoint =
-  typeof process.argv[1] === 'string'
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+  typeof process.argv[1] === 'string' &&
+  fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isEntrypoint) {
   main().catch((err) => {
