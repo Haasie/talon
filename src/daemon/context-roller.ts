@@ -51,7 +51,7 @@ export type SummarizerRunFn = (
 
 export interface ContextRollerDeps {
   messageRepo: Pick<MessageRepository, 'findLatestByThread'>;
-  memoryRepo: Pick<MemoryRepository, 'insert' | 'findById' | 'upsertByKey' | 'delete'>;
+  memoryRepo: Pick<MemoryRepository, 'insert' | 'findById' | 'upsertByKey' | 'delete' | 'runInTransaction'>;
   sessionTracker: Pick<SessionTracker, 'rotateSession'>;
   /** Pre-bound summarizer function. Model, prompt, and services are captured at bootstrap. */
   summarizerRun: SummarizerRunFn;
@@ -147,11 +147,11 @@ export class ContextRoller {
       summary?: string;
     } | undefined;
 
-    // 3. Prepare memory updates (but don't persist yet — summary insert must succeed first).
-    // Track accumulated content per key so duplicate keys within the same batch
-    // are resolved correctly (e.g. two appends to the same key build on each other).
+    // 3. Prepare memory updates — resolve append content against DB and
+    // in-batch accumulator so duplicate keys within the same batch are correct.
     const pendingUpdates: Array<{ key: string; content: string; type: MemoryType }> = [];
     const accumulatedContent = new Map<string, string>();
+    let preparationFailed = false;
 
     if (data?.memoryUpdates && data.memoryUpdates.length > 0) {
       for (const update of data.memoryUpdates) {
@@ -163,25 +163,25 @@ export class ContextRoller {
           if (existingContent === undefined) {
             const existingResult = this.deps.memoryRepo.findById(threadId, update.key);
             if (existingResult.isErr()) {
-              this.deps.logger.warn(
+              // A read failure means we can't safely append — we might
+              // silently truncate existing content. Abort the whole rotation.
+              this.deps.logger.error(
                 { key: update.key, error: existingResult.error.message },
-                'context-roller: findById failed in append mode, treating as new entry',
+                'context-roller: findById failed in append mode, aborting rotation to prevent data loss',
               );
-              existingContent = '';
-            } else {
-              existingContent = existingResult.value?.content ?? '';
+              preparationFailed = true;
+              break;
             }
+            existingContent = existingResult.value?.content ?? '';
           }
           const newContent = existingContent
             ? `${existingContent}\n${update.value}`
             : update.value;
           accumulatedContent.set(update.key, newContent);
-          // Remove any prior pending entry for this key — last one wins.
           const existingIdx = pendingUpdates.findIndex((p) => p.key === update.key);
           if (existingIdx !== -1) pendingUpdates.splice(existingIdx, 1);
           pendingUpdates.push({ key: update.key, content: newContent, type: 'note' });
         } else {
-          // Replace mode — overwrite accumulator and pending list.
           accumulatedContent.set(update.key, update.value);
           const existingIdx = pendingUpdates.findIndex((p) => p.key === update.key);
           if (existingIdx !== -1) pendingUpdates.splice(existingIdx, 1);
@@ -190,10 +190,12 @@ export class ContextRoller {
       }
     }
 
-    // 4. Store session summary first — if this fails, nothing else is persisted.
-    // Always include keyFacts in the summary as a safety net. Named keys are
-    // the authoritative source, but keyFacts in the blob ensure continuity
-    // even if memory updates fail or the summarizer doesn't produce them.
+    if (preparationFailed) {
+      return;
+    }
+
+    // 4. Build summary content. Always include keyFacts as a safety net —
+    // named keys are authoritative but keyFacts in the blob ensure continuity.
     const summaryParts = [data?.summary ?? summary.summary, ''];
 
     if (data?.keyFacts && data.keyFacts.length > 0) {
@@ -203,69 +205,56 @@ export class ContextRoller {
     summaryParts.push('Open threads:', ...(data?.openThreads ?? []).map((t) => `- ${t}`));
     const summaryContent = summaryParts.join('\n');
 
+    // 5. Persist summary + all memory updates in a single transaction.
+    // If any write fails, the entire batch is rolled back atomically.
     const summaryId = randomUUID();
-    const insertResult = this.deps.memoryRepo.insert({
-      id: summaryId,
-      thread_id: threadId,
-      type: 'summary',
-      content: summaryContent,
-      embedding_ref: null,
-      metadata: JSON.stringify({
-        source: 'context-roller',
-        messageCount: messages.length,
-        contextUsage,
-        ...(contextUsage.rawMetricName === 'cache_read_input_tokens'
-          ? { cacheReadTokens: contextUsage.rawMetric }
-          : {}),
-        createdAt: new Date().toISOString(),
-      }),
+    const txResult = this.deps.memoryRepo.runInTransaction(() => {
+      const insertResult = this.deps.memoryRepo.insert({
+        id: summaryId,
+        thread_id: threadId,
+        type: 'summary',
+        content: summaryContent,
+        embedding_ref: null,
+        metadata: JSON.stringify({
+          source: 'context-roller',
+          messageCount: messages.length,
+          contextUsage,
+          ...(contextUsage.rawMetricName === 'cache_read_input_tokens'
+            ? { cacheReadTokens: contextUsage.rawMetric }
+            : {}),
+          createdAt: new Date().toISOString(),
+        }),
+      });
+      if (insertResult.isErr()) {
+        throw new Error(`summary insert: ${insertResult.error.message}`);
+      }
+
+      for (const update of pendingUpdates) {
+        const upsertResult = this.deps.memoryRepo.upsertByKey(threadId, update.key, {
+          type: update.type,
+          content: update.content,
+        });
+        if (upsertResult.isErr()) {
+          throw new Error(`upsert ${update.key}: ${upsertResult.error.message}`);
+        }
+      }
+
+      return pendingUpdates.length;
     });
 
-    if (insertResult.isErr()) {
+    if (txResult.isErr()) {
       this.deps.logger.error(
-        { threadId, error: insertResult.error.message },
-        'context-roller: failed to store summary, keeping current session',
+        { threadId, error: txResult.error.message },
+        'context-roller: rotation transaction failed — all writes rolled back, keeping current session',
       );
       return;
-    }
-
-    // 5. Persist memory updates — summary is already committed.
-    let appliedCount = 0;
-    let failedCount = 0;
-
-    for (const update of pendingUpdates) {
-      const upsertResult = this.deps.memoryRepo.upsertByKey(threadId, update.key, {
-        type: update.type,
-        content: update.content,
-      });
-      if (upsertResult.isErr()) {
-        failedCount++;
-        this.deps.logger.warn(
-          { key: update.key, error: upsertResult.error.message },
-          'context-roller: failed to upsert memory update',
-        );
-      } else {
-        appliedCount++;
-      }
     }
 
     if (pendingUpdates.length > 0) {
       this.deps.logger.info(
-        { threadId, applied: appliedCount, failed: failedCount, total: pendingUpdates.length },
+        { threadId, applied: pendingUpdates.length, total: pendingUpdates.length },
         'context-roller: distributed memory updates to named keys',
       );
-    }
-
-    // Abort rotation if ANY memory update failed — partial persistence is
-    // dangerous because the failed facts won't survive rotation. Clean up
-    // the orphaned summary so ContextAssembler doesn't pick it up prematurely.
-    if (failedCount > 0) {
-      this.deps.logger.error(
-        { threadId, failedCount, appliedCount },
-        'context-roller: memory update failures detected — removing summary and aborting rotation',
-      );
-      this.deps.memoryRepo.delete(threadId, summaryId);
-      return;
     }
 
     // 6. Clear session — next run starts fresh.

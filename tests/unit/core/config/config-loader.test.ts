@@ -324,6 +324,68 @@ context:
     }
   });
 
+  it('migrates legacy rotationThreshold to contextManagement for claude provider', () => {
+    const yaml = `
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.4
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const cm = result.value.agentRunner.providers['claude-code']?.contextManagement;
+      expect(cm?.enabled).toBe(true);
+      expect(cm?.thresholdRatio).toBe(0.4);
+      expect(cm?.triggerMetric).toBe('cache_read_input_tokens');
+      expect(cm?.recentMessageCount).toBe(10);
+      expect(cm?.summarizer).toBe('session-summarizer');
+    }
+  });
+
+  it('migrates legacy rotationThreshold with input_tokens for non-claude provider', () => {
+    const yaml = `
+agentRunner:
+  providers:
+    gemini-cli:
+      enabled: true
+      command: gemini
+      contextWindowTokens: 1000000
+      rotationThreshold: 0.8
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const cm = result.value.agentRunner.providers['gemini-cli']?.contextManagement;
+      expect(cm?.enabled).toBe(true);
+      expect(cm?.thresholdRatio).toBe(0.8);
+      expect(cm?.triggerMetric).toBe('input_tokens');
+    }
+  });
+
+  it('does not migrate rotationThreshold when contextManagement is already present', () => {
+    const yaml = `
+agentRunner:
+  providers:
+    claude-code:
+      enabled: true
+      command: claude
+      contextWindowTokens: 200000
+      rotationThreshold: 0.4
+      contextManagement:
+        enabled: false
+`;
+    const result = loadConfigFromString(yaml);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const cm = result.value.agentRunner.providers['claude-code']?.contextManagement;
+      expect(cm?.enabled).toBe(false);
+    }
+  });
+
   it('prefers explicit backgroundAgent.providers over claudePath (claudePath present but providers win)', () => {
     const yaml = `
 backgroundAgent:

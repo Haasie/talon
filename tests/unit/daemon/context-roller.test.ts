@@ -14,6 +14,7 @@ const makeDeps = (overrides: Partial<ContextRollerDeps> = {}): ContextRollerDeps
     findById: vi.fn().mockReturnValue(ok(null)),
     upsertByKey: vi.fn().mockReturnValue(ok({})),
     delete: vi.fn().mockReturnValue(ok(undefined)),
+    runInTransaction: vi.fn().mockImplementation((fn: () => unknown) => ok(fn())),
   } as any,
   sessionTracker: {
     rotateSession: vi.fn(),
@@ -256,6 +257,10 @@ describe('ContextRoller', () => {
         insert: vi.fn().mockReturnValue(err(new Error('DB full'))),
         findById: vi.fn().mockReturnValue(ok(null)),
         upsertByKey: vi.fn().mockReturnValue(ok({})),
+        delete: vi.fn().mockReturnValue(ok(undefined)),
+        runInTransaction: vi.fn().mockImplementation((fn: () => unknown) => {
+          try { return ok(fn()); } catch (e) { return err(e); }
+        }),
       } as any,
     });
     const roller = new ContextRoller(deps);
@@ -644,6 +649,8 @@ describe('ContextRoller', () => {
         insert: vi.fn().mockReturnValue(ok({})),
         findById: vi.fn().mockReturnValue(ok({ content: 'Existing content about Sarah' })),
         upsertByKey: vi.fn().mockReturnValue(ok({})),
+        delete: vi.fn().mockReturnValue(ok(undefined)),
+        runInTransaction: vi.fn().mockImplementation((fn: () => unknown) => ok(fn())),
       } as any,
     });
     const roller = new ContextRoller(deps);
@@ -695,7 +702,7 @@ describe('ContextRoller', () => {
     expect(deps.memoryRepo.upsertByKey).not.toHaveBeenCalled();
   });
 
-  it('aborts rotation and preserves keyFacts in summary when all memoryUpdates fail', async () => {
+  it('rolls back entire transaction when a memory update fails', async () => {
     const messages = [
       { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
     ];
@@ -711,6 +718,7 @@ describe('ContextRoller', () => {
       },
     }));
 
+    const mockUpsert = vi.fn().mockReturnValue(err(new Error('DB write failed')));
     const deps = makeDeps({
       messageRepo: {
         findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
@@ -718,8 +726,12 @@ describe('ContextRoller', () => {
       memoryRepo: {
         insert: vi.fn().mockReturnValue(ok({})),
         findById: vi.fn().mockReturnValue(ok(null)),
-        upsertByKey: vi.fn().mockReturnValue(err(new Error('DB write failed'))),
+        upsertByKey: mockUpsert,
         delete: vi.fn().mockReturnValue(ok(undefined)),
+        // Simulate transaction: execute callback, but if it throws, return err
+        runInTransaction: vi.fn().mockImplementation((fn: () => unknown) => {
+          try { return ok(fn()); } catch (e) { return err(e); }
+        }),
       } as any,
     });
     const roller = new ContextRoller(deps);
@@ -731,16 +743,55 @@ describe('ContextRoller', () => {
       rawMetricName: 'cache_read_input_tokens',
     });
 
-    // keyFacts should be in the summary blob as safety net
-    const insertCall = (deps.memoryRepo.insert as any).mock.calls[0][0];
-    expect(insertCall.content).toContain('Important fact that must not be lost');
-    expect(insertCall.content).toContain('Key facts:');
+    // Transaction should have been called
+    expect(deps.memoryRepo.runInTransaction).toHaveBeenCalled();
 
-    // Session should NOT be rotated when memory updates fail
+    // Session should NOT be rotated — transaction failed
+    expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
+  });
+
+  it('aborts rotation when findById fails in append mode', async () => {
+    const messages = [
+      { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
+    ];
+    mockSummarizerRun.mockResolvedValueOnce(ok({
+      summary: 'Summary',
+      data: {
+        keyFacts: [],
+        openThreads: [],
+        memoryUpdates: [
+          { key: 'work:test', value: '2026-03-22 — appended', mode: 'append' },
+        ],
+        summary: 'Summary',
+      },
+    }));
+
+    const deps = makeDeps({
+      messageRepo: {
+        findLatestByThread: vi.fn().mockReturnValue(ok(messages)),
+      } as any,
+      memoryRepo: {
+        insert: vi.fn().mockReturnValue(ok({})),
+        findById: vi.fn().mockReturnValue(err(new Error('DB read failed'))),
+        upsertByKey: vi.fn().mockReturnValue(ok({})),
+        delete: vi.fn().mockReturnValue(ok(undefined)),
+        runInTransaction: vi.fn().mockImplementation((fn: () => unknown) => ok(fn())),
+      } as any,
+    });
+    const roller = new ContextRoller(deps);
+
+    await roller.checkAndRotate('thread-1', 'persona-1', {
+      ratio: 0.5,
+      inputTokens: 100_000,
+      rawMetric: 100_000,
+      rawMetricName: 'cache_read_input_tokens',
+    });
+
+    // Session should NOT be rotated — can't safely append without reading existing
     expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
 
-    // Orphaned summary should be cleaned up
-    expect(deps.memoryRepo.delete).toHaveBeenCalledWith('thread-1', insertCall.id);
+    // Transaction should NOT have been called — preparation aborted first
+    expect(deps.memoryRepo.runInTransaction).not.toHaveBeenCalled();
   });
 
   it('always includes keyFacts in summary as safety net even when memoryUpdates succeed', async () => {
@@ -779,7 +830,7 @@ describe('ContextRoller', () => {
     expect(insertCall.content).toContain('Key facts:');
   });
 
-  it('logs findById error in append mode and continues', async () => {
+  it('aborts rotation when findById fails in append mode (prevents silent truncation)', async () => {
     const messages = [
       { direction: 'inbound', content: JSON.stringify({ body: 'test' }), created_at: 1000 },
     ];
@@ -803,6 +854,8 @@ describe('ContextRoller', () => {
         insert: vi.fn().mockReturnValue(ok({})),
         findById: vi.fn().mockReturnValue(err(new Error('DB read error'))),
         upsertByKey: vi.fn().mockReturnValue(ok({})),
+        delete: vi.fn().mockReturnValue(ok(undefined)),
+        runInTransaction: vi.fn().mockImplementation((fn: () => unknown) => ok(fn())),
       } as any,
     });
     const roller = new ContextRoller(deps);
@@ -814,16 +867,17 @@ describe('ContextRoller', () => {
       rawMetricName: 'cache_read_input_tokens',
     });
 
-    // Should log warning about findById failure
-    expect(deps.logger.warn).toHaveBeenCalledWith(
+    // Should log error about findById failure blocking rotation
+    expect(deps.logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'work:people' }),
       expect.stringContaining('findById failed'),
     );
-    // Should still attempt upsert with just the new value
-    expect(deps.memoryRepo.upsertByKey).toHaveBeenCalledWith('thread-1', 'work:people', {
-      type: 'note',
-      content: '2026-03-22 — New fact',
-    });
+
+    // Should NOT attempt upsert — rotation aborted during preparation
+    expect(deps.memoryRepo.upsertByKey).not.toHaveBeenCalled();
+
+    // Session should NOT be rotated
+    expect(deps.sessionTracker.rotateSession).not.toHaveBeenCalled();
   });
 
   // ---------------------------------------------------------------------------

@@ -185,6 +185,19 @@ export class MemoryRepository extends BaseRepository {
   }
 
   /**
+   * Runs multiple repository operations inside a single SQLite transaction.
+   * If the callback throws, all writes are rolled back atomically.
+   */
+  runInTransaction<T>(fn: () => T): Result<T, DbError> {
+    try {
+      const txFn = this.db.transaction(() => fn());
+      return ok(txFn());
+    } catch (cause) {
+      return err(new DbError(`Transaction failed: ${String(cause)}`, cause instanceof Error ? cause : undefined));
+    }
+  }
+
+  /**
    * Deletes a memory item by its compound key.
    *
    * @param threadId - Thread the item belongs to.

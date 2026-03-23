@@ -77,6 +77,38 @@ function normalizeLegacyConfig(raw: unknown): unknown {
     root['backgroundAgent'] = normalizedBackgroundAgent;
   }
 
+  // Migrate legacy provider-level rotationThreshold to contextManagement.
+  const agentRunner = root['agentRunner'];
+  if (isRecord(agentRunner)) {
+    const providers = agentRunner['providers'];
+    if (isRecord(providers)) {
+      const normalizedProviders = { ...providers };
+      for (const [name, provider] of Object.entries(normalizedProviders)) {
+        if (!isRecord(provider)) continue;
+        const hasRotationThreshold = provider['rotationThreshold'] !== undefined;
+        const hasContextManagement = provider['contextManagement'] !== undefined;
+
+        if (hasRotationThreshold && !hasContextManagement) {
+          const threshold = provider['rotationThreshold'];
+          const normalizedProvider = { ...provider };
+          // Claude providers use cache_read_input_tokens; others use input_tokens.
+          const isClaude = name.includes('claude');
+          normalizedProvider['contextManagement'] = {
+            enabled: true,
+            triggerMetric: isClaude ? 'cache_read_input_tokens' : 'input_tokens',
+            thresholdRatio: typeof threshold === 'number' ? threshold : 0.5,
+            recentMessageCount: 10,
+            summarizer: 'session-summarizer',
+          };
+          delete normalizedProvider['rotationThreshold'];
+          normalizedProviders[name] = normalizedProvider;
+        }
+      }
+      const normalizedAgentRunner = { ...agentRunner, providers: normalizedProviders };
+      root['agentRunner'] = normalizedAgentRunner;
+    }
+  }
+
   return root;
 }
 
