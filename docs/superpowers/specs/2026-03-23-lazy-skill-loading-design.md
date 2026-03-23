@@ -101,25 +101,15 @@ MCP server collection is unaffected — servers from skills still get wired up e
 
 For the Claude Agent SDK provider (strategy type `'sdk'`), `skill_load` is a native tool handled directly by the agent-runner with zero subprocess overhead.
 
-**Provider API change required:** Currently `AgentRunner` passes `AgentRunInput` to the provider, and `ClaudeCodeProvider` owns the SDK `query()` call internally. The agent-runner's event loop only observes `tool_event`s — it has no mechanism to inject tool definitions or send tool results back into the live SDK stream.
-
-To support native tool interception, we widen the provider interface:
-
-- Add an optional `customTools` field to `AgentRunInput` (the type passed to `SDKExecutionStrategy.run()`): an array of `{ name, description, inputSchema, handler }` objects. This is the foreground run path — `ProviderSpawnInput` (used for background agent spawning) does NOT get this field.
-- `SDKExecutionStrategy.run()` injects the custom tool definitions into the Agent SDK `query()` call. When the SDK yields a tool use block targeting a custom tool, the strategy invokes the handler, feeds the result back into the conversation turn, and does NOT yield the tool event to the agent-runner.
-- `CLIExecutionStrategy` ignores `customTools` — CLI providers get the MCP fallback instead.
+**Implementation via `createSdkMcpServer`:** The Claude Agent SDK provides `createSdkMcpServer()` and `tool()` helpers that create an in-process MCP server — runs in the same Node.js process with zero subprocess overhead. The server is passed as an entry in the `mcpServers` option alongside regular MCP servers. No provider API changes needed.
 
 **Implementation in `agent-runner.ts`:**
 
 1. **Skill content map:** At run start, build `Map<string, string>` from resolved skills (skill name → concatenated prompt content).
 
-2. **Custom tool definition:** Create a `skill_load` custom tool:
-   - Name: `skill_load`
-   - Description: "Load the full instructions for a skill. Pass the skill name exactly as shown in Available Skills."
-   - Input schema: `{ name: { type: "string", description: "Skill name" } }`
-   - Handler: looks up skill name in the content map, returns prompt content or error
+2. **In-process MCP server:** When strategy type is `'sdk'` and skills exist, use `createSdkMcpServer()` with a `skill_load` tool definition via `tool()`. The handler looks up the skill name in the content map and returns the prompt content.
 
-3. **Pass to provider:** Include `skill_load` in `customTools` on `AgentRunInput`. `SDKExecutionStrategy.run()` handles interception internally.
+3. **Inject into mcpServers:** Add the SDK MCP server entry to the `mcpServers` map under `__talond_skill_loader`. The SDK handles tool call/result internally.
 
 4. **Logging:** Log `skill.loaded` event with skill name and run ID when a skill is lazily loaded.
 
@@ -178,9 +168,7 @@ Update `.claude/skills/talon-setup/SKILL.md`:
 | `src/skills/skill-schema.ts` | Frontmatter schema variant |
 | `src/skills/skill-types.ts` | Add `format` field to `LoadedSkill` |
 | `src/personas/persona-runtime-context.ts` | Add `buildSkillIndex`, `skillLoadingMode` option, `__talond_` prefix validation |
-| `src/providers/provider-types.ts` | Add `customTools` field to `AgentRunInput` |
-| `src/providers/claude-code-provider.ts` | Implement `customTools` injection + interception in `SDKExecutionStrategy.run()` |
-| `src/daemon/agent-runner.ts` | Skill content map, custom tool definition, MCP fallback injection, `__talond_host_tools` rename |
+| `src/daemon/agent-runner.ts` | Skill content map, in-process SDK MCP server, MCP fallback injection, `__talond_host_tools` rename |
 | `src/tools/host-tools/background-agent.ts` | Pass `skillLoadingMode: 'eager'` to `buildPersonaRuntimeContext` |
 | `src/tools/host-tools-bridge.ts` | Handle `skill.load` internal message type for MCP fallback |
 | `src/tools/skill-loader-mcp-server.ts` | **New** — stdio MCP server for CLI providers |
