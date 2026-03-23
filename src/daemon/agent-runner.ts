@@ -399,7 +399,7 @@ export class AgentRunner {
                           { name: z.string().describe('Skill name') },
                           async (args) => {
                             const content = skillContentMap.get(args.name);
-                            if (!content) {
+                            if (content === undefined) {
                               return {
                                 content: [
                                   {
