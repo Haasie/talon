@@ -95,7 +95,7 @@ The old `mergePromptFragments` method stays on `SkillResolver` (not deleted).
 
 MCP server collection is unaffected — servers from skills still get wired up eagerly.
 
-**Background agents:** Background agents (spawned via `background-agent-manager.ts`) reuse `buildPersonaRuntimeContext` but run through their own provider invocation path without the `skill_load` tool interception or MCP fallback. Background agents MUST use `skillLoadingMode: 'eager'` so they receive full skill prompts. This is acceptable because background agents are typically short-lived, single-purpose tasks where the token overhead of eager loading is less impactful than missing skill instructions.
+**Background agents:** Background agents build their persona prompt in `background-agent.ts` (the host-tool handler), which calls `buildPersonaRuntimeContext` before passing the prompt to `BackgroundAgentManager.spawn()`. The `skillLoadingMode: 'eager'` flag must be set in `background-agent.ts` at the `buildPersonaRuntimeContext` callsite — NOT in `background-agent-manager.ts` which only receives the already-built prompt string. This ensures background agents receive full skill prompts. Acceptable because background agents are typically short-lived, single-purpose tasks where eager loading's token overhead is less impactful than missing instructions.
 
 ### 3. `skill_load` Tool — Claude SDK (Native)
 
@@ -105,9 +105,9 @@ For the Claude Agent SDK provider (strategy type `'sdk'`), `skill_load` is a nat
 
 To support native tool interception, we widen the provider interface:
 
-- Add an optional `customTools` field to `ProviderSpawnInput`: an array of `{ name, description, inputSchema, handler }` objects. The provider is responsible for injecting these tool definitions into its SDK call and routing tool calls back to the handler.
-- `ClaudeCodeProvider` implements this by adding the custom tool definitions to the `query()` call and intercepting tool use blocks before yielding events. When a custom tool is called, it invokes the handler and feeds the result back into the conversation.
-- Providers that don't support custom tools (Gemini CLI) ignore this field — they get the MCP fallback instead.
+- Add an optional `customTools` field to `AgentRunInput` (the type passed to `SDKExecutionStrategy.run()`): an array of `{ name, description, inputSchema, handler }` objects. This is the foreground run path — `ProviderSpawnInput` (used for background agent spawning) does NOT get this field.
+- `SDKExecutionStrategy.run()` injects the custom tool definitions into the Agent SDK `query()` call. When the SDK yields a tool use block targeting a custom tool, the strategy invokes the handler, feeds the result back into the conversation turn, and does NOT yield the tool event to the agent-runner.
+- `CLIExecutionStrategy` ignores `customTools` — CLI providers get the MCP fallback instead.
 
 **Implementation in `agent-runner.ts`:**
 
@@ -138,8 +138,9 @@ For CLI-based providers (Gemini, future Codex), `skill_load` is served via a lig
 - Points to `dist/tools/skill-loader-mcp-server.js` with `TALOND_SKILL_MAP` env var
 - When strategy type is `'sdk'`, this MCP server is NOT injected (native interception handles it)
 - The `__talond_` prefix is reserved for internal MCP servers to prevent collision with user-defined servers. Validation in `persona-runtime-context.ts` should reject user-defined MCP servers with this prefix.
+- Also rename the existing internal `host-tools` MCP server to `__talond_host_tools` for consistency. This is a breaking change only for direct references to the server name, which don't exist in user-facing config.
 
-**Size:** With 20 skills at ~3K tokens each, the JSON env var payload is ~60KB — well within Linux's ~128KB env var limit.
+**Size:** 3K tokens of English text is roughly 12-15KB when serialized as UTF-8 (tokens average ~4 chars). With 20 skills: 20 × 15KB = ~300KB once JSON-encoded. This exceeds typical env var limits. Mitigation: instead of passing content via env var, use the existing Unix socket pattern — the skill-loader MCP server connects to `TALOND_SOCKET` and requests skill content from the `HostToolsBridge` via a new `skill.load` internal message type. This keeps the MCP server lightweight while avoiding env var size constraints.
 
 ### 5. CLI Changes
 
@@ -177,10 +178,11 @@ Update `.claude/skills/talon-setup/SKILL.md`:
 | `src/skills/skill-schema.ts` | Frontmatter schema variant |
 | `src/skills/skill-types.ts` | Add `format` field to `LoadedSkill` |
 | `src/personas/persona-runtime-context.ts` | Add `buildSkillIndex`, `skillLoadingMode` option, `__talond_` prefix validation |
-| `src/providers/provider-types.ts` | Add `customTools` field to `ProviderSpawnInput` |
-| `src/providers/claude-code-provider.ts` | Implement `customTools` injection + interception in SDK query |
-| `src/daemon/agent-runner.ts` | Skill content map, custom tool definition, MCP fallback injection, eager mode for background agents |
-| `src/subagents/background/background-agent-manager.ts` | Pass `skillLoadingMode: 'eager'` to `buildPersonaRuntimeContext` |
+| `src/providers/provider-types.ts` | Add `customTools` field to `AgentRunInput` |
+| `src/providers/claude-code-provider.ts` | Implement `customTools` injection + interception in `SDKExecutionStrategy.run()` |
+| `src/daemon/agent-runner.ts` | Skill content map, custom tool definition, MCP fallback injection, `__talond_host_tools` rename |
+| `src/tools/host-tools/background-agent.ts` | Pass `skillLoadingMode: 'eager'` to `buildPersonaRuntimeContext` |
+| `src/tools/host-tools-bridge.ts` | Handle `skill.load` internal message type for MCP fallback |
 | `src/tools/skill-loader-mcp-server.ts` | **New** — stdio MCP server for CLI providers |
 | `src/cli/commands/add-skill.ts` | `--format` flag, SKILL.md stub generation |
 | `src/cli/commands/list-skills.ts` | FORMAT column |
@@ -195,13 +197,20 @@ Update `.claude/skills/talon-setup/SKILL.md`:
 - Database schema — no new tables or columns
 - Config schema — no new config fields
 
-## GPT-5.4 Review Findings (addressed)
+## GPT-5.4 Review Findings
 
+### Round 1 (addressed)
 1. **Critical — Background agents broken:** Fixed by adding `skillLoadingMode: 'eager' | 'lazy'` to `buildPersonaRuntimeContext`. Background agents use eager mode.
-2. **High — Native tool interception doesn't fit provider boundary:** Fixed by widening provider API with `customTools` field on `ProviderSpawnInput`. `ClaudeCodeProvider` implements interception; CLI providers ignore it and get MCP fallback.
+2. **High — Native tool interception doesn't fit provider boundary:** Fixed by widening provider API with `customTools` field. CLI providers ignore it and get MCP fallback.
 3. **High — `resolveForPersona()` not called at runtime:** Acknowledged as pre-existing gap, out of scope. Documented for separate tracking.
-4. **Medium — MCP server name collision:** Fixed by using `__talond_` prefix for internal MCP servers with validation to reject user-defined servers using the prefix.
+4. **Medium — MCP server name collision:** Fixed by using `__talond_` prefix for internal MCP servers with validation.
 5. **Low — Loader comments/types are yaml-centric:** Will normalize during implementation.
+
+### Round 2 (addressed)
+1. **Critical — `customTools` on wrong type:** Fixed. Moved from `ProviderSpawnInput` to `AgentRunInput` (the type used by `SDKExecutionStrategy.run()`).
+2. **High — Background agent callsite wrong:** Fixed. `skillLoadingMode: 'eager'` set in `background-agent.ts` (host-tool handler) not `background-agent-manager.ts`.
+3. **Medium — `host-tools` name also collides:** Fixed. Rename existing `host-tools` to `__talond_host_tools`.
+4. **Low — Env var size too optimistic:** Fixed. MCP fallback uses Unix socket (`TALOND_SOCKET`) instead of `TALOND_SKILL_MAP` env var.
 
 ## Acceptance Criteria
 
