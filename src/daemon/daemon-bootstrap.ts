@@ -147,7 +147,8 @@ export async function bootstrap(
   let packageVersion: string | undefined;
   try {
     const require = createRequire(import.meta.url);
-    const pkg = require(join(dirname(import.meta.dirname), 'package.json')) as { version?: string };
+    // From dist/daemon/daemon-bootstrap.js, ../../package.json resolves to the project root.
+    const pkg = require('../../package.json') as { version?: string };
     packageVersion = pkg.version;
   } catch {
     // Non-fatal — release will be unset in traces.

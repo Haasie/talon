@@ -137,17 +137,19 @@ export class AgentRunner {
     const content = typeof item.payload.content === 'string' ? item.payload.content : '';
     let runFinalized = false;
 
+    const runInput = {
+      content,
+      itemType: item.type,
+      persona: personaName,
+      provider: providerEntry.provider.name,
+    };
+
     try {
       await this.ctx.observability.observe(
         {
           type: 'agent',
           name: 'foreground-run',
-          input: {
-            content,
-            itemType: item.type,
-            persona: personaName,
-            provider: providerEntry.provider.name,
-          },
+          input: runInput,
           metadata: {
             runId,
             threadId: item.threadId,
@@ -163,12 +165,7 @@ export class AgentRunner {
               `itemType:${item.type}`,
               `provider:${providerEntry.provider.name}`,
             ],
-            input: {
-              content,
-              itemType: item.type,
-              persona: personaName,
-              provider: providerEntry.provider.name,
-            },
+            input: runInput,
             metadata: {
               runId,
               threadId: item.threadId,
