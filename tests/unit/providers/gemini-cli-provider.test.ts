@@ -68,6 +68,7 @@ describe('GeminiCliProvider', () => {
       'json',
       '--model',
       'gemini-2.5-pro',
+      '--prompt',
       'Refactor the auth module.',
     ]);
     expect(invocation.env).toEqual(
@@ -144,6 +145,28 @@ describe('GeminiCliProvider', () => {
         outputTokens: 30,
       },
     });
+  });
+
+  it('parses Gemini JSON output preceded by non-JSON MCP warning lines', () => {
+    const payload = {
+      response: 'Hello!',
+      stats: {
+        models: {
+          'gemini-3-flash-preview': {
+            tokens: { input: 50, candidates: 10, total: 60, cached: 0, thoughts: 0, tool: 0 },
+          },
+        },
+      },
+    };
+    const result = provider.parseBackgroundResult({
+      stdout: `MCP issues detected. Run /mcp list for status.\n${JSON.stringify(payload)}`,
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+    });
+    expect(result.output).toBe('Hello!');
+    expect(result.exitCode).toBe(0);
+    expect(result.usage).toEqual({ inputTokens: 50, outputTokens: 10 });
   });
 
   it('marks successful non-JSON Gemini output as an incompatible CLI failure', () => {

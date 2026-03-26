@@ -113,7 +113,11 @@ export class GeminiCliProvider implements AgentProvider {
     let usage: AgentUsage | undefined;
 
     try {
-      const parsed = JSON.parse(raw.stdout) as {
+      // Gemini CLI may emit non-JSON lines (e.g. "MCP issues detected.") to
+      // stdout before the JSON object. Slice from the first '{' to recover.
+      const jsonStart = raw.stdout.indexOf('{');
+      const jsonCandidate = jsonStart > 0 ? raw.stdout.slice(jsonStart) : raw.stdout;
+      const parsed = JSON.parse(jsonCandidate) as {
         response?: string;
         stats?: GeminiStats;
       };
@@ -199,7 +203,9 @@ export class GeminiCliProvider implements AgentProvider {
         args.push('--model', model);
       }
 
-      args.push(input.prompt);
+      // Use --prompt (-p) to force non-interactive (headless) mode.
+      // Gemini CLI v0.35+ defaults positional args to interactive TUI mode.
+      args.push('--prompt', input.prompt);
 
       return ok({
         command: this.config.command,
