@@ -157,6 +157,18 @@ export class AgentRunner {
           },
           trace: {
             sessionId: item.threadId,
+            userId: this.ctx.config.langfuse?.owner,
+            tags: [
+              `persona:${personaName}`,
+              `itemType:${item.type}`,
+              `provider:${providerEntry.provider.name}`,
+            ],
+            input: {
+              content,
+              itemType: item.type,
+              persona: personaName,
+              provider: providerEntry.provider.name,
+            },
             metadata: {
               runId,
               threadId: item.threadId,
@@ -784,7 +796,7 @@ export class AgentRunner {
       const observation = this.ctx.observability.startWithTraceparent(traceparent, {
         type: 'tool',
         name: this.getProviderToolObservationName(event),
-        input: event.input,
+        input: event.input ?? {},
         metadata: {
           ...metadata,
           messageType: event.messageType,
@@ -824,7 +836,7 @@ export class AgentRunner {
           {
             type: 'tool',
             name: this.getProviderToolObservationName(event),
-            input: event.input,
+            input: event.input ?? {},
             metadata: {
               ...metadata,
               messageType: event.messageType,

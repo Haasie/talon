@@ -16,6 +16,8 @@ import {
   type LangfuseSpan,
   type LangfuseTool,
 } from '@langfuse/tracing';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 
@@ -53,6 +55,10 @@ export class LangfuseObservabilityService implements ObservabilityService {
     options: LangfuseObservabilityOptions = {},
   ) {
     this.provider = new NodeTracerProvider({
+      resource: resourceFromAttributes({
+        [SEMRESATTRS_SERVICE_NAME]: 'talond',
+        ...(config.release ? { [SEMRESATTRS_SERVICE_VERSION]: config.release } : {}),
+      }),
       spanProcessors: [
         new LangfuseSpanProcessor({
           publicKey: config.publicKey,

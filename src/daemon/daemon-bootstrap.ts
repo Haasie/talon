@@ -8,7 +8,8 @@
  * The daemon orchestrator calls start methods after receiving the context.
  */
 
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { createRequire } from 'node:module';
 import { ok, err, type Result } from 'neverthrow';
 import type pino from 'pino';
 
@@ -140,7 +141,23 @@ export async function bootstrap(
 
   // 6. Thread workspace
   const threadWorkspace = new ThreadWorkspace(dataDir);
-  const observability = await createObservabilityService(config.langfuse, logger);
+
+  // Resolve package version for LangFuse release tagging (F9).
+  // Falls back gracefully if package.json is unreadable.
+  let packageVersion: string | undefined;
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require(join(dirname(import.meta.dirname), 'package.json')) as { version?: string };
+    packageVersion = pkg.version;
+  } catch {
+    // Non-fatal — release will be unset in traces.
+  }
+
+  const langfuseConfig = packageVersion && !config.langfuse.release
+    ? { ...config.langfuse, release: packageVersion }
+    : config.langfuse;
+
+  const observability = await createObservabilityService(langfuseConfig, logger);
 
   // 7. Load personas
   const personaLoader = new PersonaLoader(repos.persona, logger);

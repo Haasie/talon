@@ -429,6 +429,63 @@ describe('AgentRunner', () => {
       );
     });
 
+    it('includes tags with persona, itemType, and provider in the root trace', async () => {
+      await runner.run(makeQueueItem({ type: 'schedule' }));
+
+      expect(ctx.observability.observe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'agent',
+          name: 'foreground-run',
+          trace: expect.objectContaining({
+            tags: expect.arrayContaining([
+              'persona:TestBot',
+              'itemType:schedule',
+              'provider:claude-code',
+            ]),
+          }),
+        }),
+        expect.any(Function),
+      );
+    });
+
+    it('includes trace.input at the root observation level', async () => {
+      const item = makeQueueItem({ payload: { personaId: 'persona-001', content: 'Hello world' } });
+
+      await runner.run(item);
+
+      expect(ctx.observability.observe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'agent',
+          name: 'foreground-run',
+          trace: expect.objectContaining({
+            input: expect.objectContaining({ content: 'Hello world' }),
+          }),
+        }),
+        expect.any(Function),
+      );
+    });
+
+    it('includes userId from langfuse config owner in the root trace', async () => {
+      ctx.config = {
+        ...ctx.config,
+        langfuse: { owner: 'ivo' } as any,
+      } as any;
+      runner = new AgentRunner(ctx);
+
+      await runner.run(makeQueueItem());
+
+      expect(ctx.observability.observe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'agent',
+          name: 'foreground-run',
+          trace: expect.objectContaining({
+            userId: 'ivo',
+          }),
+        }),
+        expect.any(Function),
+      );
+    });
+
     it('uses the selected provider recentMessageCount when assembling fresh-session context', async () => {
       await runner.run(makeQueueItem());
 
@@ -1911,6 +1968,69 @@ describe('AgentRunner', () => {
         (call) => call[1] === 'agent-sdk: streaming event',
       );
       expect(streamingEventCalls).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // LangFuse observability enrichment (issue #94)
+  // -------------------------------------------------------------------------
+
+  describe('LangFuse trace enrichment', () => {
+    it('includes trace.input in the foreground-run observation', async () => {
+      mockQuery.mockReturnValue(makeAgentStream());
+      const item = makeQueueItem({ payload: { personaId: 'persona-001', content: 'Test message' } });
+
+      await runner.run(item);
+
+      const observeCall = vi.mocked(ctx.observability.observe).mock.calls[0];
+      const observeInput = observeCall[0];
+      expect(observeInput.trace?.input).toBeDefined();
+      expect(observeInput.trace?.input).toMatchObject({ content: 'Test message' });
+    });
+
+    it('includes itemType tag in the foreground-run trace', async () => {
+      mockQuery.mockReturnValue(makeAgentStream());
+      const item = makeQueueItem({
+        type: 'schedule',
+        payload: { personaId: 'persona-001', content: 'Heartbeat' },
+      });
+
+      await runner.run(item);
+
+      const observeCall = vi.mocked(ctx.observability.observe).mock.calls[0];
+      const observeInput = observeCall[0];
+      expect(observeInput.trace?.tags).toEqual(
+        expect.arrayContaining(['itemType:schedule']),
+      );
+    });
+
+    it('includes persona tag in the foreground-run trace', async () => {
+      mockQuery.mockReturnValue(makeAgentStream());
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      const observeCall = vi.mocked(ctx.observability.observe).mock.calls[0];
+      const observeInput = observeCall[0];
+      expect(observeInput.trace?.tags).toEqual(
+        expect.arrayContaining(['persona:TestBot']),
+      );
+    });
+
+    it('includes userId in the foreground-run trace when config.langfuse.owner is set', async () => {
+      ctx.config = {
+        ...ctx.config,
+        langfuse: { owner: 'ivo' } as any,
+      };
+      runner = new AgentRunner(ctx);
+      mockQuery.mockReturnValue(makeAgentStream());
+      const item = makeQueueItem();
+
+      await runner.run(item);
+
+      const observeCall = vi.mocked(ctx.observability.observe).mock.calls[0];
+      const observeInput = observeCall[0];
+      expect(observeInput.trace?.userId).toBe('ivo');
     });
   });
 });
